@@ -26,19 +26,19 @@ export default function Treatment() {
   return (
     <section className="pg-page">
       <SectionHeader
-        eyebrow="Treatment"
-        title="Action Plan and ROI"
-        subtitle="Choose intervention based on recovery impact, cost, and timing window."
+        eyebrow="Spray plan"
+        title="Cost and next steps"
+        subtitle="Suggested spray, cost, and return — check timing with the weather."
         action={(
-          <button className="pg-btn pg-btn-ghost pg-btn-inline" onClick={() => setChatOpen(true)}>
-            Chatbot
+          <button type="button" className="pg-btn pg-btn-ghost pg-btn-inline" onClick={() => setChatOpen(true)}>
+            Help
           </button>
         )}
       />
 
       <article className="pg-card">
-        <h2>Recommended Plan</h2>
-        <p>{plan ? plan.recommendation : 'Generating recommendation from disease severity and weather risk...'}</p>
+        <h2>Suggested plan</h2>
+        <p>{plan ? plan.recommendation : 'Preparing advice from disease level and weather…'}</p>
       </article>
 
       {!plan ? (
@@ -50,35 +50,35 @@ export default function Treatment() {
       ) : null}
 
       <div className="pg-tile-grid">
-        <MetricTile label="Estimated Cost" value={plan ? `RM ${plan.estimated_cost_rm}` : 'Loading'} helper="2.34 ha coverage" />
-        <MetricTile label="Expected Gain" value={plan ? `RM ${plan.expected_gain_rm}` : 'Loading'} tone="success" helper="Yield recovery model" />
-        <MetricTile label="ROI" value={plan ? `${plan.roi_x}x` : 'Loading'} tone="success" helper="Cost-to-gain ratio" />
+        <MetricTile label="Est. cost" value={plan ? `RM ${plan.estimated_cost_rm}` : '…'} helper="For your area size" />
+        <MetricTile label="Est. return" value={plan ? `RM ${plan.expected_gain_rm}` : '…'} tone="success" helper="If crop recovers" />
+        <MetricTile label="Return vs cost" value={plan ? `${plan.roi_x}x` : '…'} tone="success" helper="Rough ratio" />
       </div>
 
       <div className="pg-grid pg-grid-actions">
         <article className="pg-card">
-          <h2>Organic Alternative</h2>
-          <p>{plan ? plan.organic_alternative : 'Fetching alternative option...'}</p>
+          <h2>Gentler option</h2>
+          <p>{plan ? plan.organic_alternative : 'Loading another choice…'}</p>
         </article>
         <article className="pg-card">
-          <h2>Safety Reminder</h2>
-          <p>Wear gloves, mask, and keep irrigation channels isolated for at least 24 hours.</p>
+          <h2>Stay safe</h2>
+          <p>Wear gloves and a mask. Keep spray away from water channels for at least a day.</p>
         </article>
       </div>
 
-      <BottomSheet open={chatOpen} title="Treatment Assistant" onClose={() => setChatOpen(false)}>
+      <BottomSheet open={chatOpen} title="Spray help" onClose={() => setChatOpen(false)}>
         <div className="pg-chatbot-panel">
           <div className="pg-chatbot-message from-ai">
-            I can help explain dosage, timing, and safer alternatives based on your farm context.
+            Ask about amount, timing, or cheaper options for your farm.
           </div>
           <div className="pg-chatbot-message from-user">
-            Show an option with lower upfront cost.
+            Show a lower-cost option.
           </div>
           <div className="pg-chatbot-note">
-            Chatbot integration shell ready. You can connect RAG retrieval, database context, and LLM API key later.
+            Full chat will work when connected to your service.
           </div>
-          <input className="pg-input" placeholder="Ask treatment assistant..." disabled />
-          <button className="pg-btn pg-btn-primary" disabled>Send (pending backend)</button>
+          <input className="pg-input" placeholder="Type a question…" disabled />
+          <button type="button" className="pg-btn pg-btn-primary" disabled>Send</button>
         </div>
       </BottomSheet>
     </section>

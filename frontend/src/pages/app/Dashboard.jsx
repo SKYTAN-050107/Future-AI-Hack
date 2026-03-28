@@ -29,14 +29,14 @@ export default function Dashboard() {
     <section className="pg-page">
       <SectionHeader
         eyebrow="Today"
-        title="Farm Overview"
-        subtitle="See health summary, weather timing, and next recommended action first."
+        title="Your farm at a glance"
+        subtitle="Weather heads-up, zone status, and quick shortcuts."
       />
 
       <RiskBanner
         level="caution"
-        title={weather ? `Spraying risk in 18 hours (${weather.rain_probability}%)` : 'Loading weather advisory...'}
-        detail={weather ? weather.advisory : 'Checking latest weather model for spray timing guidance.'}
+        title={weather ? `Rain may affect spraying (${weather.rain_probability}% chance)` : 'Checking weather…'}
+        detail={weather ? weather.advisory : 'Getting the latest forecast for spray timing.'}
       />
 
       {!weather ? (
@@ -48,32 +48,33 @@ export default function Dashboard() {
       ) : null}
 
       <div className="pg-tile-grid">
-        <MetricTile label="Healthy Zones" value="84%" helper="17 of 20 sectors" />
-        <MetricTile label="Active Threat" value="Leaf Blast" tone="danger" helper="Zone C and D" />
+        <MetricTile label="Zones OK" value="84%" helper="17 of 20 areas" />
+        <MetricTile label="Problem" value="Leaf blast" tone="danger" helper="Zones C & D" />
         <MetricTile
-          label="Spray Window"
-          value={weather ? 'Ready' : 'Loading'}
-          helper={weather ? weather.best_spray_window : 'Computing from weather feed'}
+          label="Spray window"
+          value={weather ? 'OK' : '…'}
+          helper={weather ? weather.best_spray_window : 'From weather'}
         />
       </div>
 
       <div className="pg-grid pg-grid-actions">
         <QuickActionCard
-          title="Open Scanner"
-          description="Capture padi leaf image and receive disease severity in under 5 seconds."
-          cta="Start Scan"
+          title="Check leaves"
+          description="Take a photo to see if disease is present and how strong it looks."
+          cta="Start leaf check"
+          primaryCta
           onClick={() => navigate('/app/scan')}
         />
         <QuickActionCard
-          title="View Treatment ROI"
-          description="Compare treatment cost with expected yield recovery before spending."
-          cta="Review Plan"
+          title="Spray plan & cost"
+          description="See suggested spray, cost, and return before you buy."
+          cta="Open plan"
           onClick={() => navigate('/app/treatment')}
         />
         <QuickActionCard
-          title="Weather Timing Alert"
-          description="Strong rain cells detected tomorrow. Move spray schedule earlier."
-          cta="See Priority"
+          title="Rain & spray timing"
+          description="Heavy rain may come soon. See what it means for your next spray."
+          cta="Read summary"
           urgent
           onClick={() => navigate('/app/report')}
         />

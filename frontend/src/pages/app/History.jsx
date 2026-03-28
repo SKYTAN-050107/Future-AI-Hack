@@ -5,20 +5,20 @@ const historyItems = [
   {
     id: 'scan-01',
     date: 'Today, 08:42',
-    title: 'Scan complete: Blast risk in Zone C',
-    detail: 'Severity 64%, confidence 92%, treatment recommendation generated.',
+    title: 'Leaf check: blast risk in Zone C',
+    detail: 'Problem about 64%. Plan saved. Recheck in a few days.',
   },
   {
     id: 'spray-01',
     date: 'Yesterday, 16:15',
-    title: 'Treatment applied in Zone B',
-    detail: 'Dosage 0.6 kg/ha, weather window confirmed, follow-up scan in 48h.',
+    title: 'Spray done in Zone B',
+    detail: '0.6 kg/ha. Weather OK. Next check in 48 hours.',
   },
   {
     id: 'scan-00',
     date: '2 days ago, 09:10',
-    title: 'Scanner baseline capture',
-    detail: 'No severe anomaly, mild stress in 2 sectors due to water fluctuation.',
+    title: 'First leaf photos',
+    detail: 'No big issues; two areas looked a bit dry.',
   },
 ]
 
@@ -26,14 +26,14 @@ export default function History() {
   return (
     <section className="pg-page">
       <SectionHeader
-        eyebrow="Logs"
-        title="Scan and Treatment History"
-        subtitle="Track disease progression and measure treatment outcomes over time."
+        eyebrow="Activity"
+        title="Past checks & sprays"
+        subtitle="A simple log of what you did and what the app found."
       />
 
       <article className="pg-card">
-        <h2>Latest Summary</h2>
-        <p>Overall severity trend improved from 71% to 64% over last two scans.</p>
+        <h2>Trend</h2>
+        <p>Problem level went from 71% down to 64% over the last two checks.</p>
       </article>
 
       <TimelineList items={historyItems} />

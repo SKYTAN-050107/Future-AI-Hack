@@ -31,7 +31,7 @@ function LaunchScreen() {
       <section className="pg-launch">
         <div className="pg-launch-orb" />
         <h1 className="pg-launch-title">PadiGuard AI</h1>
-        <p className="pg-launch-subtitle">Crop intelligence in your pocket</p>
+        <p className="pg-launch-subtitle">Padi health help in your pocket</p>
       </section>
     </div>
   )
@@ -53,7 +53,7 @@ function WebLaunchScreen() {
       <section className="pg-launch">
         <div className="pg-launch-orb" />
         <h1 className="pg-launch-title">PadiGuard AI</h1>
-        <p className="pg-launch-subtitle">Preparing website mode</p>
+        <p className="pg-launch-subtitle">Opening…</p>
       </section>
     </div>
   )

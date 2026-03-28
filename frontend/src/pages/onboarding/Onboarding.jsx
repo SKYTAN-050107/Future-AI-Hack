@@ -39,15 +39,15 @@ export default function Onboarding() {
     <div className="pg-public-screen">
       <section className="pg-auth-card">
         <p className="pg-eyebrow">Step {step + 1} of 3</p>
-        <h1 className="pg-title">Quick Farm Setup</h1>
-        <p className="pg-copy">We only ask what is required to personalize your advice.</p>
+        <h1 className="pg-title">Set up your farm</h1>
+        <p className="pg-copy">A few details help tailor tips to your field.</p>
         <div className="pg-progress" role="progressbar" aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100}>
           <span style={{ width: `${progress}%` }} />
         </div>
 
         {step === 0 ? (
           <>
-            <label className="pg-field-label" htmlFor="farmName">Farm Name</label>
+            <label className="pg-field-label" htmlFor="farmName">Farm name</label>
             <input
               id="farmName"
               className="pg-input"
@@ -60,7 +60,7 @@ export default function Onboarding() {
 
         {step === 1 ? (
           <>
-            <label className="pg-field-label" htmlFor="location">Farm Location</label>
+            <label className="pg-field-label" htmlFor="location">Location</label>
             <input
               id="location"
               className="pg-input"
@@ -73,7 +73,7 @@ export default function Onboarding() {
 
         {step === 2 ? (
           <>
-            <label className="pg-field-label" htmlFor="variety">Padi Variety</label>
+            <label className="pg-field-label" htmlFor="variety">Padi type</label>
             <input
               id="variety"
               className="pg-input"
@@ -82,7 +82,7 @@ export default function Onboarding() {
               onChange={(event) => setVariety(event.target.value)}
             />
 
-            <label className="pg-field-label" htmlFor="language">Preferred Language</label>
+            <label className="pg-field-label" htmlFor="language">Language</label>
             <select
               id="language"
               className="pg-input"
@@ -101,8 +101,8 @@ export default function Onboarding() {
               Back
             </button>
           ) : null}
-          <button className="pg-btn pg-btn-primary" onClick={onNext} disabled={!canProceed}>
-            {step === 2 ? 'Save and Continue' : 'Next'}
+          <button type="button" className="pg-btn pg-btn-primary" onClick={onNext} disabled={!canProceed}>
+            {step === 2 ? 'Save and continue' : 'Next'}
           </button>
         </div>
       </section>

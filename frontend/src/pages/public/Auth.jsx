@@ -73,10 +73,6 @@ export default function Auth() {
 
   return (
     <div className="pg-auth-page">
-      {/* Decorative background */}
-      <div className="pg-auth-bg-orb pg-auth-bg-orb--1" aria-hidden="true" />
-      <div className="pg-auth-bg-orb pg-auth-bg-orb--2" aria-hidden="true" />
-
       {/* Back button */}
       <button
         className="pg-auth-back-btn"
@@ -115,8 +111,8 @@ export default function Auth() {
             </h1>
             <p className="pg-auth-subtitle">
               {isLogin
-                ? 'Sign in to access your dashboard'
-                : 'Start your smart farming journey today'}
+                ? 'Sign in to see your farm summary and tools.'
+                : 'Create an account to save your farm details.'}
             </p>
           </div>
 

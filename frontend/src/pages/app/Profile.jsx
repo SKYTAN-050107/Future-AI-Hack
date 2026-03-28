@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom'
 import { useSessionContext } from '../../hooks/useSessionContext'
+import SectionHeader from '../../components/ui/SectionHeader'
 
 export default function Profile() {
   const navigate = useNavigate()
@@ -7,22 +8,25 @@ export default function Profile() {
 
   return (
     <section className="pg-page">
-      <h1 className="pg-page-title">Profile</h1>
-      <p className="pg-page-copy">Theme, language, and notification settings will be added next.</p>
+      <SectionHeader
+        eyebrow="Account"
+        title="Your profile"
+        subtitle="More settings can be added later. For now, manage your session here."
+      />
       <article className="pg-card">
-        <h2>Session Actions</h2>
+        <h2>Account</h2>
         <div className="pg-cta-row">
-          <button className="pg-btn pg-btn-ghost" onClick={() => {
+          <button type="button" className="pg-btn pg-btn-ghost" onClick={() => {
             resetOnboarding()
             navigate('/onboarding')
           }}>
-            Re-run Onboarding
+            Edit farm setup
           </button>
-          <button className="pg-btn pg-btn-primary" onClick={() => {
+          <button type="button" className="pg-btn pg-btn-primary" onClick={() => {
             logout()
             navigate('/auth')
           }}>
-            Sign Out
+            Sign out
           </button>
         </div>
       </article>

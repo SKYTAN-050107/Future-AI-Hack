@@ -5,11 +5,11 @@ import { useOffline } from '../../hooks/useOffline'
 import { clearPostAuthPath, setLastAppPath } from '../../utils/navigationState'
 
 const tabs = [
-  { to: '/app', label: 'Home', icon: 'HM' },
-  { to: '/app/map', label: 'Map', icon: 'MP' },
-  { to: '/app/scan', label: 'Scanner', icon: 'SC' },
-  { to: '/app/history', label: 'History', icon: 'HS' },
-  { to: '/app/profile', label: 'Profile', icon: 'PF' },
+  { to: '/app', label: 'Home', icon: '🏠' },
+  { to: '/app/map', label: 'Map', icon: '🗺️' },
+  { to: '/app/scan', label: 'Scan', icon: '📷' },
+  { to: '/app/history', label: 'Log', icon: '📋' },
+  { to: '/app/profile', label: 'You', icon: '👤' },
 ]
 
 function getPathRank(pathname) {
@@ -49,7 +49,7 @@ export default function AppLayout() {
     <div className="pg-shell">
       <header className="pg-topbar">
         <div className="pg-topbar-brand">PadiGuard AI</div>
-        <div className="pg-topbar-subtitle">Climate-aware rice farming assistant</div>
+        <div className="pg-topbar-subtitle">Simple checks for padi health, sprays, and weather</div>
         <OfflineIndicator isOnline={isOnline} />
       </header>
 
