@@ -1,7 +1,17 @@
 import { useNavigate } from 'react-router-dom'
 import { useMemo, useState, useEffect, useRef } from 'react'
 import { usePWA } from '../../hooks/usePWA'
+import {
+  IconMicroscope,
+  IconMap,
+  IconChart,
+  IconCloud,
+  IconClipboard,
+  IconDownload,
+} from '../../components/icons/UiIcons'
 import '../../styles/landing-additions.css'
+
+const zoneTint = 'rgba(18, 163, 108, 0.12)'
 
 /* ── Data ───────────────────────────────────────────── */
 const featureCards = [
@@ -9,29 +19,25 @@ const featureCards = [
     tag: 'Leaf check',
     title: 'Catch disease early',
     copy: 'Photo leaves and see the disease name and how serious it looks.',
-    icon: '🔬',
-    accent: 'var(--pg-primary)',
+    Icon: IconMicroscope,
   },
   {
     tag: 'Farm map',
     title: 'Work by zone',
     copy: 'Split the farm into areas so sprays and checks stay clear.',
-    icon: '🗺️',
-    accent: 'var(--pg-secondary)',
+    Icon: IconMap,
   },
   {
     tag: 'Treatment',
     title: 'Spend wisely',
     copy: 'Compare cost and safer options before you buy and apply.',
-    icon: '📊',
-    accent: 'var(--pg-accent)',
+    Icon: IconChart,
   },
   {
     tag: 'Weather',
     title: 'Spray at the right time',
     copy: 'Get timing tips so rain does not wash your spray away.',
-    icon: '🌦️',
-    accent: '#c45d12',
+    Icon: IconCloud,
   },
 ]
 
@@ -40,18 +46,18 @@ const flowSteps = [
     num: '01',
     title: 'Map your farm area',
     desc: 'Draw farm areas and size so checks stay tied to each part of the field.',
-    icon: '🗺️',
+    Icon: IconMap,
     visual: {
       label: 'Farm layout',
       zones: ['Zone A', 'Zone B', 'Zone C'],
-      zoneColors: ['rgba(18,163,108,0.18)', 'rgba(15,164,174,0.14)', 'rgba(11,112,117,0.1)'],
+      zoneColors: [zoneTint, zoneTint, zoneTint],
     },
   },
   {
     num: '02',
     title: 'Scan crop condition',
     desc: 'Photo padi leaves to see the problem level and how sure the read is.',
-    icon: '🔬',
+    Icon: IconMicroscope,
     visual: {
       label: 'Scan result',
       disease: 'Leaf blast',
@@ -63,7 +69,7 @@ const flowSteps = [
     num: '03',
     title: 'Apply action plan',
     desc: 'Follow spray time, amount, and cost tips with weather in mind.',
-    icon: '💊',
+    Icon: IconClipboard,
     visual: {
       label: 'Action plan',
       items: ['Spray at 3–5 PM', 'Dosage: 200ml/ha', 'Est. return: RM640'],
@@ -79,9 +85,9 @@ const statsData = [
 ]
 
 const previewZones = [
-  { label: 'Zone A', pct: 84, color: 'var(--pg-primary)' },
-  { label: 'Zone B', pct: 64, color: '#c45d12' },
-  { label: 'Zone C', pct: 76, color: 'var(--pg-secondary)' },
+  { label: 'Zone A', pct: 84 },
+  { label: 'Zone B', pct: 64 },
+  { label: 'Zone C', pct: 76 },
 ]
 
 /* ── Utility: intersection observer hook ── */
@@ -141,7 +147,7 @@ function CountUp({ target, duration = 1400, delay = 0, suffix = '' }) {
 }
 
 /* ── Animated progress bar ── */
-function AnimatedBar({ value, color, delay = 0 }) {
+function AnimatedBar({ value, delay = 0 }) {
   const [width, setWidth] = useState(0)
   const ref = useRef(null)
   const [started, setStarted] = useState(false)
@@ -169,10 +175,7 @@ function AnimatedBar({ value, color, delay = 0 }) {
     <div ref={ref} className="pg-animated-bar-track">
       <div
         className="pg-animated-bar-fill"
-        style={{
-          width: `${width}%`,
-          background: color,
-        }}
+        style={{ width: `${width}%` }}
       />
     </div>
   )
@@ -236,6 +239,7 @@ export default function Landing() {
   const previouslyInstalled = localStorage.getItem('padiguard_install_accepted') === '1'
 
   const selectedFlow = useMemo(() => flowSteps[selectedStep], [selectedStep])
+  const SpotlightIcon = selectedFlow.Icon
 
   // Section refs for scroll-reveal
   const featuresRef = useRef(null)
@@ -358,7 +362,7 @@ export default function Landing() {
             {/* Primary CTA — one clear action */}
             <div className="pg-landing-hero-ctas">
               <button type="button" className="pg-btn pg-btn-primary pg-btn-landing pg-btn-landing--primary" onClick={onInstall}>
-                <span className="pg-btn-icon" aria-hidden="true">⬇</span>
+                <IconDownload className="pg-icon pg-icon--btn" aria-hidden="true" />
                 Install app
               </button>
               <button type="button" className="pg-btn pg-btn-ghost pg-btn-landing" onClick={() => navigate('/auth')}>
@@ -387,7 +391,7 @@ export default function Landing() {
                   {previewZones.map((z, i) => (
                     <div key={z.label} className="pg-preview-zone-item">
                       <span className="pg-preview-zone-name">{z.label}</span>
-                      <AnimatedBar value={z.pct} color={z.color} delay={i * 200} />
+                      <AnimatedBar value={z.pct} delay={i * 200} />
                       <span className="pg-preview-zone-pct">{z.pct}%</span>
                     </div>
                   ))}
@@ -436,18 +440,21 @@ export default function Landing() {
           <div className="pg-section-tag">What you can do</div>
           <h2 className="pg-landing-section-title">Tools for day-to-day field work</h2>
           <div className="pg-landing-feature-grid-new">
-            {featureCards.map((feature, i) => (
+            {featureCards.map((feature, i) => {
+              const FeatureIcon = feature.Icon
+              return (
               <article
                 key={feature.title}
                 className={`pg-landing-feature-card-new ${hoveredFeature === i ? 'is-hovered' : ''}`}
                 style={{
                   animationDelay: `${i * 100}ms`,
-                  '--card-accent': feature.accent,
                 }}
                 onMouseEnter={() => setHoveredFeature(i)}
                 onMouseLeave={() => setHoveredFeature(null)}
               >
-                <div className="pg-feature-card-icon">{feature.icon}</div>
+                <div className="pg-feature-card-icon">
+                  <FeatureIcon className="pg-icon pg-icon--feature" />
+                </div>
                 <div className="pg-feature-card-head">
                   <span className="pg-feature-tag-new">{feature.tag}</span>
                 </div>
@@ -455,7 +462,8 @@ export default function Landing() {
                 <p>{feature.copy}</p>
                 <div className="pg-feature-accent-bar" aria-hidden="true" />
               </article>
-            ))}
+              )
+            })}
           </div>
         </section>
 
@@ -469,7 +477,9 @@ export default function Landing() {
           <h2 className="pg-landing-section-title">From map to action in three steps</h2>
           <div className="pg-landing-workflow-grid">
             <div className="pg-landing-workflow-steps">
-              {flowSteps.map((step, index) => (
+              {flowSteps.map((step, index) => {
+                const StepIcon = step.Icon
+                return (
                 <button
                   key={step.num}
                   type="button"
@@ -478,19 +488,25 @@ export default function Landing() {
                 >
                   <span className="pg-step-num-new">{step.num}</span>
                   <div className="pg-step-body-new">
-                    <h3>{step.icon} {step.title}</h3>
+                    <h3 className="pg-step-title-row">
+                      <StepIcon className="pg-icon pg-icon--step" />
+                      <span>{step.title}</span>
+                    </h3>
                     <p>{step.desc}</p>
                   </div>
                   {selectedStep === index && <div className="pg-step-active-bar" />}
                   <span className="pg-step-chevron-new" aria-hidden="true">›</span>
                 </button>
-              ))}
+                )
+              })}
             </div>
 
             <div className="pg-landing-workflow-spotlight">
               <div className="pg-spotlight-content" key={selectedFlow.num}>
                 <div className="pg-spotlight-tag-new">Step {selectedFlow.num}</div>
-                <div className="pg-spotlight-big-icon">{selectedFlow.icon}</div>
+                <div className="pg-spotlight-icon-wrap" aria-hidden="true">
+                  <SpotlightIcon className="pg-icon pg-icon--spotlight" />
+                </div>
                 <h3>{selectedFlow.title}</h3>
                 <p>{selectedFlow.desc}</p>
                 <StepVisual step={selectedFlow} />
@@ -518,7 +534,7 @@ export default function Landing() {
           <p className="pg-landing-cta-desc">After you sign in, the same steps work whether you use the browser or the installed app.</p>
           <div className="pg-landing-cta-buttons">
             <button type="button" className="pg-btn pg-btn-primary pg-btn-landing pg-btn-landing--primary" onClick={onInstall}>
-              <span className="pg-btn-icon" aria-hidden="true">⬇</span>
+              <IconDownload className="pg-icon pg-icon--btn" aria-hidden="true" />
               Install PadiGuard AI
             </button>
             <button type="button" className="pg-btn pg-btn-ghost pg-btn-landing" onClick={() => navigate('/auth')}>

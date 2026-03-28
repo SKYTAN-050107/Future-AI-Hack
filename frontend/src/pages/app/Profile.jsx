@@ -4,7 +4,7 @@ import SectionHeader from '../../components/ui/SectionHeader'
 
 export default function Profile() {
   const navigate = useNavigate()
-  const { logout, resetOnboarding } = useSessionContext()
+  const { logout } = useSessionContext()
 
   return (
     <section className="pg-page">
@@ -17,8 +17,7 @@ export default function Profile() {
         <h2>Account</h2>
         <div className="pg-cta-row">
           <button type="button" className="pg-btn pg-btn-ghost" onClick={() => {
-            resetOnboarding()
-            navigate('/onboarding')
+            navigate('/onboarding', { state: { fromProfile: true } })
           }}>
             Edit farm setup
           </button>

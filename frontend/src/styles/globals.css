@@ -15,6 +15,9 @@
   --s-2: 16px;
   --s-3: 24px;
   --s-4: 32px;
+  /* Unified buttons */
+  --btn-radius: 12px;
+  --btn-font-size: 0.9375rem;
 }
 
 * {
@@ -308,12 +311,29 @@ body {
   flex-wrap: wrap;
 }
 
+/* Monochrome icons — inherit muted; active tabs use primary */
+.pg-icon {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  color: rgb(var(--muted));
+}
+
+.pg-tab.is-active .pg-icon {
+  color: rgb(var(--primary));
+}
+
+/* Icons inside buttons follow button text color (primary = white, ghost = text) */
+.pg-btn .pg-icon {
+  color: inherit;
+}
+
 .pg-btn {
   border: 0;
-  border-radius: 12px;
+  border-radius: var(--btn-radius);
   padding: 14px 16px;
   min-height: 48px;
-  font-size: 0.9375rem;
+  font-size: var(--btn-font-size);
   font-weight: 700;
   cursor: pointer;
   transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.12s ease;
@@ -336,7 +356,7 @@ body {
 .pg-btn-primary {
   color: #fff;
   background: rgb(var(--primary));
-  box-shadow: 0 4px 14px rgba(18, 163, 108, 0.22);
+  box-shadow: 0 2px 8px rgba(10, 31, 26, 0.1);
 }
 
 .pg-btn-primary:hover:not(:disabled) {
@@ -592,24 +612,21 @@ body {
 }
 
 .pg-tab.is-active {
-  color: rgb(var(--accent));
+  color: rgb(var(--primary));
   background: rgba(18, 163, 108, 0.1);
   font-weight: 600;
 }
 
-.pg-tab-icon-chip {
+.pg-tab-icon-wrap {
   width: 28px;
   height: 28px;
   border-radius: 999px;
   display: grid;
   place-items: center;
-  font-size: 0.95rem;
-  line-height: 1;
-  border: none;
-  background: transparent;
+  background: rgba(11, 112, 117, 0.06);
 }
 
-.pg-tab.is-active .pg-tab-icon-chip {
+.pg-tab.is-active .pg-tab-icon-wrap {
   background: rgba(18, 163, 108, 0.12);
 }
 
@@ -847,10 +864,10 @@ body {
 
 .pg-scan-viewfinder {
   margin-top: 14px;
-  border-radius: 20px;
+  border-radius: 16px;
   min-height: 300px;
   border: 1px solid rgba(11, 112, 117, 0.2);
-  background: linear-gradient(155deg, #113a37, #0e4e56);
+  background: #1a2e2c;
   display: grid;
   place-items: center;
   position: relative;

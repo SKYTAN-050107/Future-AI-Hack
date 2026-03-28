@@ -3,13 +3,14 @@ import { useEffect, useRef, useState } from 'react'
 import OfflineIndicator from '../feedback/OfflineIndicator'
 import { useOffline } from '../../hooks/useOffline'
 import { clearPostAuthPath, setLastAppPath } from '../../utils/navigationState'
+import { IconHome, IconMap, IconCamera, IconList, IconUser } from '../icons/UiIcons'
 
 const tabs = [
-  { to: '/app', label: 'Home', icon: '🏠' },
-  { to: '/app/map', label: 'Map', icon: '🗺️' },
-  { to: '/app/scan', label: 'Scan', icon: '📷' },
-  { to: '/app/history', label: 'Log', icon: '📋' },
-  { to: '/app/profile', label: 'You', icon: '👤' },
+  { to: '/app', label: 'Home', Icon: IconHome },
+  { to: '/app/map', label: 'Map', Icon: IconMap },
+  { to: '/app/scan', label: 'Scan', Icon: IconCamera },
+  { to: '/app/history', label: 'Log', Icon: IconList },
+  { to: '/app/profile', label: 'You', Icon: IconUser },
 ]
 
 function getPathRank(pathname) {
@@ -60,16 +61,21 @@ export default function AppLayout() {
       </main>
 
       <nav className="pg-bottom-tabs" aria-label="Primary">
-        {tabs.map((tab) => (
-          <NavLink
-            key={tab.to}
-            to={tab.to}
-            className={({ isActive }) => `pg-tab ${isActive ? 'is-active' : ''}`}
-          >
-            <span className="pg-tab-icon-chip" aria-hidden="true">{tab.icon}</span>
-            <span className="pg-tab-label">{tab.label}</span>
-          </NavLink>
-        ))}
+        {tabs.map((tab) => {
+          const TabIcon = tab.Icon
+          return (
+            <NavLink
+              key={tab.to}
+              to={tab.to}
+              className={({ isActive }) => `pg-tab ${isActive ? 'is-active' : ''}`}
+            >
+              <span className="pg-tab-icon-wrap" aria-hidden="true">
+                <TabIcon className="pg-icon" />
+              </span>
+              <span className="pg-tab-label">{tab.label}</span>
+            </NavLink>
+          )
+        })}
       </nav>
     </div>
   )

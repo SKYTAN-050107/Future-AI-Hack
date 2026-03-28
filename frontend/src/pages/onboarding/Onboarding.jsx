@@ -1,11 +1,13 @@
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useMemo, useState } from 'react'
 import { useSessionContext } from '../../hooks/useSessionContext'
 import { clearPostAuthPath, getPostAuthPath } from '../../utils/navigationState'
 
 export default function Onboarding() {
+  const routerLocation = useLocation()
   const navigate = useNavigate()
   const { completeOnboarding } = useSessionContext()
+  const fromProfile = Boolean(routerLocation.state?.fromProfile)
   const [step, setStep] = useState(0)
   const [farmName, setFarmName] = useState('')
   const [location, setLocation] = useState('')
@@ -96,6 +98,15 @@ export default function Onboarding() {
         ) : null}
 
         <div className="pg-cta-row">
+          {fromProfile ? (
+            <button
+              type="button"
+              className="pg-btn pg-btn-ghost"
+              onClick={() => navigate('/app/profile')}
+            >
+              Back to profile
+            </button>
+          ) : null}
           {step > 0 ? (
             <button type="button" className="pg-btn pg-btn-ghost" onClick={() => setStep((value) => value - 1)}>
               Back
