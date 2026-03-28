@@ -18,12 +18,9 @@
 
 body {
   margin: 0;
-  font-family: 'Sora', 'Poppins', 'Avenir Next', 'Segoe UI', sans-serif;
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   color: rgb(var(--text));
-  background:
-    radial-gradient(circle at 10% 15%, rgba(18, 163, 108, 0.2), transparent 32%),
-    radial-gradient(circle at 86% 84%, rgba(15, 164, 174, 0.18), transparent 36%),
-    linear-gradient(170deg, #edf8f4 0%, #f9fcff 62%, #ecf6fa 100%);
+  background: #f2f7f4;
   min-height: 100vh;
   padding-top: env(safe-area-inset-top);
   padding-bottom: env(safe-area-inset-bottom);

@@ -6,40 +6,32 @@ import '../../styles/landing-additions.css'
 /* ── Data ───────────────────────────────────────────── */
 const featureCards = [
   {
-    tag: 'AI Scanner',
-    title: 'Detect disease early',
-    copy: 'Capture leaf images and receive disease + severity output in seconds.',
+    tag: 'Leaf check',
+    title: 'Catch disease early',
+    copy: 'Photo leaves and see the disease name and how serious it looks.',
     icon: '🔬',
-    stat: '90%+',
-    statLabel: 'accuracy',
     accent: 'var(--pg-primary)',
   },
   {
-    tag: 'Farm Mapper',
-    title: 'Track by zone',
-    copy: 'Divide your farm into sectors so actions stay targeted and measurable.',
+    tag: 'Farm map',
+    title: 'Work by zone',
+    copy: 'Split the farm into areas so sprays and checks stay clear.',
     icon: '🗺️',
-    stat: '∞',
-    statLabel: 'sectors',
     accent: 'var(--pg-secondary)',
   },
   {
-    tag: 'Treatment ROI',
-    title: 'Spend where it pays',
-    copy: 'Compare cost, yield impact, and safer alternatives before applying treatment.',
+    tag: 'Treatment',
+    title: 'Spend wisely',
+    copy: 'Compare cost and safer options before you buy and apply.',
     icon: '📊',
-    stat: '3×',
-    statLabel: 'ROI insight',
     accent: 'var(--pg-accent)',
   },
   {
-    tag: 'Climate Timing',
-    title: 'Avoid rain mistakes',
-    copy: 'Get weather-aware spray timing advice to reduce wasted pesticide usage.',
+    tag: 'Weather',
+    title: 'Spray at the right time',
+    copy: 'Get timing tips so rain does not wash your spray away.',
     icon: '🌦️',
-    stat: '30%',
-    statLabel: 'less waste',
-    accent: '#e47f1f',
+    accent: '#c45d12',
   },
 ]
 
@@ -47,22 +39,22 @@ const flowSteps = [
   {
     num: '01',
     title: 'Map your farm area',
-    desc: 'Draw farm sectors and estimate hectares for targeted monitoring.',
+    desc: 'Draw farm areas and size so checks stay tied to each part of the field.',
     icon: '🗺️',
     visual: {
-      label: 'Farm Layout',
+      label: 'Farm layout',
       zones: ['Zone A', 'Zone B', 'Zone C'],
-      zoneColors: ['rgba(18,163,108,0.22)', 'rgba(15,164,174,0.18)', 'rgba(11,112,117,0.12)'],
+      zoneColors: ['rgba(18,163,108,0.18)', 'rgba(15,164,174,0.14)', 'rgba(11,112,117,0.1)'],
     },
   },
   {
     num: '02',
     title: 'Scan crop condition',
-    desc: 'Capture padi leaf symptoms and get disease severity with confidence score.',
+    desc: 'Photo padi leaves to see the problem level and how sure the read is.',
     icon: '🔬',
     visual: {
-      label: 'Scan Result',
-      disease: 'Leaf Blast',
+      label: 'Scan result',
+      disease: 'Leaf blast',
       severity: 72,
       confidence: '94%',
     },
@@ -70,25 +62,25 @@ const flowSteps = [
   {
     num: '03',
     title: 'Apply action plan',
-    desc: 'Follow treatment timing, dosage, and ROI recommendation with weather context.',
+    desc: 'Follow spray time, amount, and cost tips with weather in mind.',
     icon: '💊',
     visual: {
-      label: 'Action Plan',
-      items: ['Spray at 3–5 PM', 'Dosage: 200ml/ha', 'ROI: RM640'],
+      label: 'Action plan',
+      items: ['Spray at 3–5 PM', 'Dosage: 200ml/ha', 'Est. return: RM640'],
     },
   },
 ]
 
 const statsData = [
-  { n: 90, suffix: '%+', label: 'Disease Accuracy' },
-  { n: 20, suffix: '%', label: 'Yield Uplift' },
-  { n: 30, suffix: '%', label: 'Less Waste' },
-  { n: 100, suffix: '%', label: 'Offline Ready' },
+  { n: 90, suffix: '%+', label: 'Disease accuracy' },
+  { n: 20, suffix: '%', label: 'Yield uplift' },
+  { n: 30, suffix: '%', label: 'Less waste' },
+  { n: 100, suffix: '%', label: 'Works offline' },
 ]
 
 const previewZones = [
   { label: 'Zone A', pct: 84, color: 'var(--pg-primary)' },
-  { label: 'Zone B', pct: 64, color: '#ea8c14' },
+  { label: 'Zone B', pct: 64, color: '#c45d12' },
   { label: 'Zone C', pct: 76, color: 'var(--pg-secondary)' },
 ]
 
@@ -180,7 +172,6 @@ function AnimatedBar({ value, color, delay = 0 }) {
         style={{
           width: `${width}%`,
           background: color,
-          boxShadow: width > 0 ? `0 0 10px ${color}44` : 'none',
         }}
       />
     </div>
@@ -213,8 +204,8 @@ function StepVisual({ step }) {
           <div className="pg-flow-severity-fill" style={{ width: `${v.severity}%` }} />
         </div>
         <div className="pg-flow-visual-meta">
-          <span>Severity {v.severity}%</span>
-          <span>Confidence {v.confidence}</span>
+          <span>Problem level {v.severity}%</span>
+          <span>How sure {v.confidence}</span>
         </div>
       </div>
     )
@@ -296,38 +287,40 @@ export default function Landing() {
 
   return (
     <div className="pg-landing-page">
-      {/* Decorative background blobs */}
-      <div className="pg-landing-bg-blob pg-landing-bg-blob--1" aria-hidden="true" />
-      <div className="pg-landing-bg-blob pg-landing-bg-blob--2" aria-hidden="true" />
-      <div className="pg-landing-bg-blob pg-landing-bg-blob--3" aria-hidden="true" />
-
       {/* ── STICKY NAV ── */}
       <nav className="pg-landing-nav">
         <div className="pg-landing-nav-inner">
-          <div className="pg-landing-nav-logo" onClick={() => scrollToSection('hero')}>
-            <span className="pg-landing-nav-logo-dot" />
+          <button
+            type="button"
+            className="pg-landing-nav-logo"
+            onClick={() => scrollToSection('hero')}
+            aria-label="PadiGuard AI, go to top"
+          >
+            <span className="pg-landing-nav-logo-dot" aria-hidden="true" />
             <span className="pg-landing-nav-logo-text">
               Padi<strong>Guard</strong> AI
             </span>
-          </div>
+          </button>
 
           {/* Desktop nav links */}
           <div className="pg-landing-nav-links">
-            <button className="pg-landing-nav-link" onClick={() => scrollToSection('features')}>Features</button>
-            <button className="pg-landing-nav-link" onClick={() => scrollToSection('workflow')}>How It Works</button>
-            <button className="pg-landing-nav-link" onClick={() => scrollToSection('cta')}>Get Started</button>
+            <button type="button" className="pg-landing-nav-link" onClick={() => scrollToSection('features')}>Features</button>
+            <button type="button" className="pg-landing-nav-link" onClick={() => scrollToSection('workflow')}>How it works</button>
+            <button type="button" className="pg-landing-nav-link" onClick={() => scrollToSection('cta')}>Get started</button>
           </div>
 
           {/* Nav CTA */}
-          <button className="pg-landing-nav-cta" onClick={() => navigate('/auth')}>
-            Sign In
+          <button type="button" className="pg-landing-nav-cta" onClick={() => navigate('/auth')}>
+            Sign in
           </button>
 
           {/* Mobile hamburger */}
           <button
+            type="button"
             className={`pg-landing-hamburger ${mobileMenuOpen ? 'is-open' : ''}`}
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
             aria-label="Toggle navigation"
+            aria-expanded={mobileMenuOpen}
           >
             <span /><span /><span />
           </button>
@@ -336,10 +329,10 @@ export default function Landing() {
         {/* Mobile dropdown */}
         {mobileMenuOpen && (
           <div className="pg-landing-mobile-menu">
-            <button className="pg-landing-mobile-link" onClick={() => scrollToSection('features')}>Features</button>
-            <button className="pg-landing-mobile-link" onClick={() => scrollToSection('workflow')}>How It Works</button>
-            <button className="pg-landing-mobile-link" onClick={() => scrollToSection('cta')}>Get Started</button>
-            <button className="pg-landing-mobile-link pg-landing-mobile-link--cta" onClick={() => navigate('/auth')}>Sign In / Sign Up</button>
+            <button type="button" className="pg-landing-mobile-link" onClick={() => scrollToSection('features')}>Features</button>
+            <button type="button" className="pg-landing-mobile-link" onClick={() => scrollToSection('workflow')}>How it works</button>
+            <button type="button" className="pg-landing-mobile-link" onClick={() => scrollToSection('cta')}>Get started</button>
+            <button type="button" className="pg-landing-mobile-link pg-landing-mobile-link--cta" onClick={() => navigate('/auth')}>Sign in or sign up</button>
           </div>
         )}
       </nav>
@@ -351,47 +344,29 @@ export default function Landing() {
         <section id="hero" className="pg-landing-hero-section">
           <div className="pg-landing-hero-content">
             <div className="pg-landing-badge">
-              <span className="pg-landing-badge-dot" />
-              Offline-first PWA · Smallholder Padi Farmers
+              Works offline · For smallholder padi farmers
             </div>
             <h1 className="pg-landing-hero-title">
-              Protect crop yield with{' '}
-              <span className="pg-title-accent">AI-guided</span>{' '}
-              farm decisions.
+              Protect your crop with{' '}
+              <span className="pg-landing-hero-emphasis">clear, simple</span>{' '}
+              decisions in the field.
             </h1>
             <p className="pg-landing-hero-desc">
-              PadiGuard AI helps you detect diseases early, optimize treatment cost, and avoid
-              weather-timing mistakes — available in browser and installed mode.
+              Spot problems early, plan sprays and costs, and avoid bad weather timing — in the browser or from your home screen.
             </p>
 
-            {/* KPI row */}
-            <div className="pg-landing-kpi-row">
-              {[
-                { value: 90, suffix: '%+', label: 'Disease accuracy' },
-                { value: 20, suffix: '%', label: 'Yield uplift' },
-                { value: 30, suffix: '%', label: 'Less waste' },
-              ].map((kpi, i) => (
-                <div key={kpi.label} className="pg-landing-kpi-card">
-                  <strong>
-                    <CountUp target={kpi.value} delay={i * 200} suffix={kpi.suffix} />
-                  </strong>
-                  <span>{kpi.label}</span>
-                </div>
-              ))}
-            </div>
-
-            {/* CTA buttons */}
+            {/* Primary CTA — one clear action */}
             <div className="pg-landing-hero-ctas">
-              <button className="pg-btn pg-btn-primary pg-btn-landing" onClick={onInstall}>
-                <span className="pg-btn-icon">⬇</span>
-                Install App
+              <button type="button" className="pg-btn pg-btn-primary pg-btn-landing pg-btn-landing--primary" onClick={onInstall}>
+                <span className="pg-btn-icon" aria-hidden="true">⬇</span>
+                Install app
               </button>
-              <button className="pg-btn pg-btn-ghost pg-btn-landing" onClick={() => navigate('/auth')}>
-                Sign In / Sign Up
+              <button type="button" className="pg-btn pg-btn-ghost pg-btn-landing" onClick={() => navigate('/auth')}>
+                Sign in or sign up
               </button>
               {previouslyInstalled && (
-                <button className="pg-btn pg-btn-ghost pg-btn-landing" onClick={onOpenInstalledApp}>
-                  Open Installed App
+                <button type="button" className="pg-btn pg-btn-ghost pg-btn-landing" onClick={onOpenInstalledApp}>
+                  Open installed app
                 </button>
               )}
             </div>
@@ -402,11 +377,11 @@ export default function Landing() {
           {/* Hero preview card */}
           <div className="pg-landing-hero-visual">
             <div className="pg-landing-preview-card-wrapper">
-              <p className="pg-landing-preview-label-new">Live App Preview</p>
+              <p className="pg-landing-preview-label-new">Sample screen</p>
               <div className="pg-landing-preview-card-new">
                 <div className="pg-preview-header">
-                  <h3>Farm Health Today</h3>
-                  <span className="pg-preview-status-live">● Live</span>
+                  <h3>Farm health today</h3>
+                  <span className="pg-preview-status-example">Example</span>
                 </div>
                 <div className="pg-preview-zones-new">
                   {previewZones.map((z, i) => (
@@ -419,30 +394,28 @@ export default function Landing() {
                 </div>
                 <ul className="pg-preview-alerts">
                   <li>
-                    <span className="pg-preview-dot pg-preview-dot--warn" />
+                    <span className="pg-preview-dot pg-preview-dot--warn" aria-hidden="true" />
                     Leaf blast risk: Zone C
                   </li>
                   <li>
-                    <span className="pg-preview-dot pg-preview-dot--ok" />
-                    Best spray window: 3 – 5 PM
+                    <span className="pg-preview-dot pg-preview-dot--ok" aria-hidden="true" />
+                    Good spray window: 3 – 5 PM
                   </li>
                   <li>
-                    <span className="pg-preview-dot pg-preview-dot--ok" />
-                    ROI estimate: RM110 – RM640
+                    <span className="pg-preview-dot pg-preview-dot--ok" aria-hidden="true" />
+                    Est. return: RM110 – RM640
                   </li>
                 </ul>
               </div>
-              {/* Floating chips */}
-              <div className="pg-preview-chip pg-preview-chip--tl">AI ✓</div>
-              <div className="pg-preview-chip pg-preview-chip--br">Offline-ready</div>
             </div>
           </div>
         </section>
 
-        {/* ── STATS STRIP ── */}
+        {/* ── TRUST STRIP (single proof block) ── */}
         <section
           ref={statsRef}
           className={`pg-landing-stats-strip ${statsVisible ? 'is-revealed' : ''}`}
+          aria-label="What the app can help with"
         >
           {statsData.map((s, i) => (
             <div key={s.label} className="pg-landing-stat-item">
@@ -460,8 +433,8 @@ export default function Landing() {
           ref={featuresRef}
           className={`pg-landing-features-section ${featuresVisible ? 'is-revealed' : ''}`}
         >
-          <div className="pg-section-tag">Core Features</div>
-          <h2 className="pg-landing-section-title">Everything needed for practical field decisions</h2>
+          <div className="pg-section-tag">What you can do</div>
+          <h2 className="pg-landing-section-title">Tools for day-to-day field work</h2>
           <div className="pg-landing-feature-grid-new">
             {featureCards.map((feature, i) => (
               <article
@@ -475,16 +448,12 @@ export default function Landing() {
                 onMouseLeave={() => setHoveredFeature(null)}
               >
                 <div className="pg-feature-card-icon">{feature.icon}</div>
-                <div className="pg-feature-card-top">
+                <div className="pg-feature-card-head">
                   <span className="pg-feature-tag-new">{feature.tag}</span>
-                  <span className="pg-feature-stat-new">
-                    <strong>{feature.stat}</strong>
-                    <em>{feature.statLabel}</em>
-                  </span>
                 </div>
                 <h3>{feature.title}</h3>
                 <p>{feature.copy}</p>
-                <div className="pg-feature-accent-bar" />
+                <div className="pg-feature-accent-bar" aria-hidden="true" />
               </article>
             ))}
           </div>
@@ -496,8 +465,8 @@ export default function Landing() {
           ref={flowRef}
           className={`pg-landing-workflow-section ${flowVisible ? 'is-revealed' : ''}`}
         >
-          <div className="pg-section-tag">How It Works</div>
-          <h2 className="pg-landing-section-title">Simple workflow from scan to action</h2>
+          <div className="pg-section-tag">How it works</div>
+          <h2 className="pg-landing-section-title">From map to action in three steps</h2>
           <div className="pg-landing-workflow-grid">
             <div className="pg-landing-workflow-steps">
               {flowSteps.map((step, index) => (
@@ -513,7 +482,7 @@ export default function Landing() {
                     <p>{step.desc}</p>
                   </div>
                   {selectedStep === index && <div className="pg-step-active-bar" />}
-                  <span className="pg-step-chevron-new">›</span>
+                  <span className="pg-step-chevron-new" aria-hidden="true">›</span>
                 </button>
               ))}
             </div>
@@ -544,17 +513,16 @@ export default function Landing() {
           ref={ctaRef}
           className={`pg-landing-cta-section ${ctaVisible ? 'is-revealed' : ''}`}
         >
-          <div className="pg-landing-cta-glow" />
-          <div className="pg-section-tag">Get Started</div>
-          <h2 className="pg-landing-cta-title">Start in browser now, install when ready</h2>
-          <p className="pg-landing-cta-desc">Your workflow stays identical after sign-in across both entry modes.</p>
+          <div className="pg-section-tag">Get started</div>
+          <h2 className="pg-landing-cta-title">Start in the browser, add to home screen when you like</h2>
+          <p className="pg-landing-cta-desc">After you sign in, the same steps work whether you use the browser or the installed app.</p>
           <div className="pg-landing-cta-buttons">
-            <button className="pg-btn pg-btn-primary pg-btn-landing" onClick={onInstall}>
-              <span className="pg-btn-icon">⬇</span>
+            <button type="button" className="pg-btn pg-btn-primary pg-btn-landing pg-btn-landing--primary" onClick={onInstall}>
+              <span className="pg-btn-icon" aria-hidden="true">⬇</span>
               Install PadiGuard AI
             </button>
-            <button className="pg-btn pg-btn-ghost pg-btn-landing" onClick={() => navigate('/auth')}>
-              Sign In / Sign Up
+            <button type="button" className="pg-btn pg-btn-ghost pg-btn-landing" onClick={() => navigate('/auth')}>
+              Sign in or sign up
             </button>
           </div>
         </section>
@@ -562,9 +530,9 @@ export default function Landing() {
         {/* ── FOOTER ── */}
         <footer className="pg-landing-footer">
           <span className="pg-landing-footer-brand">
-            <span className="pg-landing-nav-logo-dot" /> PadiGuard AI
+            <span className="pg-landing-nav-logo-dot" aria-hidden="true" /> PadiGuard AI
           </span>
-          <span className="pg-landing-footer-copy">© 2026 — Crop intelligence in your pocket</span>
+          <span className="pg-landing-footer-copy">© 2026 — Crop help in your pocket</span>
         </footer>
       </main>
     </div>
