@@ -9,9 +9,10 @@ import {
   IconClipboard,
   IconDownload,
 } from '../../components/icons/UiIcons'
+import ThemeToggle from '../../components/ui/ThemeToggle'
 import '../../styles/landing-additions.css'
 
-const zoneTint = 'rgba(18, 163, 108, 0.12)'
+const zoneTint = 'color-mix(in srgb, var(--primary) 16%, transparent)'
 
 /* ── Data ───────────────────────────────────────────── */
 const featureCards = [
@@ -336,6 +337,7 @@ export default function Landing() {
             <button type="button" className="pg-landing-mobile-link" onClick={() => scrollToSection('features')}>Features</button>
             <button type="button" className="pg-landing-mobile-link" onClick={() => scrollToSection('workflow')}>How it works</button>
             <button type="button" className="pg-landing-mobile-link" onClick={() => scrollToSection('cta')}>Get started</button>
+            <ThemeToggle showLabel className="pg-landing-mobile-link pg-landing-mobile-link--theme" />
             <button type="button" className="pg-landing-mobile-link pg-landing-mobile-link--cta" onClick={() => navigate('/auth')}>Sign in or sign up</button>
           </div>
         )}

@@ -6,10 +6,10 @@
 
 /* ── CSS custom props ── */
 :root {
-  --pg-primary: rgb(18, 163, 108);
-  --pg-secondary: rgb(15, 164, 174);
-  --pg-accent: rgb(11, 112, 117);
-  --pg-muted: rgb(74, 96, 90);
+  --pg-primary: var(--primary);
+  --pg-secondary: var(--secondary);
+  --pg-accent: var(--accent);
+  --pg-muted: var(--text-secondary);
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -21,7 +21,7 @@
   min-height: 100vh;
   position: relative;
   overflow-x: hidden;
-  background: #f2f7f4;
+  background: var(--bg);
 }
 
 /* ── Sticky Nav ── */
@@ -29,8 +29,8 @@
   position: sticky;
   top: 0;
   z-index: 100;
-  background: rgba(255, 255, 255, 0.97);
-  border-bottom: 1px solid rgba(11, 112, 117, 0.12);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--neutral) 22%, transparent);
 }
 
 .pg-landing-nav-inner {
@@ -72,7 +72,7 @@
 .pg-landing-nav-logo-text {
   font-size: 1.15rem;
   letter-spacing: -0.02em;
-  color: rgb(10, 31, 26);
+  color: var(--text-primary);
 }
 .pg-landing-nav-logo-text strong {
   font-weight: 800;
@@ -112,7 +112,7 @@
   transition: width 0.3s;
 }
 .pg-landing-nav-link:hover {
-  color: var(--pg-accent);
+  color: var(--text-primary);
 }
 .pg-landing-nav-link:hover::after {
   width: 100%;
@@ -120,7 +120,7 @@
 
 .pg-landing-nav-cta {
   background: transparent;
-  border: 1.5px solid rgba(18, 163, 108, 0.45);
+  border: 1.5px solid color-mix(in srgb, var(--pg-primary) 45%, transparent);
   color: var(--pg-primary);
   padding: 10px 20px;
   min-height: 44px;
@@ -165,7 +165,7 @@
   display: block;
   width: 22px;
   height: 2.5px;
-  background: var(--pg-accent);
+  background: var(--text-primary);
   border-radius: 2px;
   transition: all 0.3s;
 }
@@ -197,12 +197,12 @@
   padding: 12px 0;
   min-height: 44px;
   cursor: pointer;
-  border-bottom: 1px solid rgba(11, 112, 117, 0.08);
+  border-bottom: 1px solid color-mix(in srgb, var(--neutral) 20%, transparent);
   transition: color 0.2s;
   border-radius: 8px;
 }
 .pg-landing-mobile-link:hover {
-  color: var(--pg-accent);
+  color: var(--text-primary);
 }
 .pg-landing-mobile-link:focus-visible {
   outline: 2px solid var(--pg-primary);
@@ -213,6 +213,10 @@
   font-weight: 700;
   border-bottom: none;
   margin-top: 4px;
+}
+
+.pg-landing-mobile-link--theme {
+  color: var(--pg-muted);
 }
 
 /* ── Main content ── */
@@ -250,8 +254,8 @@
   align-items: center;
   padding: 8px 14px;
   border-radius: 999px;
-  border: 1px solid rgba(11, 112, 117, 0.2);
-  background: #fff;
+  border: 1px solid color-mix(in srgb, var(--neutral) 25%, transparent);
+  background: var(--surface);
   font-size: 0.8125rem;
   font-weight: 600;
   color: var(--pg-accent);
@@ -265,7 +269,7 @@
   font-weight: 800;
   line-height: 1.12;
   letter-spacing: -0.03em;
-  color: rgb(10, 31, 26);
+  color: var(--text-primary);
 }
 
 .pg-landing-hero-emphasis {
@@ -311,8 +315,8 @@
 }
 
 .pg-landing-preview-card-new {
-  background: #fff;
-  border: 1px solid rgba(11, 112, 117, 0.14);
+  background: var(--surface);
+  border: 1px solid color-mix(in srgb, var(--neutral) 24%, transparent);
   border-radius: 16px;
   padding: 20px;
   box-shadow: 0 8px 28px rgba(10, 31, 26, 0.06);
@@ -366,7 +370,7 @@
 .pg-animated-bar-track {
   height: 8px;
   border-radius: 999px;
-  background: rgba(11, 112, 117, 0.08);
+  background: color-mix(in srgb, var(--pg-accent) 24%, transparent);
   overflow: hidden;
 }
 .pg-animated-bar-fill {
@@ -400,7 +404,7 @@
   background: var(--pg-primary);
 }
 .pg-preview-dot--warn {
-  background: #e47f1f;
+  background: var(--pg-secondary);
 }
 
 /* ── Stats strip (single proof block) ── */
@@ -408,10 +412,10 @@
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   border-radius: 14px;
-  border: 1px solid rgba(11, 112, 117, 0.12);
+  border: 1px solid color-mix(in srgb, var(--neutral) 22%, transparent);
   overflow: hidden;
   margin-bottom: 56px;
-  background: #fff;
+  background: var(--surface);
   opacity: 0;
   transform: translateY(12px);
   transition: opacity 0.35s ease, transform 0.35s ease;

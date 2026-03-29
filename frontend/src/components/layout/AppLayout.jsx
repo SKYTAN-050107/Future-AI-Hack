@@ -2,6 +2,7 @@ import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useEffect, useRef, useState } from 'react'
 import { clearPostAuthPath, setLastAppPath } from '../../utils/navigationState'
 import { IconHome, IconMap, IconAgent, IconList, IconUser } from '../icons/UiIcons'
+import ThemeToggle from '../ui/ThemeToggle'
 
 const tabs = [
   { to: '/app', label: 'Home', Icon: IconHome },
@@ -46,6 +47,7 @@ export default function AppLayout() {
 
   return (
     <div className="pg-shell">
+      <ThemeToggle className="pg-theme-toggle-app" />
       <main className={`pg-main-content ${isScannerRoute ? 'pg-main-content-chat' : ''}`}>
         <div
           key={location.pathname}
