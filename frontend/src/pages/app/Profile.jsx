@@ -9,9 +9,8 @@ export default function Profile() {
   return (
     <section className="pg-page">
       <SectionHeader
-        eyebrow="Account"
-        title="Your profile"
-        subtitle="More settings can be added later. For now, manage your session here."
+        title="My Profile"
+        align="center"
       />
       <article className="pg-card">
         <h2>Account</h2>

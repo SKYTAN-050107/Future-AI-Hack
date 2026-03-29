@@ -25,9 +25,8 @@ export default function Treatment() {
   return (
     <section className="pg-page">
       <SectionHeader
-        eyebrow="Spray plan"
-        title="Cost and next steps"
-        subtitle="Suggested spray, cost, and return — check timing with the weather."
+        title="Treatment"
+        align="left"
         leadingAction={<BackButton fallback="/app" label="Back to home" />}
       />
 

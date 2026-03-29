@@ -28,9 +28,8 @@ export default function Dashboard() {
   return (
     <section className="pg-page">
       <SectionHeader
-        eyebrow="Today"
-        title="Your farm at a glance"
-        subtitle="Weather heads-up, zone status, and quick shortcuts."
+        title="Home"
+        align="center"
       />
 
       <RiskBanner

@@ -26,9 +26,8 @@ export default function History() {
   return (
     <section className="pg-page">
       <SectionHeader
-        eyebrow="Activity"
-        title="Past checks & sprays"
-        subtitle="A simple log of what you did and what the app found."
+        title="History"
+        align="center"
       />
 
       <article className="pg-card">

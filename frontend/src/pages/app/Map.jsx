@@ -4,9 +4,8 @@ export default function MapPage() {
   return (
     <section className="pg-page">
       <SectionHeader
-        eyebrow="Farm map"
-        title="Zones on your field"
-        subtitle="Draw areas, set size, and track each part of the farm."
+        title="Map"
+        align="center"
       />
 
       <article className="pg-map-stage">

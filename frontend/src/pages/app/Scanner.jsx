@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { IconImage, IconSend } from '../../components/icons/UiIcons'
+import SectionHeader from '../../components/ui/SectionHeader'
 import { scanDisease } from '../../api/scan'
 
 export default function Scanner() {
@@ -93,6 +94,7 @@ export default function Scanner() {
 
   return (
     <section className="pg-scanner-chat-page" aria-label="Crop scanner chat">
+      <SectionHeader title="Chat Agent" align="center" />
       <div className="pg-chat-thread" ref={chatScrollRef}>
         {chatMessages.map((message) => (
           <article

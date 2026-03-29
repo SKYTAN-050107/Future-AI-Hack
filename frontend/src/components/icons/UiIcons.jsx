@@ -49,6 +49,16 @@ export function IconCamera({ className }) {
   )
 }
 
+export function IconAgent({ className }) {
+  return (
+    <Svg className={className}>
+      <path d="M4 7.5a2.5 2.5 0 0 1 2.5-2.5h11A2.5 2.5 0 0 1 20 7.5V14a2.5 2.5 0 0 1-2.5 2.5H10l-4 3v-3h-.5A2.5 2.5 0 0 1 3 14V7.5z" />
+      <path d="M12 8.2v3.6M10.2 10h3.6" />
+      <path d="M16 8.3h.01M16 11.7h.01" />
+    </Svg>
+  )
+}
+
 export function IconList({ className }) {
   return (
     <Svg className={className}>

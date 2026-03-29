@@ -6,9 +6,8 @@ export default function Report() {
   return (
     <section className="pg-page">
       <SectionHeader
-        eyebrow="Report"
-        title="What the scan shows"
-        subtitle="Problem level, spread risk, and how sure the read is."
+        title="Report"
+        align="left"
         leadingAction={<BackButton fallback="/app/scan" label="Back to scanner" />}
       />
 

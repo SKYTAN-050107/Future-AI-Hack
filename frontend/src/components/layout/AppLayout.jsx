@@ -1,16 +1,14 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useEffect, useRef, useState } from 'react'
-import OfflineIndicator from '../feedback/OfflineIndicator'
-import { useOffline } from '../../hooks/useOffline'
 import { clearPostAuthPath, setLastAppPath } from '../../utils/navigationState'
-import { IconHome, IconMap, IconCamera, IconList, IconUser } from '../icons/UiIcons'
+import { IconHome, IconMap, IconAgent, IconList, IconUser } from '../icons/UiIcons'
 
 const tabs = [
   { to: '/app', label: 'Home', Icon: IconHome },
   { to: '/app/map', label: 'Map', Icon: IconMap },
-  { to: '/app/scan', label: 'Scan', Icon: IconCamera },
-  { to: '/app/history', label: 'Log', Icon: IconList },
-  { to: '/app/profile', label: 'You', Icon: IconUser },
+  { to: '/app/scan', label: 'Chat', Icon: IconAgent },
+  { to: '/app/history', label: 'History', Icon: IconList },
+  { to: '/app/profile', label: 'Profile', Icon: IconUser },
 ]
 
 function getPathRank(pathname) {
@@ -31,7 +29,6 @@ function getPathRank(pathname) {
 }
 
 export default function AppLayout() {
-  const { isOnline } = useOffline()
   const location = useLocation()
   const [direction, setDirection] = useState('forward')
   const previousRankRef = useRef(getPathRank(location.pathname))
@@ -49,14 +46,6 @@ export default function AppLayout() {
 
   return (
     <div className="pg-shell">
-      {!isScannerRoute ? (
-        <header className="pg-topbar">
-          <div className="pg-topbar-brand">PadiGuard AI</div>
-          <div className="pg-topbar-subtitle">Simple checks for padi health, sprays, and weather</div>
-          <OfflineIndicator isOnline={isOnline} />
-        </header>
-      ) : null}
-
       <main className={`pg-main-content ${isScannerRoute ? 'pg-main-content-chat' : ''}`}>
         <div
           key={location.pathname}
