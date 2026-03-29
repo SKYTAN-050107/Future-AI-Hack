@@ -111,3 +111,31 @@ export function IconClipboard({ className }) {
     </Svg>
   )
 }
+
+export function IconArrowLeft({ className }) {
+  return (
+    <Svg className={className}>
+      <path d="M15 5l-7 7 7 7" />
+      <path d="M8 12h12" />
+    </Svg>
+  )
+}
+
+export function IconImage({ className }) {
+  return (
+    <Svg className={className}>
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <circle cx="9" cy="10" r="1.2" />
+      <path d="M21 16l-5-5-5 5-2-2-6 6" />
+    </Svg>
+  )
+}
+
+export function IconSend({ className }) {
+  return (
+    <Svg className={className}>
+      <path d="M3 12L21 4l-7 16-3-6-8-2z" />
+      <path d="M11 14l10-10" />
+    </Svg>
+  )
+}

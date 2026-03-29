@@ -2,12 +2,11 @@ import { useEffect, useState } from 'react'
 import SectionHeader from '../../components/ui/SectionHeader'
 import MetricTile from '../../components/ui/MetricTile'
 import SkeletonBlock from '../../components/feedback/SkeletonBlock'
-import BottomSheet from '../../components/ui/BottomSheet'
+import BackButton from '../../components/navigation/BackButton'
 import { getTreatmentPlan } from '../../api/treatment'
 
 export default function Treatment() {
   const [plan, setPlan] = useState(null)
-  const [chatOpen, setChatOpen] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -29,11 +28,7 @@ export default function Treatment() {
         eyebrow="Spray plan"
         title="Cost and next steps"
         subtitle="Suggested spray, cost, and return — check timing with the weather."
-        action={(
-          <button type="button" className="pg-btn pg-btn-ghost pg-btn-inline" onClick={() => setChatOpen(true)}>
-            Help
-          </button>
-        )}
+        leadingAction={<BackButton fallback="/app" label="Back to home" />}
       />
 
       <article className="pg-card">
@@ -65,22 +60,6 @@ export default function Treatment() {
           <p>Wear gloves and a mask. Keep spray away from water channels for at least a day.</p>
         </article>
       </div>
-
-      <BottomSheet open={chatOpen} title="Spray help" onClose={() => setChatOpen(false)}>
-        <div className="pg-chatbot-panel">
-          <div className="pg-chatbot-message from-ai">
-            Ask about amount, timing, or cheaper options for your farm.
-          </div>
-          <div className="pg-chatbot-message from-user">
-            Show a lower-cost option.
-          </div>
-          <div className="pg-chatbot-note">
-            Full chat will work when connected to your service.
-          </div>
-          <input className="pg-input" placeholder="Type a question…" disabled />
-          <button type="button" className="pg-btn pg-btn-primary" disabled>Send</button>
-        </div>
-      </BottomSheet>
     </section>
   )
 }

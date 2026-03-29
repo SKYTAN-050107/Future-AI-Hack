@@ -35,6 +35,7 @@ export default function AppLayout() {
   const location = useLocation()
   const [direction, setDirection] = useState('forward')
   const previousRankRef = useRef(getPathRank(location.pathname))
+  const isScannerRoute = location.pathname.startsWith('/app/scan')
 
   useEffect(() => {
     const nextRank = getPathRank(location.pathname)
@@ -48,14 +49,19 @@ export default function AppLayout() {
 
   return (
     <div className="pg-shell">
-      <header className="pg-topbar">
-        <div className="pg-topbar-brand">PadiGuard AI</div>
-        <div className="pg-topbar-subtitle">Simple checks for padi health, sprays, and weather</div>
-        <OfflineIndicator isOnline={isOnline} />
-      </header>
+      {!isScannerRoute ? (
+        <header className="pg-topbar">
+          <div className="pg-topbar-brand">PadiGuard AI</div>
+          <div className="pg-topbar-subtitle">Simple checks for padi health, sprays, and weather</div>
+          <OfflineIndicator isOnline={isOnline} />
+        </header>
+      ) : null}
 
-      <main className="pg-main-content">
-        <div key={location.pathname} className={`pg-route-stage dir-${direction}`}>
+      <main className={`pg-main-content ${isScannerRoute ? 'pg-main-content-chat' : ''}`}>
+        <div
+          key={location.pathname}
+          className={`pg-route-stage dir-${direction} ${isScannerRoute ? 'pg-route-stage-static' : ''}`}
+        >
           <Outlet />
         </div>
       </main>

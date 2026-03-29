@@ -1,6 +1,7 @@
-export default function SectionHeader({ eyebrow, title, subtitle, action }) {
+export default function SectionHeader({ eyebrow, title, subtitle, action, leadingAction }) {
   return (
     <header className="pg-section-header">
+      {leadingAction ? <div className="pg-section-leading-action">{leadingAction}</div> : null}
       <div>
         {eyebrow ? <p className="pg-eyebrow">{eyebrow}</p> : null}
         <h1 className="pg-page-title">{title}</h1>

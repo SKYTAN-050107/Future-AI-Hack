@@ -1,5 +1,6 @@
 import SectionHeader from '../../components/ui/SectionHeader'
 import MetricTile from '../../components/ui/MetricTile'
+import BackButton from '../../components/navigation/BackButton'
 
 export default function Report() {
   return (
@@ -8,6 +9,7 @@ export default function Report() {
         eyebrow="Report"
         title="What the scan shows"
         subtitle="Problem level, spread risk, and how sure the read is."
+        leadingAction={<BackButton fallback="/app/scan" label="Back to scanner" />}
       />
 
       <article className="pg-severity-card">
