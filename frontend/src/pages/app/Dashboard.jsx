@@ -6,10 +6,17 @@ import RiskBanner from '../../components/ui/RiskBanner'
 import QuickActionCard from '../../components/ui/QuickActionCard'
 import SkeletonBlock from '../../components/feedback/SkeletonBlock'
 import { getWeatherOutlook } from '../../api/weather'
+import { useScanHistory } from '../../hooks/useScanHistory'
 
 export default function Dashboard() {
   const navigate = useNavigate()
   const [weather, setWeather] = useState(null)
+  const { latestReport } = useScanHistory()
+
+  const problemLabel = latestReport?.disease || 'No recent scan'
+  const problemHelper = latestReport
+    ? `${latestReport.gridId || latestReport.zone || 'Unlinked zone'} · ${Number(latestReport.severity || 0)}%`
+    : 'Run scanner to update'
 
   useEffect(() => {
     let active = true
@@ -48,7 +55,7 @@ export default function Dashboard() {
 
       <div className="pg-tile-grid">
         <MetricTile label="Zones OK" value="84%" helper="17 of 20 areas" />
-        <MetricTile label="Problem" value="Leaf blast" tone="danger" helper="Zones C & D" />
+        <MetricTile label="Problem" value={problemLabel} tone="danger" helper={problemHelper} />
         <MetricTile
           label="Spray window"
           value={weather ? 'OK' : '…'}
