@@ -36,3 +36,4 @@ firebase-adminsdk*.json
 .firebase/
 .firebase-*/
 .firebaserc.local
+.runtimeconfig.json

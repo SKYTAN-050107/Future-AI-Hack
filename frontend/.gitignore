@@ -21,3 +21,4 @@
 # Firebase service account or local admin credentials
 serviceAccount*.json
 firebase-adminsdk*.json
+.runtimeconfig.json
