@@ -2,9 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   addDoc,
   collection,
+  deleteDoc,
   doc,
   onSnapshot,
   serverTimestamp,
+  setDoc,
   updateDoc,
 } from 'firebase/firestore'
 import { db, isFirebaseConfigured } from '../firebase'
@@ -84,6 +86,44 @@ export function useGrids() {
     return addDoc(collection(db, GRID_COLLECTION), payload)
   }, [])
 
+  const saveOrUpdateGridByFeature = useCallback(
+    async ({ mapFeatureId, gridId, polygon, areaHectares, centroid, plantDensity, healthState = 'Healthy' }) => {
+      if (!db) {
+        throw new Error('Firebase is not configured')
+      }
+
+      if (!mapFeatureId) {
+        throw new Error('mapFeatureId is required')
+      }
+
+      const target = doc(db, GRID_COLLECTION, mapFeatureId)
+      await setDoc(
+        target,
+        {
+          mapFeatureId,
+          gridId,
+          polygon,
+          areaHectares,
+          centroid,
+          plantDensity: plantDensity ?? null,
+          healthState,
+          lastUpdated: serverTimestamp(),
+          createdAt: serverTimestamp(),
+        },
+        { merge: true },
+      )
+    },
+    [],
+  )
+
+  const deleteGrid = useCallback(async (gridDocId) => {
+    if (!db) {
+      throw new Error('Firebase is not configured')
+    }
+
+    await deleteDoc(doc(db, GRID_COLLECTION, gridDocId))
+  }, [])
+
   const updateGridHealthState = useCallback(async (gridDocId, nextHealthState) => {
     if (!db) {
       throw new Error('Firebase is not configured')
@@ -102,9 +142,19 @@ export function useGrids() {
       isLoading,
       error,
       saveGrid,
+      saveOrUpdateGridByFeature,
+      deleteGrid,
       updateGridHealthState,
       isFirebaseConfigured,
     }),
-    [error, grids, isLoading, saveGrid, updateGridHealthState],
+    [
+      deleteGrid,
+      error,
+      grids,
+      isLoading,
+      saveGrid,
+      saveOrUpdateGridByFeature,
+      updateGridHealthState,
+    ],
   )
 }
