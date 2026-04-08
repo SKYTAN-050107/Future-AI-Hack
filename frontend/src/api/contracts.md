@@ -32,10 +32,11 @@ Route usage:
 - Handoff to report and treatment pages
 
 Frontend call:
-- scanDisease({ source, imageUrl?, base64Image? })
+- scanDisease({ source, gridId?, imageUrl?, base64Image? })
 
 Request notes:
 - source: "camera" | "gallery" | "cache"
+- gridId: optional mapped farm section id for report linkage
 - provide either imageUrl or base64Image for backend inference
 
 Response shape:

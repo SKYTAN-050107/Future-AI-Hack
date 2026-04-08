@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { IconImage, IconSend } from '../../components/icons/UiIcons'
 import SectionHeader from '../../components/ui/SectionHeader'
 import { scanDisease } from '../../api/scan'
+import { useGrids } from '../../hooks/useGrids'
+import { useScanReports } from '../../hooks/useScanReports'
 
 export default function Scanner() {
   const [chatMessages, setChatMessages] = useState([
@@ -14,8 +16,18 @@ export default function Scanner() {
   const [messageInput, setMessageInput] = useState('')
   const [selectedImage, setSelectedImage] = useState(null)
   const [isScanning, setIsScanning] = useState(false)
+  const [selectedGridDocId, setSelectedGridDocId] = useState('')
+  const [syncStatus, setSyncStatus] = useState('')
   const fileInputRef = useRef(null)
   const chatScrollRef = useRef(null)
+  const { grids } = useGrids()
+  const { saveScanReport, isFirebaseConfigured } = useScanReports()
+
+  useEffect(() => {
+    if (!selectedGridDocId && grids.length > 0) {
+      setSelectedGridDocId(grids[0].id)
+    }
+  }, [grids, selectedGridDocId])
 
   useEffect(() => {
     if (!chatScrollRef.current) {
@@ -79,13 +91,38 @@ export default function Scanner() {
     }
 
     setIsScanning(true)
-    const result = await scanDisease({ source: 'camera' })
+    const selectedGrid = grids.find((item) => item.id === selectedGridDocId)
+    const result = await scanDisease({
+      source: 'camera',
+      gridId: selectedGrid?.gridId || null,
+    })
+
+    const status = Number(result.severity || 0) >= 50 ? 'abnormal' : 'normal'
+
+    if (isFirebaseConfigured) {
+      try {
+        await saveScanReport({
+          ...result,
+          gridId: selectedGrid?.gridId || null,
+          status,
+          source: 'camera',
+        })
+        setSyncStatus(selectedGrid?.gridId
+          ? `Scan linked to ${selectedGrid.gridId} and synced.`
+          : 'Scan synced without grid link.')
+      } catch (syncError) {
+        setSyncStatus(syncError.message || 'Scan saved locally, but sync failed.')
+      }
+    } else {
+      setSyncStatus('Firebase not configured yet. Scan report not synced.')
+    }
+
     setChatMessages((current) => [
       ...current,
       {
         id: Date.now() + 2,
         role: 'ai',
-        text: `${result.disease} detected in ${result.zone}. Severity is around ${result.severity}% with ${result.confidence}% match confidence.`,
+        text: `${result.disease} detected${selectedGrid?.gridId ? ` for ${selectedGrid.gridId}` : ''}. Severity is around ${result.severity}% with ${result.confidence}% match confidence.`,
       },
     ])
     setSelectedImage(null)
@@ -117,6 +154,24 @@ export default function Scanner() {
       </div>
 
       <div className="pg-chat-input-shell">
+        <div className="pg-chat-grid-picker">
+          <label htmlFor="gridPicker">Active grid</label>
+          <select
+            id="gridPicker"
+            value={selectedGridDocId}
+            onChange={(event) => setSelectedGridDocId(event.target.value)}
+            disabled={grids.length === 0}
+          >
+            {grids.length === 0 ? <option value="">No grids yet</option> : null}
+            {grids.map((grid) => (
+              <option key={grid.id} value={grid.id}>
+                {grid.gridId || grid.id} - {grid.healthState || 'Healthy'}
+              </option>
+            ))}
+          </select>
+          {syncStatus ? <small>{syncStatus}</small> : null}
+        </div>
+
         {selectedImage ? (
           <div className="pg-chat-selected-image">
             <img src={selectedImage.previewUrl} alt="Selected leaf preview" className="pg-chat-selected-thumb" />
