@@ -1111,6 +1111,38 @@ body {
   background: transparent;
 }
 
+.pg-chat-grid-picker {
+  display: grid;
+  gap: 6px;
+  margin: 0 auto 10px;
+  width: 100%;
+  border: 1px solid rgba(var(--border-rgb), 0.66);
+  border-radius: 12px;
+  background: var(--surface);
+  padding: 10px;
+}
+
+.pg-chat-grid-picker label {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  font-weight: 700;
+}
+
+.pg-chat-grid-picker select {
+  width: 100%;
+  border: 1px solid rgba(var(--border-rgb), 0.68);
+  background: color-mix(in srgb, var(--surface) 96%, transparent);
+  color: var(--text-primary);
+  border-radius: 10px;
+  padding: 9px 10px;
+  font-size: 0.875rem;
+}
+
+.pg-chat-grid-picker small {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
 .pg-chat-selected-image {
   display: flex;
   align-items: center;
