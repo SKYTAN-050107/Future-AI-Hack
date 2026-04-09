@@ -72,7 +72,19 @@ function RootEntry() {
 
 function RequireAuth({ children }) {
   const location = useLocation()
-  const { isAuthenticated } = useSessionContext()
+  const { isAuthenticated, isAuthLoading } = useSessionContext()
+
+  if (isAuthLoading) {
+    return (
+      <div className="pg-public-screen">
+        <section className="pg-launch">
+          <div className="pg-launch-orb" />
+          <h1 className="pg-launch-title">PadiGuard AI</h1>
+          <p className="pg-launch-subtitle">Checking session…</p>
+        </section>
+      </div>
+    )
+  }
 
   if (!isAuthenticated) {
     setPostAuthPath(location.pathname)
@@ -87,9 +99,21 @@ function RequireOnboarding({ children }) {
 }
 
 function RedirectAuthenticatedEntry() {
-  const { isAuthenticated, isOnboarded } = useSessionContext()
+  const { isAuthenticated, isOnboarded, isAuthLoading } = useSessionContext()
   const postAuthPath = getPostAuthPath()
   const resumePath = postAuthPath && postAuthPath.startsWith('/app') ? postAuthPath : getLastAppPath()
+
+  if (isAuthLoading) {
+    return (
+      <div className="pg-public-screen">
+        <section className="pg-launch">
+          <div className="pg-launch-orb" />
+          <h1 className="pg-launch-title">PadiGuard AI</h1>
+          <p className="pg-launch-subtitle">Loading account…</p>
+        </section>
+      </div>
+    )
+  }
 
   if (!isAuthenticated) {
     return <Auth />

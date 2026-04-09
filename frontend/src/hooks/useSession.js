@@ -1,21 +1,47 @@
-import { useMemo, useState } from 'react'
+import { onAuthStateChanged } from 'firebase/auth'
+import { useEffect, useMemo, useState } from 'react'
+import { auth, isFirebaseConfigured } from '../firebase'
+import { signOutCurrentUser } from '../services/auth'
 
 function loadFlag(key) {
   return localStorage.getItem(key) === '1'
 }
 
 export function useSession() {
-  const [isAuthenticated, setIsAuthenticated] = useState(() => loadFlag('padiguard_auth'))
+  const [isAuthenticated, setIsAuthenticated] = useState(() => Boolean(auth?.currentUser))
   const [isOnboarded, setIsOnboarded] = useState(() => loadFlag('padiguard_onboarded'))
+  const [user, setUser] = useState(() => auth?.currentUser || null)
+  const [isAuthLoading, setIsAuthLoading] = useState(() => Boolean(isFirebaseConfigured && auth))
+
+  useEffect(() => {
+    if (!isFirebaseConfigured || !auth) {
+      setIsAuthenticated(false)
+      setUser(null)
+      setIsAuthLoading(false)
+      return undefined
+    }
+
+    const unsubscribe = onAuthStateChanged(auth, (nextUser) => {
+      setUser(nextUser)
+      setIsAuthenticated(Boolean(nextUser))
+      setIsAuthLoading(false)
+    })
+
+    return () => unsubscribe()
+  }, [])
 
   const login = () => {
-    setIsAuthenticated(true)
-    localStorage.setItem('padiguard_auth', '1')
+    // Firebase auth providers now own login; this method remains for compatibility.
   }
 
-  const logout = () => {
+  const logout = async () => {
+    if (isFirebaseConfigured && auth) {
+      await signOutCurrentUser()
+      return
+    }
+
     setIsAuthenticated(false)
-    localStorage.removeItem('padiguard_auth')
+    setUser(null)
   }
 
   const completeOnboarding = () => {
@@ -32,11 +58,13 @@ export function useSession() {
     () => ({
       isAuthenticated,
       isOnboarded,
+      user,
+      isAuthLoading,
       login,
       logout,
       completeOnboarding,
       resetOnboarding,
     }),
-    [isAuthenticated, isOnboarded],
+    [isAuthenticated, isAuthLoading, isOnboarded, user],
   )
 }
