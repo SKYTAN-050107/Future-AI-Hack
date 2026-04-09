@@ -220,6 +220,61 @@ The mapping interface is built as a **Synchronized Spatial Grid** — a living m
 * Spatial Propagation Agent evaluates proximity of infected grids to healthy ones and suggests buffer zones for preventative spraying
 * Gemini-powered Spatial Advisor compares real-time GPS coordinates and visual landmarks (from camera) to suggest the correct grid section when the farmer is unsure of their location
 
+1. Map Rendering
+
+Engine: Mapbox GL JS renders high-resolution satellite tiles.
+
+User Experience: The interface provides a full-screen view of the farm area for immersive navigation.
+
+2. Polygon Drawing
+
+Interaction: Utilizes Mapbox Draw to enable users to create boundaries via touch or click.
+
+Accuracy: Incorporates snap-to-grid and validation logic to ensure geometric precision.
+
+3. Geospatial Calculations
+
+Once a polygon is finalized, Turf.js performs real-time computations:
+
+Area: Calculated in hectares for agricultural reporting.
+
+Centroid: Generated as a reference point for AI processing and GPS coordinate matching.
+
+4. Data Persistence (Firestore)
+
+Spatial data is archived in a grids collection within Firestore. Each document includes:
+
+GridID: Unique identifier for the plot.
+
+areaHectares: The computed physical size.
+
+centroid: The geometric center coordinates.
+
+healthState: Current status of the vegetation.
+
+5. Real-Time Map Synchronisation
+
+A custom React hook, useGrids.ts, acts as a listener for the Firestore collection. Map polygon fills update dynamically based on the healthState:
+
+Healthy → Green
+
+At-Risk → Amber
+
+Infected → Red
+
+6. Automated Backend Processing
+
+Cloud Functions (specifically updateGridStatus) trigger upon Firestore updates:
+
+Automatically detects abnormalities and modifies the healthState.
+
+Utilizes Turf.js server-side to compute optional buffer zones around infected areas.
+
+7. Spatial Intelligence & AI Advisor
+
+Vertex AI: Analyzes spatial patterns to flag neighboring polygons as "At-Risk" based on proximity and historical data.
+
+Gemini Advisor: Leverages GPS data and camera-identified landmarks to provide location-aware guidance. It suggests which specific polygon the user is currently standing in, facilitating accurate navigation in large-scale, multi-grid environments.
 ## User Story
 
 > As a farmer, I want to map my farm so I can monitor specific sections and see which areas are at risk.

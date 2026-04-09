@@ -9,6 +9,7 @@ const db = admin.firestore()
 const GRID_COLLECTION = 'grids'
 const REPORT_COLLECTION = 'scanReports'
 const AT_RISK_DISTANCE_KM = 0.2
+const BUFFER_ZONE_KM = 0.2
 
 function polygonToFeature(gridDoc) {
   if (!gridDoc?.polygon || gridDoc.polygon.type !== 'Polygon') {
@@ -77,6 +78,21 @@ exports.spatialPropagationAnalysis = onDocumentWritten(
 
     const infectedCentroid = turf.centroid(infectedFeature)
     const allGridsSnapshot = await db.collection(GRID_COLLECTION).get()
+
+    // Persist an optional buffer zone for map-side visualization and spray guidance.
+    const infectedBuffer = turf.buffer(infectedFeature, BUFFER_ZONE_KM, {
+      units: 'kilometers',
+    })
+
+    await event.data.after.ref.set(
+      {
+        bufferZone: infectedBuffer.geometry,
+        bufferZoneKm: BUFFER_ZONE_KM,
+        bufferZoneReason: 'Preventive spray perimeter around infected section',
+        lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    )
 
     const writeBatch = db.batch()
     let updates = 0

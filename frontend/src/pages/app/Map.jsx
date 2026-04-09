@@ -14,6 +14,28 @@ const HEALTH_COLORS = {
   'At-Risk': '#FFA500',
   Infected: '#FF0000',
 }
+const MIN_GRID_AREA_HECTARES = 0.01
+const MAX_GRID_AREA_HECTARES = 200
+
+function createBufferCollection(grids) {
+  return {
+    type: 'FeatureCollection',
+    features: grids
+      .filter((grid) => {
+        const geometryType = grid?.bufferZone?.type
+        return geometryType === 'Polygon' || geometryType === 'MultiPolygon'
+      })
+      .map((grid) => ({
+        type: 'Feature',
+        id: `${grid.id}-buffer`,
+        properties: {
+          gridId: grid.gridId || grid.id,
+          radiusKm: Number(grid.bufferZoneKm || 0),
+        },
+        geometry: grid.bufferZone,
+      })),
+  }
+}
 
 function createFeatureCollection(grids) {
   return {
@@ -46,6 +68,9 @@ export default function MapPage() {
   const [mapReady, setMapReady] = useState(false)
   const [actionMessage, setActionMessage] = useState('Draw a polygon to create your first grid section.')
   const [localAreaHectares, setLocalAreaHectares] = useState(0)
+  const [pendingFeature, setPendingFeature] = useState(null)
+  const [isSavingPending, setIsSavingPending] = useState(false)
+  const [lastSaveState, setLastSaveState] = useState('idle')
 
   const { isOnline } = useOffline()
   const {
@@ -106,7 +131,32 @@ export default function MapPage() {
       )
     }
 
-    const persistFeature = async (feature) => {
+    const validateFeature = (feature, areaHectares) => {
+      if (!feature || feature.geometry?.type !== 'Polygon') {
+        return 'Only polygon grids are supported.'
+      }
+
+      if (!feature.id) {
+        return 'Unable to save this shape. Please redraw the polygon.'
+      }
+
+      if (areaHectares < MIN_GRID_AREA_HECTARES) {
+        return 'Polygon is too small. Draw at least 0.01 hectares.'
+      }
+
+      if (areaHectares > MAX_GRID_AREA_HECTARES) {
+        return 'Polygon is too large. Split this section into smaller grids.'
+      }
+
+      const kinkCollection = turf.kinks(feature)
+      if ((kinkCollection.features || []).length > 0) {
+        return 'Polygon crosses itself. Redraw for a clean boundary.'
+      }
+
+      return null
+    }
+
+    const saveFeature = async (feature, mode = 'auto') => {
       if (!feature || feature.geometry?.type !== 'Polygon') {
         return
       }
@@ -114,13 +164,22 @@ export default function MapPage() {
       const areaHectares = turf.area(feature) / 10000
       const centroid = turf.centroid(feature)
 
+      const validationError = validateFeature(feature, areaHectares)
+      if (validationError) {
+        setActionMessage(validationError)
+        setLastSaveState('failed')
+        return
+      }
+
       setLocalAreaHectares(areaHectares)
 
       if (!isFirebaseConfigured) {
         setActionMessage('Polygon measured locally. Configure Firebase to sync this grid.')
+        setLastSaveState('failed')
         return
       }
 
+      setLastSaveState('pending')
       await saveOrUpdateGridByFeature({
         mapFeatureId: String(feature.id),
         gridId: feature.properties?.gridId || createGridId(),
@@ -132,25 +191,31 @@ export default function MapPage() {
         },
       })
 
-      setActionMessage('Grid saved and synced.')
+      setActionMessage(mode === 'manual' ? 'Grid confirmed and synced.' : 'Grid auto-saved and synced. Confirm if you want to re-sync.')
+      setLastSaveState('saved')
+      setPendingFeature(mode === 'manual' ? null : feature)
     }
 
     const onDrawCreate = async (event) => {
       for (const feature of event.features || []) {
+        setPendingFeature(feature)
         try {
-          await persistFeature(feature)
+          await saveFeature(feature)
         } catch (saveError) {
           setActionMessage(saveError.message || 'Failed to save grid')
+          setLastSaveState('failed')
         }
       }
     }
 
     const onDrawUpdate = async (event) => {
       for (const feature of event.features || []) {
+        setPendingFeature(feature)
         try {
-          await persistFeature(feature)
+          await saveFeature(feature)
         } catch (saveError) {
           setActionMessage(saveError.message || 'Failed to update grid')
+          setLastSaveState('failed')
         }
       }
     }
@@ -158,6 +223,7 @@ export default function MapPage() {
     const onDrawDelete = async (event) => {
       if (!isFirebaseConfigured) {
         setActionMessage('Local polygon removed.')
+        setLastSaveState('idle')
         return
       }
 
@@ -169,8 +235,11 @@ export default function MapPage() {
         try {
           await deleteGrid(String(feature.id))
           setActionMessage('Grid removed.')
+          setLastSaveState('saved')
+          setPendingFeature(null)
         } catch (deleteError) {
           setActionMessage(deleteError.message || 'Failed to delete grid')
+          setLastSaveState('failed')
         }
       }
     }
@@ -180,6 +249,13 @@ export default function MapPage() {
         map.addSource('pg-grids', {
           type: 'geojson',
           data: createFeatureCollection([]),
+        })
+      }
+
+      if (!map.getSource('pg-grid-buffers')) {
+        map.addSource('pg-grid-buffers', {
+          type: 'geojson',
+          data: createBufferCollection([]),
         })
       }
 
@@ -210,6 +286,27 @@ export default function MapPage() {
         paint: {
           'line-color': '#18424B',
           'line-width': 2,
+        },
+      })
+
+      map.addLayer({
+        id: 'pg-grid-buffer-fill',
+        type: 'fill',
+        source: 'pg-grid-buffers',
+        paint: {
+          'fill-color': '#FFA500',
+          'fill-opacity': 0.12,
+        },
+      })
+
+      map.addLayer({
+        id: 'pg-grid-buffer-outline',
+        type: 'line',
+        source: 'pg-grid-buffers',
+        paint: {
+          'line-color': '#C97A00',
+          'line-width': 2,
+          'line-dasharray': [2, 2],
         },
       })
 
@@ -247,7 +344,41 @@ export default function MapPage() {
     if (source) {
       source.setData(createFeatureCollection(grids))
     }
+
+    const bufferSource = mapRef.current.getSource('pg-grid-buffers')
+    if (bufferSource) {
+      bufferSource.setData(createBufferCollection(grids))
+    }
   }, [grids])
+
+  const onConfirmSave = async () => {
+    if (!pendingFeature) {
+      setActionMessage('Draw or edit a grid first, then confirm save.')
+      return
+    }
+
+    setIsSavingPending(true)
+    try {
+      await saveOrUpdateGridByFeature({
+        mapFeatureId: String(pendingFeature.id),
+        gridId: pendingFeature.properties?.gridId || createGridId(),
+        polygon: pendingFeature.geometry,
+        areaHectares: turf.area(pendingFeature) / 10000,
+        centroid: {
+          lat: turf.centroid(pendingFeature).geometry.coordinates[1],
+          lng: turf.centroid(pendingFeature).geometry.coordinates[0],
+        },
+      })
+      setActionMessage('Grid confirmed and synced.')
+      setLastSaveState('saved')
+      setPendingFeature(null)
+    } catch (errorMessage) {
+      setActionMessage(errorMessage.message || 'Failed to confirm save')
+      setLastSaveState('failed')
+    } finally {
+      setIsSavingPending(false)
+    }
+  }
 
   const totalHectares = useMemo(
     () => grids.reduce((sum, item) => sum + Number(item.areaHectares || 0), 0),
@@ -280,10 +411,33 @@ export default function MapPage() {
         <aside className="pg-map-controls">
           <h3>Grid controls</h3>
           <p className="pg-map-status">{actionMessage}</p>
+          <p className="pg-map-status">
+            Save status:{' '}
+            <strong>
+              {lastSaveState === 'pending'
+                ? 'Pending sync'
+                : lastSaveState === 'saved'
+                  ? 'Saved'
+                  : lastSaveState === 'failed'
+                    ? 'Needs attention'
+                    : 'Idle'}
+            </strong>
+          </p>
+          <div className="pg-cta-row">
+            <button
+              type="button"
+              className="pg-btn pg-btn-primary"
+              onClick={onConfirmSave}
+              disabled={!pendingFeature || isSavingPending || !isFirebaseConfigured}
+            >
+              {isSavingPending ? 'Saving…' : 'Confirm grid save'}
+            </button>
+          </div>
           <div className="pg-map-legend">
             <span><i className="dot healthy" />Healthy</span>
             <span><i className="dot risk" />At-Risk</span>
             <span><i className="dot infected" />Infected</span>
+            <span><i className="dot risk" />Buffer zone</span>
           </div>
           <div className="pg-map-metrics">
             <p><strong>Total area</strong><span>{totalHectares.toFixed(2)} ha</span></p>
