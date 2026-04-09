@@ -11,6 +11,21 @@ const REPORT_COLLECTION = 'scanReports'
 const AT_RISK_DISTANCE_KM = 0.2
 const BUFFER_ZONE_KM = 0.2
 
+function shouldMarkAbnormal(report) {
+  const severity = Number(report?.severity || 0)
+  const status = String(report?.status || '').toLowerCase()
+  const spreadRisk = String(report?.spreadRisk || report?.spread_risk || '').toLowerCase()
+  const severityLevel = String(report?.severityLevel || '').toLowerCase()
+
+  return (
+    status === 'abnormal' ||
+    report?.abnormal === true ||
+    severityLevel === 'high' ||
+    severity >= 50 ||
+    spreadRisk === 'high'
+  )
+}
+
 function polygonToFeature(gridDoc) {
   if (!gridDoc?.polygon || gridDoc.polygon.type !== 'Polygon') {
     return null
@@ -30,10 +45,7 @@ exports.updateGridStatus = onDocumentWritten(
       return
     }
 
-    const isAbnormal =
-      after.status === 'abnormal' ||
-      after.abnormal === true ||
-      after.severityLevel === 'high'
+    const isAbnormal = shouldMarkAbnormal(after)
 
     if (!isAbnormal || !after.gridId) {
       return
@@ -89,6 +101,7 @@ exports.spatialPropagationAnalysis = onDocumentWritten(
         bufferZone: infectedBuffer.geometry,
         bufferZoneKm: BUFFER_ZONE_KM,
         bufferZoneReason: 'Preventive spray perimeter around infected section',
+        bufferZoneAdvice: 'Prioritize preventive spray in nearby sections within this zone.',
         lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
       },
       { merge: true },

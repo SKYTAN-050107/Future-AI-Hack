@@ -388,6 +388,10 @@ export default function MapPage() {
   const healthyCount = grids.filter((item) => item.healthState === 'Healthy').length
   const riskCount = grids.filter((item) => item.healthState === 'At-Risk').length
   const infectedCount = grids.filter((item) => item.healthState === 'Infected').length
+  const bufferedCount = grids.filter((item) => item?.bufferZone).length
+  const riskRecommendations = grids
+    .filter((item) => item.healthState === 'At-Risk' || item.healthState === 'Infected')
+    .slice(0, 4)
 
   return (
     <section className="pg-page pg-page-map">
@@ -446,9 +450,22 @@ export default function MapPage() {
             <p><strong>Healthy</strong><span>{healthyCount}</span></p>
             <p><strong>At-Risk</strong><span>{riskCount}</span></p>
             <p><strong>Infected</strong><span>{infectedCount}</span></p>
+            <p><strong>Buffer zones</strong><span>{bufferedCount}</span></p>
             <p><strong>Connection</strong><span>{isOnline ? 'Online' : 'Offline'}</span></p>
             <p><strong>Sync</strong><span>{isFirebaseConfigured ? (isLoading ? 'Syncing...' : error ? 'Error' : 'Ready') : 'Disabled'}</span></p>
           </div>
+
+          {riskRecommendations.length > 0 ? (
+            <article className="pg-card" style={{ marginTop: 12 }}>
+              <h3>Risk recommendations</h3>
+              {riskRecommendations.map((grid) => (
+                <p key={grid.id} className="pg-map-status" style={{ marginBottom: 8 }}>
+                  <strong>{grid.gridId || grid.id}</strong>: {grid.bufferZoneAdvice || grid.riskReason || 'Monitor nearby spread and prepare preventive spray.'}
+                  {Number(grid.riskDistanceKm || 0) > 0 ? ` (${Number(grid.riskDistanceKm).toFixed(3)} km)` : ''}
+                </p>
+              ))}
+            </article>
+          ) : null}
         </aside>
       </article>
     </section>

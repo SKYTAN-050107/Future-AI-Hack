@@ -4,6 +4,7 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDoc,
   onSnapshot,
   serverTimestamp,
   setDoc,
@@ -97,6 +98,9 @@ export function useGrids() {
       }
 
       const target = doc(db, GRID_COLLECTION, mapFeatureId)
+      const existing = await getDoc(target)
+      const existingData = existing.exists() ? existing.data() : null
+
       await setDoc(
         target,
         {
@@ -106,9 +110,9 @@ export function useGrids() {
           areaHectares,
           centroid,
           plantDensity: plantDensity ?? null,
-          healthState,
+          healthState: existingData?.healthState || healthState,
           lastUpdated: serverTimestamp(),
-          createdAt: serverTimestamp(),
+          createdAt: existingData?.createdAt || serverTimestamp(),
         },
         { merge: true },
       )
