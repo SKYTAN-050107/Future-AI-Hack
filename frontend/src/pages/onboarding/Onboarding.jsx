@@ -21,7 +21,7 @@ export default function Onboarding() {
     (step === 1 && location.trim().length > 2) ||
     (step === 2 && variety.trim().length > 1)
 
-  const onNext = () => {
+  const onNext = async () => {
     if (!canProceed) {
       return
     }
@@ -31,7 +31,12 @@ export default function Onboarding() {
       return
     }
 
-    completeOnboarding()
+    await completeOnboarding({
+      farmName: farmName.trim(),
+      location: location.trim(),
+      variety: variety.trim(),
+      language,
+    })
     const resumePath = getPostAuthPath()
     clearPostAuthPath()
     navigate(resumePath && resumePath.startsWith('/app') ? resumePath : '/app', { replace: true })
