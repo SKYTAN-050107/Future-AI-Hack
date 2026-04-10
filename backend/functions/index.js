@@ -11,6 +11,22 @@ const REPORT_COLLECTION = 'scanReports'
 const AT_RISK_DISTANCE_KM = 0.2
 const BUFFER_ZONE_KM = 0.2
 
+function deserializeGeometry(value) {
+  if (!value) {
+    return null
+  }
+
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value)
+    } catch {
+      return null
+    }
+  }
+
+  return value
+}
+
 function shouldMarkAbnormal(report) {
   const severity = Number(report?.severity || 0)
   const status = String(report?.status || '').toLowerCase()
@@ -27,11 +43,13 @@ function shouldMarkAbnormal(report) {
 }
 
 function polygonToFeature(gridDoc) {
-  if (!gridDoc?.polygon || gridDoc.polygon.type !== 'Polygon') {
+  const polygon = deserializeGeometry(gridDoc?.polygon)
+
+  if (!polygon || polygon.type !== 'Polygon') {
     return null
   }
 
-  return turf.feature(gridDoc.polygon, {
+  return turf.feature(polygon, {
     gridId: gridDoc.gridId,
   })
 }
@@ -98,7 +116,7 @@ exports.spatialPropagationAnalysis = onDocumentWritten(
 
     await event.data.after.ref.set(
       {
-        bufferZone: infectedBuffer.geometry,
+        bufferZone: JSON.stringify(infectedBuffer.geometry),
         bufferZoneKm: BUFFER_ZONE_KM,
         bufferZoneReason: 'Preventive spray perimeter around infected section',
         bufferZoneAdvice: 'Prioritize preventive spray in nearby sections within this zone.',

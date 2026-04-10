@@ -1,11 +1,24 @@
 import { useNavigate } from 'react-router-dom'
 import { useEffect, useState } from 'react'
 import {
+  IconApple,
+  IconEye,
+  IconEyeOff,
+  IconGoogle,
+  IconPhone,
+} from '../../components/icons/UiIcons'
+import {
+  createUserProfile,
+  getUserProfile,
+} from '../../services/userProfile'
+import {
   confirmPhoneOtp,
+  isCredentialNewUser,
   sendResetPassword,
   signInWithAppleProvider,
   signInWithEmail,
   signInWithGoogleProvider,
+  signOutCurrentUser,
   signUpWithEmail,
   startPhoneAuth,
 } from '../../services/auth'
@@ -50,6 +63,7 @@ export default function Auth() {
   const [isLogin, setIsLogin] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [socialSubmitting, setSocialSubmitting] = useState('')
+  const [selectedMethod, setSelectedMethod] = useState('none')
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [error, setError] = useState('')
@@ -80,10 +94,21 @@ export default function Auth() {
     setShowConfirmPassword(false)
     setError('')
     setInfo('')
+    setSelectedMethod('none')
+    setPhoneNumber('')
+    setOtpCode('')
+    setOtpSent(false)
+    setConfirmationResult(null)
   }, [isLogin])
 
   const validateEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)
   const validatePhone = (phone) => /^\+[1-9]\d{7,14}$/.test(phone)
+
+  const goAfterAuth = () => {
+    // Re-enter auth route without state so central redirect logic can resolve
+    // onboarding and intended app destination consistently.
+    navigate('/auth', { replace: true })
+  }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -119,11 +144,14 @@ export default function Auth() {
     try {
       if (isLogin) {
         await signInWithEmail(email.trim(), password)
+        goAfterAuth()
       } else {
-        await signUpWithEmail(email.trim(), password, fullName)
+        const credential = await signUpWithEmail(email.trim(), password, fullName)
+        await createUserProfile(credential.user, {
+          displayName: fullName.trim() || credential.user.displayName || null,
+        })
+        goAfterAuth()
       }
-
-      navigate('/app', { replace: true })
     } catch (submitError) {
       setError(toFriendlyAuthError(submitError))
     } finally {
@@ -137,8 +165,19 @@ export default function Auth() {
     setSocialSubmitting('google')
 
     try {
-      await signInWithGoogleProvider()
-      navigate('/app', { replace: true })
+      const credential = await signInWithGoogleProvider()
+      if (isLogin) {
+        const profile = await getUserProfile(credential.user.uid)
+        if (!profile || isCredentialNewUser(credential)) {
+          await signOutCurrentUser()
+          setError('Google account not registered yet. Switch to Sign Up first.')
+          return
+        }
+        goAfterAuth()
+      } else {
+        await createUserProfile(credential.user)
+        goAfterAuth()
+      }
     } catch (providerError) {
       setError(toFriendlyAuthError(providerError))
     } finally {
@@ -152,8 +191,19 @@ export default function Auth() {
     setSocialSubmitting('apple')
 
     try {
-      await signInWithAppleProvider()
-      navigate('/app', { replace: true })
+      const credential = await signInWithAppleProvider()
+      if (isLogin) {
+        const profile = await getUserProfile(credential.user.uid)
+        if (!profile || isCredentialNewUser(credential)) {
+          await signOutCurrentUser()
+          setError('Apple account not registered yet. Switch to Sign Up first.')
+          return
+        }
+        goAfterAuth()
+      } else {
+        await createUserProfile(credential.user)
+        goAfterAuth()
+      }
     } catch (providerError) {
       setError(toFriendlyAuthError(providerError))
     } finally {
@@ -213,8 +263,19 @@ export default function Auth() {
     setPhoneSubmitting(true)
 
     try {
-      await confirmPhoneOtp(confirmationResult, otpCode.trim())
-      navigate('/app', { replace: true })
+      const credential = await confirmPhoneOtp(confirmationResult, otpCode.trim())
+      if (isLogin) {
+        const profile = await getUserProfile(credential.user.uid)
+        if (!profile || isCredentialNewUser(credential)) {
+          await signOutCurrentUser()
+          setError('Phone number not registered yet. Switch to Sign Up first.')
+          return
+        }
+        goAfterAuth()
+      } else {
+        await createUserProfile(credential.user)
+        goAfterAuth()
+      }
     } catch (verifyError) {
       setError(toFriendlyAuthError(verifyError))
     } finally {
@@ -331,9 +392,10 @@ export default function Auth() {
                   type="button"
                   className="pg-auth-password-eye"
                   onClick={() => setShowPassword(!showPassword)}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
                   tabIndex={-1}
                 >
-                  {showPassword ? '🙈' : '👁'}
+                  {showPassword ? <IconEyeOff className="pg-icon" /> : <IconEye className="pg-icon" />}
                 </button>
               </div>
             </div>
@@ -354,9 +416,10 @@ export default function Auth() {
                     type="button"
                     className="pg-auth-password-eye"
                     onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                    aria-label={showConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
                     tabIndex={-1}
                   >
-                    {showConfirmPassword ? '🙈' : '👁'}
+                    {showConfirmPassword ? <IconEyeOff className="pg-icon" /> : <IconEye className="pg-icon" />}
                   </button>
                 </div>
               </div>
@@ -386,18 +449,19 @@ export default function Auth() {
 
           {/* Divider */}
           <div className="pg-auth-divider">
-            <span>or continue with</span>
+            <span>or choose a method</span>
           </div>
 
-          {/* Social auth — neutral style, no brand colors */}
+          {/* Provider auth methods */}
           <div className="pg-auth-social-row">
             <button
               type="button"
               className="pg-auth-social-btn"
               title="Sign in with Google"
               onClick={handleGoogleSignIn}
-              disabled={socialSubmitting.length > 0}
+              disabled={socialSubmitting.length > 0 || phoneSubmitting}
             >
+              <IconGoogle className="pg-icon" />
               <span className="pg-auth-social-label">{socialSubmitting === 'google' ? 'Connecting…' : 'Google'}</span>
             </button>
             <button
@@ -405,62 +469,97 @@ export default function Auth() {
               className="pg-auth-social-btn"
               title="Sign in with Apple"
               onClick={handleAppleSignIn}
+              disabled={socialSubmitting.length > 0 || phoneSubmitting}
+            >
+              <IconApple className="pg-icon" />
+              <span className="pg-auth-social-label">{socialSubmitting === 'apple' ? 'Connecting…' : 'Apple'}</span>
+            </button>
+            <button
+              type="button"
+              className="pg-auth-social-btn"
+              title="Sign in with phone"
+              onClick={() => {
+                setSelectedMethod('phone')
+                setError('')
+                setInfo('Enter your number to receive an OTP code.')
+              }}
               disabled={socialSubmitting.length > 0}
             >
-              <span className="pg-auth-social-label">{socialSubmitting === 'apple' ? 'Connecting…' : 'Apple'}</span>
+              <IconPhone className="pg-icon" />
+              <span className="pg-auth-social-label">Phone</span>
             </button>
           </div>
 
-          <div className="pg-auth-divider">
-            <span>or use phone</span>
-          </div>
-
-          <div className="pg-auth-form">
-            <div className="pg-auth-field">
-              <label className="pg-auth-label">Phone number</label>
-              <div className="pg-auth-input-wrapper">
-                <input
-                  type="tel"
-                  value={phoneNumber}
-                  onChange={(event) => setPhoneNumber(event.target.value)}
-                  placeholder="+60123456789"
-                  className="pg-auth-input"
-                />
+          {selectedMethod === 'phone' ? (
+            <>
+              <div className="pg-auth-divider">
+                <span>Phone verification</span>
               </div>
-            </div>
 
-            {otpSent ? (
-              <div className="pg-auth-field pg-auth-field--animate">
-                <label className="pg-auth-label">OTP code</label>
-                <div className="pg-auth-input-wrapper">
-                  <input
-                    type="text"
-                    value={otpCode}
-                    onChange={(event) => setOtpCode(event.target.value)}
-                    placeholder="6-digit code"
-                    className="pg-auth-input"
-                  />
+              <div className="pg-auth-form">
+                <div className="pg-auth-field">
+                  <label className="pg-auth-label">Phone number</label>
+                  <div className="pg-auth-input-wrapper">
+                    <input
+                      type="tel"
+                      value={phoneNumber}
+                      onChange={(event) => setPhoneNumber(event.target.value)}
+                      placeholder="+60123456789"
+                      className="pg-auth-input"
+                    />
+                  </div>
+                </div>
+
+                {otpSent ? (
+                  <div className="pg-auth-field pg-auth-field--animate">
+                    <label className="pg-auth-label">OTP code</label>
+                    <div className="pg-auth-input-wrapper">
+                      <input
+                        type="text"
+                        value={otpCode}
+                        onChange={(event) => setOtpCode(event.target.value)}
+                        placeholder="6-digit code"
+                        className="pg-auth-input"
+                      />
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className="pg-cta-row">
+                  {!otpSent ? (
+                    <button type="button" className="pg-auth-submit-btn" onClick={handleSendOtp} disabled={phoneSubmitting}>
+                      {phoneSubmitting ? 'Sending code…' : 'Send OTP'}
+                    </button>
+                  ) : (
+                    <>
+                      <button type="button" className="pg-btn pg-btn-ghost" onClick={handleSendOtp} disabled={phoneSubmitting}>
+                        Resend OTP
+                      </button>
+                      <button type="button" className="pg-auth-submit-btn" onClick={handleVerifyOtp} disabled={phoneSubmitting}>
+                        {phoneSubmitting ? 'Verifying…' : 'Verify and continue'}
+                      </button>
+                    </>
+                  )}
+                  <button
+                    type="button"
+                    className="pg-btn pg-btn-ghost"
+                    onClick={() => {
+                      setSelectedMethod('none')
+                      setPhoneNumber('')
+                      setOtpCode('')
+                      setOtpSent(false)
+                      setConfirmationResult(null)
+                      setInfo('')
+                      setError('')
+                    }}
+                    disabled={phoneSubmitting}
+                  >
+                    Cancel phone method
+                  </button>
                 </div>
               </div>
-            ) : null}
-
-            <div className="pg-cta-row">
-              {!otpSent ? (
-                <button type="button" className="pg-auth-submit-btn" onClick={handleSendOtp} disabled={phoneSubmitting}>
-                  {phoneSubmitting ? 'Sending code…' : 'Send OTP'}
-                </button>
-              ) : (
-                <>
-                  <button type="button" className="pg-btn pg-btn-ghost" onClick={handleSendOtp} disabled={phoneSubmitting}>
-                    Resend OTP
-                  </button>
-                  <button type="button" className="pg-auth-submit-btn" onClick={handleVerifyOtp} disabled={phoneSubmitting}>
-                    {phoneSubmitting ? 'Verifying…' : 'Verify and continue'}
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
+            </>
+          ) : null}
 
           <div id="recaptcha-container" />
 
