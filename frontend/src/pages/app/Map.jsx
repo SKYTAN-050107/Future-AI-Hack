@@ -71,6 +71,7 @@ export default function MapPage() {
   const [pendingFeature, setPendingFeature] = useState(null)
   const [isSavingPending, setIsSavingPending] = useState(false)
   const [lastSaveState, setLastSaveState] = useState('idle')
+  const centroidTargetRef = useRef({ center: DEFAULT_CENTER, hasSaved: false })
 
   const { isOnline } = useOffline()
   const {
@@ -84,6 +85,50 @@ export default function MapPage() {
 
   const mapboxToken = import.meta.env.VITE_MAPBOX_TOKEN
   const isMapboxConfigured = Boolean(mapboxToken && !mapboxToken.includes('YOUR_'))
+
+  const centroidTarget = useMemo(() => {
+    const points = grids
+      .filter((grid) => Number.isFinite(grid?.centroid?.lat) && Number.isFinite(grid?.centroid?.lng))
+      .map((grid) => ({
+        lat: Number(grid.centroid.lat),
+        lng: Number(grid.centroid.lng),
+        area: Number(grid.areaHectares || 0),
+      }))
+
+    if (points.length === 0) {
+      return {
+        center: DEFAULT_CENTER,
+        hasSaved: false,
+      }
+    }
+
+    const totalArea = points.reduce((sum, point) => sum + (point.area > 0 ? point.area : 0), 0)
+    const useWeighted = totalArea > 0
+
+    const weighted = points.reduce(
+      (acc, point) => {
+        const weight = useWeighted ? point.area : 1
+        return {
+          lat: acc.lat + point.lat * weight,
+          lng: acc.lng + point.lng * weight,
+          weight: acc.weight + weight,
+        }
+      },
+      { lat: 0, lng: 0, weight: 0 },
+    )
+
+    const centerLat = weighted.weight > 0 ? weighted.lat / weighted.weight : DEFAULT_CENTER[1]
+    const centerLng = weighted.weight > 0 ? weighted.lng / weighted.weight : DEFAULT_CENTER[0]
+
+    return {
+      center: [centerLng, centerLat],
+      hasSaved: true,
+    }
+  }, [grids])
+
+  useEffect(() => {
+    centroidTargetRef.current = centroidTarget
+  }, [centroidTarget])
 
   useEffect(() => {
     if (!isMapboxConfigured || !mapContainerRef.current || mapRef.current) {
@@ -101,6 +146,62 @@ export default function MapPage() {
 
     map.addControl(new mapboxgl.AttributionControl({ compact: true }), 'bottom-right')
     map.addControl(new mapboxgl.NavigationControl({ visualizePitch: true }), 'top-right')
+
+    const centroidControl = {
+      map: null,
+      container: null,
+      button: null,
+      handleClick: null,
+      onAdd(controlMap) {
+        this.map = controlMap
+        const container = document.createElement('div')
+        container.className = 'mapboxgl-ctrl mapboxgl-ctrl-group pg-map-centroid-ctrl'
+
+        const button = document.createElement('button')
+        button.type = 'button'
+        button.className = 'pg-map-centroid-btn'
+        button.setAttribute('aria-label', 'Go to farm centroid')
+        button.title = 'Go to farm centroid'
+        button.innerHTML = '<span class="pg-map-centroid-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><circle cx="12" cy="12" r="5"></circle><circle cx="12" cy="12" r="1.5"></circle><path d="M12 2v3M12 19v3M2 12h3M19 12h3"></path></svg></span>'
+
+        this.handleClick = () => {
+          const { center, hasSaved } = centroidTargetRef.current
+          this.map.easeTo({
+            center,
+            zoom: hasSaved ? Math.max(this.map.getZoom(), 15) : 13,
+            duration: 700,
+          })
+          setActionMessage(
+            hasSaved
+              ? 'Centered map to your saved farm centroid.'
+              : 'No saved grid yet. Returned to default map center.',
+          )
+        }
+
+        button.addEventListener('click', this.handleClick)
+        container.appendChild(button)
+
+        this.container = container
+        this.button = button
+
+        return container
+      },
+      onRemove() {
+        if (this.button && this.handleClick) {
+          this.button.removeEventListener('click', this.handleClick)
+        }
+
+        if (this.container && this.container.parentNode) {
+          this.container.parentNode.removeChild(this.container)
+        }
+
+        this.map = null
+        this.container = null
+        this.button = null
+        this.handleClick = null
+      },
+    }
+    map.addControl(centroidControl, 'top-right')
 
     const draw = new MapboxDraw({
       displayControlsDefault: false,
@@ -174,7 +275,7 @@ export default function MapPage() {
       setLocalAreaHectares(areaHectares)
 
       if (!isFirebaseConfigured) {
-        setActionMessage('Polygon measured locally. Configure Firebase to sync this grid.')
+        setActionMessage('Grid save requires Firebase configuration and authenticated access.')
         setLastSaveState('failed')
         return
       }
@@ -222,7 +323,7 @@ export default function MapPage() {
 
     const onDrawDelete = async (event) => {
       if (!isFirebaseConfigured) {
-        setActionMessage('Local polygon removed.')
+        setActionMessage('Grid delete requires Firebase configuration and authenticated access.')
         setLastSaveState('idle')
         return
       }
@@ -336,7 +437,7 @@ export default function MapPage() {
   }, [deleteGrid, isFirebaseConfigured, isMapboxConfigured, mapboxToken, saveOrUpdateGridByFeature])
 
   useEffect(() => {
-    if (!mapReadyRef.current || !mapRef.current) {
+    if (!mapReady || !mapReadyRef.current || !mapRef.current) {
       return
     }
 
@@ -349,7 +450,7 @@ export default function MapPage() {
     if (bufferSource) {
       bufferSource.setData(createBufferCollection(grids))
     }
-  }, [grids])
+  }, [grids, mapReady])
 
   const onConfirmSave = async () => {
     if (!pendingFeature) {

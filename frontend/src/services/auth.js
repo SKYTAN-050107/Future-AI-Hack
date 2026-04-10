@@ -3,6 +3,7 @@ import {
   OAuthProvider,
   RecaptchaVerifier,
   createUserWithEmailAndPassword,
+  getAdditionalUserInfo,
   sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signInWithPhoneNumber,
@@ -91,4 +92,9 @@ export async function sendResetPassword(email) {
 export async function signOutCurrentUser() {
   const authInstance = ensureAuth()
   return signOut(authInstance)
+}
+
+export function isCredentialNewUser(credential) {
+  const info = getAdditionalUserInfo(credential)
+  return Boolean(info?.isNewUser)
 }

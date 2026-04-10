@@ -25,20 +25,7 @@ export async function bootstrapUserProfile(user) {
   const snapshot = await getDoc(userRef)
 
   if (!snapshot.exists()) {
-    const payload = {
-      uid: user.uid,
-      email: user.email || null,
-      displayName: user.displayName || null,
-      phoneNumber: user.phoneNumber || null,
-      onboardingCompleted: false,
-      onboarding: null,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-      lastLoginAt: serverTimestamp(),
-    }
-
-    await setDoc(userRef, payload, { merge: true })
-    return payload
+    return null
   }
 
   await updateDoc(userRef, {
@@ -49,6 +36,35 @@ export async function bootstrapUserProfile(user) {
     updatedAt: serverTimestamp(),
   })
 
+  const refreshed = await getDoc(userRef)
+  return refreshed.data() || null
+}
+
+export async function createUserProfile(user, partialProfile = {}) {
+  if (!user?.uid || !isFirebaseConfigured || !db) {
+    throw new Error('Cannot create user profile without authenticated user and Firestore config')
+  }
+
+  const userRef = getUserRef(user.uid)
+  const snapshot = await getDoc(userRef)
+  if (snapshot.exists()) {
+    return snapshot.data()
+  }
+
+  const payload = {
+    uid: user.uid,
+    email: user.email || null,
+    displayName: user.displayName || null,
+    phoneNumber: user.phoneNumber || null,
+    onboardingCompleted: false,
+    onboarding: null,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    lastLoginAt: serverTimestamp(),
+    ...partialProfile,
+  }
+
+  await setDoc(userRef, payload, { merge: true })
   const refreshed = await getDoc(userRef)
   return refreshed.data() || null
 }

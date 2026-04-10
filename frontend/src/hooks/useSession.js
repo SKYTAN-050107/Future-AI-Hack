@@ -4,17 +4,14 @@ import { auth, isFirebaseConfigured } from '../firebase'
 import { signOutCurrentUser } from '../services/auth'
 import {
   bootstrapUserProfile,
+  createUserProfile,
   clearOnboardingProfile,
   saveOnboardingProfile,
 } from '../services/userProfile'
 
-function loadFlag(key) {
-  return localStorage.getItem(key) === '1'
-}
-
 export function useSession() {
   const [isAuthenticated, setIsAuthenticated] = useState(() => Boolean(auth?.currentUser))
-  const [isOnboarded, setIsOnboarded] = useState(() => loadFlag('padiguard_onboarded'))
+  const [isOnboarded, setIsOnboarded] = useState(false)
   const [user, setUser] = useState(() => auth?.currentUser || null)
   const [profile, setProfile] = useState(null)
   const [isAuthLoading, setIsAuthLoading] = useState(() => Boolean(isFirebaseConfigured && auth))
@@ -35,32 +32,52 @@ export function useSession() {
         return
       }
 
+      setIsAuthLoading(true)
       setUser(nextUser)
       setIsAuthenticated(Boolean(nextUser))
 
       if (!nextUser) {
         setProfile(null)
-        setIsOnboarded(loadFlag('padiguard_onboarded'))
+        setIsOnboarded(false)
         setIsAuthLoading(false)
         return
       }
 
       try {
-        const nextProfile = await bootstrapUserProfile(nextUser)
+        let nextProfile = await bootstrapUserProfile(nextUser)
         if (!active) {
           return
+        }
+
+        if (!nextProfile) {
+          const creationTime = new Date(nextUser.metadata?.creationTime || 0).getTime()
+          const lastSignInTime = new Date(nextUser.metadata?.lastSignInTime || 0).getTime()
+          const isReturningUser = Boolean(creationTime && lastSignInTime && creationTime !== lastSignInTime)
+
+          if (isReturningUser) {
+            // Migration path: legacy accounts created before profile docs existed.
+            nextProfile = await createUserProfile(nextUser, {
+              onboardingCompleted: true,
+              onboarding: {
+                farmName: null,
+                location: null,
+                variety: null,
+                language: 'BM',
+              },
+            })
+          }
         }
 
         setProfile(nextProfile)
         const profileOnboarded = Boolean(nextProfile?.onboardingCompleted)
         setIsOnboarded(profileOnboarded)
-        localStorage.setItem('padiguard_onboarded', profileOnboarded ? '1' : '0')
       } catch {
         if (!active) {
           return
         }
 
         setProfile(null)
+        setIsOnboarded(false)
       } finally {
         if (active) {
           setIsAuthLoading(false)
@@ -74,10 +91,6 @@ export function useSession() {
     }
   }, [])
 
-  const login = () => {
-    // Firebase auth providers now own login; this method remains for compatibility.
-  }
-
   const logout = async () => {
     if (isFirebaseConfigured && auth) {
       await signOutCurrentUser()
@@ -89,22 +102,27 @@ export function useSession() {
   }
 
   const completeOnboarding = async (onboardingData = null) => {
-    if (user?.uid && isFirebaseConfigured) {
-      await saveOnboardingProfile(user.uid, onboardingData)
-      setProfile((current) => ({
-        ...(current || {}),
-        onboardingCompleted: true,
-        onboarding: {
-          farmName: onboardingData?.farmName || null,
-          location: onboardingData?.location || null,
-          variety: onboardingData?.variety || null,
-          language: onboardingData?.language || 'BM',
-        },
-      }))
+    if (!user?.uid || !isFirebaseConfigured) {
+      throw new Error('Authenticated Firebase session is required to complete onboarding.')
     }
 
+    await saveOnboardingProfile(user.uid, onboardingData)
+
+    setProfile((current) => ({
+      ...(current || {}),
+      onboardingCompleted: true,
+      onboarding: {
+        farmName: onboardingData?.farmName || null,
+        location: onboardingData?.location || null,
+        variety: onboardingData?.variety || null,
+        language: onboardingData?.language || 'BM',
+      },
+      onboardingSyncStatus: 'synced',
+    }))
+
     setIsOnboarded(true)
-    localStorage.setItem('padiguard_onboarded', '1')
+
+    return { persisted: true }
   }
 
   const resetOnboarding = async () => {
@@ -118,7 +136,6 @@ export function useSession() {
       onboarding: null,
     }))
     setIsOnboarded(false)
-    localStorage.removeItem('padiguard_onboarded')
   }
 
   return useMemo(
@@ -128,7 +145,6 @@ export function useSession() {
       user,
       profile,
       isAuthLoading,
-      login,
       logout,
       completeOnboarding,
       resetOnboarding,

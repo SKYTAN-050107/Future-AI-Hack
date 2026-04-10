@@ -13,6 +13,12 @@ pnpm-debug.log*
 **/dist/
 **/dev-dist/
 
+# Allow tracked frontend hosting artifacts while keeping other dist outputs ignored
+!frontend/dist/
+frontend/dist/**
+!frontend/dist/index.html
+!frontend/dist/sw.js
+
 # Environment and secrets (all workspaces)
 .env
 .env.*

@@ -215,6 +215,7 @@ The mapping interface is built as a **Synchronized Spatial Grid** — a living m
 * Turf.js calculates area (hectares) and centroid
 * Firestore stores GridID object with polygon, area, centroid
 * Map renders polygon with color based on health state
+
 * Scanner updates GridID status to "Alert" upon confirmed abnormality
 * Firestore Trigger updates GridID status to "Alert", immediately changing the grid color on the map to red
 * Spatial Propagation Agent evaluates proximity of infected grids to healthy ones and suggests buffer zones for preventative spraying
