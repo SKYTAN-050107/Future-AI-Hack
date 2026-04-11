@@ -67,21 +67,25 @@ async def live_scan(websocket: WebSocket) -> None:
                 if isinstance(raw_result, Exception):
                     logger.error("Region %d failed: %s", i, raw_result)
                     results.append(ScanResult(
-                        label="Error",
-                        confidence=0.0,
-                        reason=str(raw_result),
+                        cropType="Error",
+                        disease=str(raw_result),
+                        severity="Low",
+                        severityScore=0.0,
+                        treatmentPlan="None",
+                        survivalProb=0.0,
                         bbox=bbox,
                     ))
                     continue
 
                 result = ScanResult(
-                    label=raw_result.get("label", "Unknown"),
-                    confidence=raw_result.get("confidence", 0.0),
-                    reason=raw_result.get("reason", ""),
-                    severity=raw_result.get("severity", "unknown"),
-                    is_abnormal=raw_result.get("is_abnormal", False),
+                    cropType=str(raw_result.get("cropType", "Unknown")),
+                    disease=str(raw_result.get("disease", "Unknown")),
+                    severity=str(raw_result.get("severity", "Moderate")),
+                    severityScore=float(raw_result.get("severityScore", 0.0)),
+                    treatmentPlan=str(raw_result.get("treatmentPlan", "Consult Agrologist")),
+                    survivalProb=float(raw_result.get("survivalProb", 1.0)),
+                    is_abnormal=bool(raw_result.get("is_abnormal", False)),
                     bbox=bbox,
-                    alternatives=raw_result.get("alternatives", []),
                 )
                 results.append(result)
 
@@ -90,10 +94,13 @@ async def live_scan(websocket: WebSocket) -> None:
                     try:
                         await _firestore.record_scan_result(
                             grid_id=frame.grid_id,
-                            label=result.label,
-                            confidence=result.confidence,
+                            cropType=result.cropType,
+                            disease=result.disease,
                             severity=result.severity,
-                            is_abnormal=True,
+                            severityScore=result.severityScore,
+                            treatmentPlan=result.treatmentPlan,
+                            survivalProb=result.survivalProb,
+                            is_abnormal=result.is_abnormal,
                         )
                     except Exception as fs_err:
                         logger.error("Firestore write failed: %s", fs_err)

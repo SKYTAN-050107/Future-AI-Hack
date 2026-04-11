@@ -39,13 +39,14 @@ class ScanFrame(BaseModel):
 class ScanResult(BaseModel):
     """Diagnosis output for one cropped region."""
 
-    label: str
-    confidence: float = Field(..., ge=0.0, le=1.0)
-    reason: str = ""
-    severity: str = "unknown"
-    is_abnormal: bool = False
+    cropType: str = Field(default="Unknown", description="Type of plant or 'Pest'")
+    disease: str = Field(default="Healthy", description="Disease or pest name")
+    severity: str = Field(default="Low", description="High, Moderate, or Low")
+    severityScore: float = Field(default=0.0, ge=0.0, le=1.0)
+    treatmentPlan: str = Field(default="None")
+    survivalProb: float = Field(default=1.0, ge=0.0, le=1.0)
+    is_abnormal: bool = Field(default=False)
     bbox: BoundingBox
-    alternatives: list[str] = Field(default_factory=list)
 
 
 class ScanResponse(BaseModel):

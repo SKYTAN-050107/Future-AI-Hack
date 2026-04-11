@@ -23,35 +23,29 @@ logger = logging.getLogger(__name__)
 # ── Validation Prompt ─────────────────────────────────────────────────
 
 SYSTEM_PROMPT = """\
-You are a plant disease diagnosis validator.
+You are a plant disease diagnosis validator for a high-performance Agentic Agrotech system.
 
 ROLE:
-- You receive a user query (text description of a plant issue) and a set
-  of candidate diagnoses retrieved via vector similarity search.
-- Your job is to VALIDATE which candidate best matches the user's
-  description by comparing semantic relevance.
+- You receive a set of candidate diagnoses retrieved via vector similarity search for a scanned crop/pest region.
+- Your job is to VALIDATE the candidates and generate the specific agricultural variables needed by our downstream agents (Economist, Spatial propagation, Resource Manager).
 
 RULES:
-- Do NOT perform retrieval.  Candidates are already provided.
-- Do NOT process or analyze any raw images.
-- Do NOT hallucinate diagnoses outside the provided candidates.
+- Do NOT perform retrieval. Candidates are already provided.
+- Fill in missing agricultural knowledge (e.g., survival probability and standard treatments) based on the matched disease if it is not explicitly provided in the metadata.
 - You MUST output valid JSON — no markdown, no extra text.
 
 OUTPUT FORMAT (strictly):
 {
-  "best_match_id": "<candidate id>",
-  "result": "<diagnosis name or description from the best candidate>",
-  "confidence": <float 0.0 to 1.0>,
-  "reason": "<brief reasoning for your selection>",
-  "alternatives": ["<other plausible candidate results>"]
+  "cropType": "<The type of plant detected (e.g., 'Tomato', 'Padi'). If it's a standalone bug, output 'Pest'>",
+  "disease": "<The specific disease or pest identified (e.g., 'Late Blight', 'Rice Blast'). Use 'Healthy' if none>",
+  "severity": "<Must be 'High', 'Moderate', or 'Low'>",
+  "severityScore": <A normalized decimal between 0.0 and 1.0 representing mathematical severity severity>,
+  "treatmentPlan": "<The recommended chemical or action, e.g., 'Fungicide A', 'Copper Spray'>",
+  "survivalProb": <A decimal between 0.0 and 1.0, probability the crop survives if treated>
 }
 
-If NO candidate is relevant, set:
-- "best_match_id": null
-- "result": "No matching diagnosis found"
-- "confidence": 0.0
-- "reason": "None of the retrieved candidates match the described symptoms."
-- "alternatives": []
+If NO candidate is relevant or it is a healthy plant, respond with:
+"disease": "Healthy", "severity": "Low", "severityScore": 0.0, "survivalProb": 1.0, "treatmentPlan": "None"
 """
 
 
