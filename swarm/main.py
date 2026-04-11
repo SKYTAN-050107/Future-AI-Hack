@@ -46,11 +46,11 @@ register_inventory_tools(ai)
 register_roi_tools(ai)
 register_fcm_tools(ai)
 
-# ── Register all agent flows ─────────────────────────────────────
-register_meteorologist_agent(ai)
-register_economist_agent(ai)
-register_resource_manager_agent(ai)
-register_spatial_agent(ai)
+# ── Register all agent flows (returns the callable FlowWrapper) ──
+meteorologist_flow = register_meteorologist_agent(ai)
+economist_flow = register_economist_agent(ai)
+resource_manager_flow = register_resource_manager_agent(ai)
+spatial_flow = register_spatial_agent(ai)
 
 
 # ── Master Orchestrator Flow ──────────────────────────────────────
@@ -68,38 +68,34 @@ async def swarm_orchestrator(input_data: SwarmInput) -> dict:
       - Disease spread geometry (Spatial Propagation)
     """
 
-    # ── Prepare agent inputs from the master SwarmInput ────────────
-    weather_task = ai.run_action(
-        key="flow/meteorologist_flow",
-        input=MeteorologistInput(
+    # ── Launch all 4 agent flows concurrently ─────────────────────
+    weather_task = meteorologist_flow(
+        MeteorologistInput(
             lat=input_data.lat,
             lng=input_data.lng,
             crop_type=input_data.crop_type,
-        ),
+        )
     )
 
-    economy_task = ai.run_action(
-        key="flow/economist_flow",
-        input=EconomistInput(
+    economy_task = economist_flow(
+        EconomistInput(
             user_id=input_data.user_id,
             crop_type=input_data.crop_type,
             treatment_plan=input_data.treatment_plan,
             survival_prob=input_data.survival_prob,
             farm_size=input_data.farm_size,
-        ),
+        )
     )
 
-    resource_task = ai.run_action(
-        key="flow/resource_manager_flow",
-        input=ResourceManagerInput(
+    resource_task = resource_manager_flow(
+        ResourceManagerInput(
             user_id=input_data.user_id,
             treatment_plan=input_data.treatment_plan,
-        ),
+        )
     )
 
-    spatial_task = ai.run_action(
-        key="flow/dynamic_spatial_propagation_flow",
-        input=SpatialInput(
+    spatial_task = spatial_flow(
+        SpatialInput(
             lat=input_data.lat,
             lng=input_data.lng,
             crop_type=input_data.crop_type,
@@ -107,7 +103,7 @@ async def swarm_orchestrator(input_data: SwarmInput) -> dict:
             severity_score=input_data.severity_score,
             wind_speed_kmh=input_data.wind_speed_kmh,
             wind_direction=input_data.wind_direction,
-        ),
+        )
     )
 
     # ── Await all agents concurrently ─────────────────────────────
@@ -125,7 +121,7 @@ async def swarm_orchestrator(input_data: SwarmInput) -> dict:
     def safe_result(result, agent_name: str) -> str:
         """Convert agent result to string, with error fallback."""
         if isinstance(result, Exception):
-            return f"⚠️ {agent_name} encountered an error: {str(result)}"
+            return f"WARNING: {agent_name} encountered an error: {str(result)}"
         return str(result)
 
     def safe_spatial(result) -> dict | None:

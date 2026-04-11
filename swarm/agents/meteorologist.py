@@ -20,14 +20,13 @@ def register_meteorologist_agent(ai: Genkit):
         Analyze weather conditions and determine spray safety.
         Uses the fetch_weather tool, then LLM reasons over the data.
         """
-        # Step 1: Fetch weather data using the deterministic tool
-        from tools.weather_tool import WeatherInput
-        weather_result = await ai.run_action(
-            key="tool/fetch_weather",
-            input=WeatherInput(
+        # Step 1: Fetch weather data using the deterministic tool (direct call)
+        from tools.weather_tool import fetch_weather, WeatherInput
+        weather_result = await fetch_weather(
+            WeatherInput(
                 lat=input_data.lat,
                 lng=input_data.lng,
-            ),
+            )
         )
 
         # Step 2: LLM analyzes the weather data for the farmer
@@ -48,3 +47,5 @@ Keep the response concise and farmer-friendly. Use emojis for readability."""
 
         response = await llm_generate(prompt)
         return response
+
+    return meteorologist_flow

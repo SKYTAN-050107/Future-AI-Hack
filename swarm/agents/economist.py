@@ -19,32 +19,29 @@ def register_economist_agent(ai: Genkit):
     @ai.flow("economist_flow")
     async def economist_flow(input_data: EconomistInput) -> str:
         """
-        Full financial analysis: MCP market price → inventory cost → ROI.
+        Full financial analysis: MCP market price -> inventory cost -> ROI.
         Explicitly explains retail-to-farmgate markdown to the farmer.
         """
-        from tools.mcp_client import McpMarketPriceInput
-        from tools.inventory_tool import InventoryInput
-        from tools.roi_tool import RoiInput
+        from tools.mcp_client import fetch_mcp_market_price, McpMarketPriceInput
+        from tools.inventory_tool import fetch_inventory_cost, InventoryInput
+        from tools.roi_tool import calculate_roi_deterministic, RoiInput
 
-        # Step 1: Fetch market price from ManaMurah MCP
-        market_data = await ai.run_action(
-            key="tool/fetch_mcp_market_price",
-            input=McpMarketPriceInput(crop_type=input_data.crop_type),
+        # Step 1: Fetch market price from ManaMurah MCP (direct call)
+        market_data = await fetch_mcp_market_price(
+            McpMarketPriceInput(crop_type=input_data.crop_type)
         )
 
-        # Step 2: Fetch treatment cost from Firestore inventory
-        cost_data = await ai.run_action(
-            key="tool/fetch_inventory_cost",
-            input=InventoryInput(
+        # Step 2: Fetch treatment cost from Firestore inventory (direct call)
+        cost_data = await fetch_inventory_cost(
+            InventoryInput(
                 user_id=input_data.user_id,
                 treatment_plan=input_data.treatment_plan,
-            ),
+            )
         )
 
-        # Step 3: Calculate ROI deterministically
-        roi_data = await ai.run_action(
-            key="tool/calculate_roi_deterministic",
-            input=RoiInput(
+        # Step 3: Calculate ROI deterministically (direct call)
+        roi_data = await calculate_roi_deterministic(
+            RoiInput(
                 retail_price=market_data.get("retail_price_per_kg", 0)
                     if isinstance(market_data, dict)
                     else 0,
@@ -54,7 +51,7 @@ def register_economist_agent(ai: Genkit):
                     else 0,
                 crop_type=input_data.crop_type,
                 farm_size_hectares=input_data.farm_size,
-            ),
+            )
         )
 
         # Step 4: LLM generates farmer-friendly financial breakdown
@@ -70,12 +67,14 @@ IMPORTANT: You MUST explicitly explain the retail-to-farmgate price markdown:
 - This 55% markdown covers middlemen, transport, processing, and market fees.
 
 Provide:
-1. 💰 Market price summary (retail vs farm gate)
-2. 💊 Treatment cost breakdown
-3. 📊 ROI calculation with clear explanation
-4. ✅ or ⚠️ Final recommendation (treat or don't treat)
+1. Market price summary (retail vs farm gate)
+2. Treatment cost breakdown
+3. ROI calculation with clear explanation
+4. Final recommendation (treat or don't treat)
 
 Keep it concise and use numbers. Farmers need clarity, not jargon."""
 
         response = await llm_generate(prompt)
         return response
+
+    return economist_flow
