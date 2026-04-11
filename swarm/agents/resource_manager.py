@@ -19,19 +19,18 @@ def register_resource_manager_agent(ai: Genkit):
         Check inventory stock and trigger FCM alerts if low.
         Summarizes whether the treatment plan is executable.
         """
-        from tools.inventory_tool import InventoryInput
-        from tools.fcm_tool import FcmInput
+        from tools.inventory_tool import manage_inventory, InventoryInput
+        from tools.fcm_tool import send_low_stock_alert, FcmInput
 
-        # Step 1: Check current inventory levels
-        inventory_status = await ai.run_action(
-            key="tool/manage_inventory",
-            input=InventoryInput(
+        # Step 1: Check current inventory levels (direct call)
+        inventory_status = await manage_inventory(
+            InventoryInput(
                 user_id=input_data.user_id,
                 treatment_plan=input_data.treatment_plan,
-            ),
+            )
         )
 
-        # Step 2: If low stock, trigger FCM alert
+        # Step 2: If low stock, trigger FCM alert (direct call)
         alert_result = None
         is_low = (
             inventory_status.get("low_stock", False)
@@ -44,13 +43,12 @@ def register_resource_manager_agent(ai: Genkit):
                 if isinstance(inventory_status, dict)
                 else 0
             )
-            alert_result = await ai.run_action(
-                key="tool/send_low_stock_alert",
-                input=FcmInput(
+            alert_result = await send_low_stock_alert(
+                FcmInput(
                     user_id=input_data.user_id,
                     treatment_plan=input_data.treatment_plan,
                     current_stock=current_stock,
-                ),
+                )
             )
 
         # Step 3: LLM summarizes inventory status
@@ -60,12 +58,14 @@ Inventory Status: {inventory_status}
 Alert Result: {alert_result if alert_result else "No alert triggered (stock sufficient)"}
 
 Provide:
-1. 📦 Current stock level for '{input_data.treatment_plan}'
-2. ✅ or ❌ Whether the treatment plan can be executed with current stock
-3. 🔔 Whether a low-stock alert was sent to the farmer's device
-4. 🛒 If low stock, suggest procurement action
+1. Current stock level for '{input_data.treatment_plan}'
+2. Whether the treatment plan can be executed with current stock
+3. Whether a low-stock alert was sent to the farmer's device
+4. If low stock, suggest procurement action
 
 Keep the response short and actionable."""
 
         response = await llm_generate(prompt)
         return response
+
+    return resource_manager_flow

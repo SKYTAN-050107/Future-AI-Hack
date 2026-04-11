@@ -69,3 +69,5 @@ def register_spatial_agent(ai: Genkit):
         # Validate against Pydantic schema — strict enforcement
         buffer_zone = PredictedBufferZone(**raw)
         return buffer_zone.model_dump()
+
+    return dynamic_spatial_propagation_flow
