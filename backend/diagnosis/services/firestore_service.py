@@ -30,9 +30,12 @@ class FirestoreService:
     async def record_scan_result(
         self,
         grid_id: str,
-        label: str,
-        confidence: float,
+        cropType: str,
+        disease: str,
         severity: str,
+        severityScore: float,
+        treatmentPlan: str,
+        survivalProb: float,
         is_abnormal: bool,
     ) -> str:
         """Write a scan report to Firestore.
@@ -45,9 +48,13 @@ class FirestoreService:
         """
         doc_data = {
             "gridId": grid_id,
-            "label": label,
-            "confidence": confidence,
+            "cropType": cropType,
+            "disease": disease,
             "severityLevel": severity,
+            "severity": severity,
+            "severityScore": severityScore,
+            "treatmentPlan": treatmentPlan,
+            "survivalProb": survivalProb,
             "status": "abnormal" if is_abnormal else "normal",
             "abnormal": is_abnormal,
             "timestamp": datetime.now(timezone.utc),
@@ -57,7 +64,7 @@ class FirestoreService:
         doc_ref.set(doc_data)
 
         logger.info(
-            "Firestore scanReport %s → grid=%s label=%s abnormal=%s",
-            doc_ref.id, grid_id, label, is_abnormal,
+            "Firestore scanReport %s → grid=%s disease=%s abnormal=%s",
+            doc_ref.id, grid_id, disease, is_abnormal,
         )
         return doc_ref.id

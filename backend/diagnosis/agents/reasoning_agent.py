@@ -34,21 +34,7 @@ from services.llm_service import LLMService
 
 logger = logging.getLogger(__name__)
 
-# ── Severity mapping ─────────────────────────────────────────────────
 
-_SEVERITY_MAP = [
-    (0.90, "critical"),
-    (0.75, "high"),
-    (0.55, "medium"),
-    (0.0,  "low"),
-]
-
-
-def _to_severity(confidence: float) -> str:
-    for threshold, level in _SEVERITY_MAP:
-        if confidence >= threshold:
-            return level
-    return "unknown"
 
 
 class ReasoningAgent(BaseAgent):
@@ -67,10 +53,13 @@ class ReasoningAgent(BaseAgent):
 
         # ── Path 1: Fast match — vector result only, no Gemini ───────
         if fast_match:
-            label = self._label_from_metadata(fast_match.get("metadata", {}))
-            confidence = float(fast_match["score"])
-            reason = "High-confidence Vertex AI Vector Search match."
-            alternatives = []
+            metadata = fast_match.get("metadata", {})
+            disease = self._label_from_metadata(metadata)
+            cropType = str(metadata.get("cropType", "Unknown"))
+            severityScore = float(fast_match.get("score", 0.0))
+            severity = "High" if severityScore > 0.8 else "Moderate"
+            treatmentPlan = str(metadata.get("treatmentPlan", "Consult Agrologist"))
+            survivalProb = float(metadata.get("survivalProb", 0.5))
 
         # ── Path 2: LLM — Gemini 2 Flash via Vertex AI ───────────────
         elif candidates:
@@ -79,35 +68,39 @@ class ReasoningAgent(BaseAgent):
                 user_input={"text": None},
                 candidates=candidate_dicts,
             )
-            label = validation.get("result", "Unknown")
-            confidence = float(validation.get("confidence", 0.0))
-            reason = validation.get("reason", "")
-            alternatives = validation.get("alternatives", [])
+            cropType = str(validation.get("cropType", "Unknown"))
+            disease = str(validation.get("disease", "Unknown"))
+            severity = str(validation.get("severity", "Moderate"))
+            severityScore = float(validation.get("severityScore", 0.5))
+            treatmentPlan = str(validation.get("treatmentPlan", "Consult Agrologist"))
+            survivalProb = float(validation.get("survivalProb", 0.5))
 
         # ── Path 3: Nothing matched ──────────────────────────────────
         else:
-            label = "Healthy"
-            confidence = 0.5
-            reason = "No matching diseases found in Vertex AI Vector Search index."
-            alternatives = []
+            cropType = "Unknown"
+            disease = "Healthy"
+            severity = "Low"
+            severityScore = 0.0
+            treatmentPlan = "None"
+            survivalProb = 1.0
 
-        severity = _to_severity(confidence)
-        is_abnormal = label.lower() != "healthy" and confidence >= 0.55
+        is_abnormal = disease.lower() not in ["healthy", "normal", "unknown"]
 
         state["scan_result"] = {
-            "label": label,
-            "confidence": confidence,
-            "reason": reason,
+            "cropType": cropType,
+            "disease": disease,
             "severity": severity,
+            "severityScore": severityScore,
+            "treatmentPlan": treatmentPlan,
+            "survivalProb": survivalProb,
             "is_abnormal": is_abnormal,
             "bbox": bbox,
             "grid_id": grid_id,
-            "alternatives": alternatives,
         }
 
         logger.info(
-            "[%s] %s | conf=%.2f | sev=%s | abnormal=%s",
-            self.name, label, confidence, severity, is_abnormal,
+            "[%s] %s | %s | score=%.2f | abnormal=%s",
+            self.name, cropType, disease, severityScore, is_abnormal,
         )
 
         yield Event(
@@ -119,7 +112,7 @@ class ReasoningAgent(BaseAgent):
     @staticmethod
     def _label_from_metadata(metadata: dict) -> str:
         """Extract human-readable label from vector datapoint metadata."""
-        for key in ("label", "disease", "name", "category", "class"):
+        for key in ("disease", "label", "name", "category", "class"):
             if key in metadata:
                 return str(metadata[key])
         return "Unknown"
