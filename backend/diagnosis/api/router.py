@@ -1,95 +1,115 @@
 """
-API router for the plant diagnosis endpoint.
+API router — WebSocket endpoint for real-time live scanning.
 
-Exposes:
-    POST /analyze — multipart/form-data with optional image and text
-
-The router is intentionally thin: it handles HTTP concerns (file
-upload parsing, validation errors) and delegates all logic to the
-``DiagnosisPipeline``.
+WS /ws/scan
+    Receives ``ScanFrame`` JSON (multiple cropped regions per message).
+    Processes each region through the Google ADK ``LiveScanPipeline``.
+    Responds with ``ScanResponse`` JSON (labels for every region).
+    Abnormal results are written to Firestore (triggers grid propagation).
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from models.request import AnalyzeRequest
-from models.response import AnalyzeResponse
-from orchestration.pipeline import DiagnosisPipeline
+from models.scan_models import ScanFrame, ScanResult, ScanResponse
+from orchestration.pipeline import LiveScanPipeline
+from services.firestore_service import FirestoreService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Pipeline is initialized once and reused across requests.
-_pipeline = DiagnosisPipeline()
+_pipeline = LiveScanPipeline()
+_firestore = FirestoreService()
 
 
-@router.post(
-    "/analyze",
-    response_model=AnalyzeResponse,
-    summary="Analyze a plant image and/or text for disease diagnosis",
-    description=(
-        "Accepts an image file and/or text description. "
-        "Returns structured diagnosis with confidence and reasoning."
-    ),
-)
-async def analyze(
-    image: UploadFile | None = File(None, description="Plant image to analyze"),
-    text: str | None = Form(None, description="Text description of symptoms"),
-) -> AnalyzeResponse:
-    """Plant diagnosis analysis endpoint.
+@router.websocket("/ws/scan")
+async def live_scan(websocket: WebSocket) -> None:
+    """WebSocket endpoint for real-time plant scanning.
 
-    Accepts ``multipart/form-data`` with:
-    - ``image``: optional uploaded image file
-    - ``text``: optional text description
-
-    At least one of ``image`` or ``text`` must be provided.
-
-    Returns a JSON response with:
-    - ``result``: best diagnosis match
-    - ``confidence``: float [0.0, 1.0]
-    - ``reason``: LLM-generated reasoning
-    - ``alternatives``: list of other plausible matches
+    Each message contains all cropped regions from one camera key-frame.
+    Regions are processed CONCURRENTLY through the ADK pipeline.
     """
-    # ── Read image bytes if provided ──────────────────────────────
-    image_bytes: bytes | None = None
-    image_filename: str | None = None
+    await websocket.accept()
+    logger.info("Scanner connected")
 
-    if image is not None:
-        image_bytes = await image.read()
-        image_filename = image.filename
-
-        if not image_bytes:
-            raise HTTPException(
-                status_code=400,
-                detail="Uploaded image file is empty.",
-            )
-
-    # ── Validate at least one input ───────────────────────────────
-    if image_bytes is None and not text:
-        raise HTTPException(
-            status_code=400,
-            detail="At least one of 'image' or 'text' must be provided.",
-        )
-
-    # ── Build request model ───────────────────────────────────────
-    request = AnalyzeRequest(
-        image_bytes=image_bytes,
-        image_filename=image_filename,
-        text=text,
-    )
-
-    # ── Execute pipeline ──────────────────────────────────────────
     try:
-        response = await _pipeline.run(request)
-    except Exception as exc:
-        logger.exception("Pipeline execution failed")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Analysis failed: {exc}",
-        ) from exc
+        while True:
+            raw = await websocket.receive_text()
 
-    return response
+            # ── Parse frame ───────────────────────────────────────────
+            try:
+                frame = ScanFrame.model_validate_json(raw)
+            except Exception as e:
+                await websocket.send_json({"error": f"Invalid frame: {e}"})
+                continue
+
+            # ── Process all regions concurrently via ADK pipeline ─────
+            tasks = [
+                _pipeline.run(
+                    cropped_image_b64=region.cropped_image_b64,
+                    bbox=region.bbox.model_dump(),
+                    grid_id=frame.grid_id,
+                )
+                for region in frame.regions
+            ]
+            raw_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            # ── Build response ────────────────────────────────────────
+            results: list[ScanResult] = []
+            for i, raw_result in enumerate(raw_results):
+                bbox = frame.regions[i].bbox
+
+                if isinstance(raw_result, Exception):
+                    logger.error("Region %d failed: %s", i, raw_result)
+                    results.append(ScanResult(
+                        label="Error",
+                        confidence=0.0,
+                        reason=str(raw_result),
+                        bbox=bbox,
+                    ))
+                    continue
+
+                result = ScanResult(
+                    label=raw_result.get("label", "Unknown"),
+                    confidence=raw_result.get("confidence", 0.0),
+                    reason=raw_result.get("reason", ""),
+                    severity=raw_result.get("severity", "unknown"),
+                    is_abnormal=raw_result.get("is_abnormal", False),
+                    bbox=bbox,
+                    alternatives=raw_result.get("alternatives", []),
+                )
+                results.append(result)
+
+                # ── Firestore write-back for abnormal results ─────────
+                if result.is_abnormal and frame.grid_id:
+                    try:
+                        await _firestore.record_scan_result(
+                            grid_id=frame.grid_id,
+                            label=result.label,
+                            confidence=result.confidence,
+                            severity=result.severity,
+                            is_abnormal=True,
+                        )
+                    except Exception as fs_err:
+                        logger.error("Firestore write failed: %s", fs_err)
+
+            # ── Send results ──────────────────────────────────────────
+            response = ScanResponse(
+                frame_number=frame.frame_number,
+                results=results,
+            )
+            await websocket.send_text(response.model_dump_json())
+
+    except WebSocketDisconnect:
+        logger.info("Scanner disconnected")
+    except Exception as e:
+        logger.exception("WebSocket error: %s", e)
+        try:
+            await websocket.close(code=1011, reason=str(e))
+        except Exception:
+            pass

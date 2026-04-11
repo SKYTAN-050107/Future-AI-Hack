@@ -1,8 +1,7 @@
 """
 Centralized configuration via environment variables.
 
-Uses pydantic-settings to load from .env file or system environment.
-All Google Cloud and service-specific settings are defined here.
+Uses pydantic-settings to load from .env or system environment.
 """
 
 from functools import lru_cache
@@ -24,21 +23,24 @@ class Settings(BaseSettings):
     GCP_REGION: str = "us-central1"
     GOOGLE_APPLICATION_CREDENTIALS: str = ""
 
-    # ── Vertex AI Embedding ────────────────────────────────────────────
+    # ── Vertex AI Multimodal Embedding ─────────────────────────────────
     EMBEDDING_MODEL: str = "multimodalembedding@001"
     EMBEDDING_DIMENSION: int = 1408
 
     # ── Vertex AI Vector Search ────────────────────────────────────────
     VECTOR_SEARCH_INDEX_ENDPOINT: str
     VECTOR_SEARCH_DEPLOYED_INDEX_ID: str
+    VECTOR_SEARCH_CONFIDENCE_THRESHOLD: float = 0.65
+    VECTOR_SEARCH_FAST_MATCH_THRESHOLD: float = 0.85
 
-    # ── LLM (Gemini) ──────────────────────────────────────────────────
+    # ── Vertex AI Gemini ───────────────────────────────────────────────
     GEMINI_MODEL_NAME: str = "gemini-2.0-flash"
 
-    # ── Cloud Storage ─────────────────────────────────────────────────
-    GCS_BUCKET_NAME: str
+    # ── Cloud Firestore ────────────────────────────────────────────────
+    FIRESTORE_GRID_COLLECTION: str = "grids"
+    FIRESTORE_REPORT_COLLECTION: str = "scanReports"
 
-    # ── Pipeline Defaults ─────────────────────────────────────────────
+    # ── Pipeline Defaults ──────────────────────────────────────────────
     DEFAULT_TOP_K: int = 5
 
 

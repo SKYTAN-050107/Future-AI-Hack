@@ -1,5 +1,13 @@
-from .request import AnalyzeRequest
-from .response import AnalyzeResponse
-from .candidate import RetrievalCandidate
+"""Data models for the live-scan pipeline."""
 
-__all__ = ["AnalyzeRequest", "AnalyzeResponse", "RetrievalCandidate"]
+from models.scan_models import BoundingBox, ScanRegion, ScanFrame, ScanResult, ScanResponse
+from models.candidate import RetrievalCandidate
+
+__all__ = [
+    "BoundingBox",
+    "ScanRegion",
+    "ScanFrame",
+    "ScanResult",
+    "ScanResponse",
+    "RetrievalCandidate",
+]
