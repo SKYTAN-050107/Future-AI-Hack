@@ -1,13 +1,10 @@
 """
-PadiGuard AI — Multi-Agent Plant Diagnosis Backend
+PadiGuard AI — Live-Scan Backend
 
-FastAPI application entrypoint.
+Google ADK + Vertex AI powered real-time plant disease scanner.
 
-Run with:
+Run:
     uvicorn main:app --reload --host 0.0.0.0 --port 8000
-
-Or for production:
-    uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
 """
 
 from __future__ import annotations
@@ -20,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from api.router import router
 
-# ── Logging Setup ─────────────────────────────────────────────────────
+# ── Logging ───────────────────────────────────────────────────────────
 
 logging.basicConfig(
     level=logging.INFO,
@@ -29,35 +26,26 @@ logging.basicConfig(
     stream=sys.stdout,
 )
 
-# ── Application Factory ──────────────────────────────────────────────
+# ── App ───────────────────────────────────────────────────────────────
 
 app = FastAPI(
-    title="PadiGuard AI — Plant Diagnosis API",
-    description=(
-        "Multi-agent backend for plant disease diagnosis using "
-        "Image/Text retrieval + LLM validation pipeline."
-    ),
-    version="0.1.0",
+    title="PadiGuard AI — Live Scan",
+    description="Google ADK + Vertex AI real-time plant disease scanner.",
+    version="2.0.0",
 )
-
-# ── CORS (allow frontend access) ─────────────────────────────────────
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Restrict in production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ── Mount Routes ─────────────────────────────────────────────────────
-
 app.include_router(router)
 
 
-# ── Health Check ─────────────────────────────────────────────────────
-
 @app.get("/health", tags=["system"])
-async def health_check() -> dict:
-    """Simple liveness probe."""
-    return {"status": "ok", "service": "diagnosis-api"}
+async def health() -> dict:
+    """Liveness probe."""
+    return {"status": "ok", "service": "padiguard-livescan"}

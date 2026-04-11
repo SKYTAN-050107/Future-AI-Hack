@@ -1,89 +1,144 @@
-# PadiGuard AI — Multi-Agent Plant Diagnosis
+# PadiGuard AI — Live-Scan Backend
 
-PadiGuard AI is a modular, schema-free backend system designed for accurate plant disease diagnosis. It utilizes a sophisticated multi-agent pipeline powered by **Google Agent Development Kit (ADK)** and **Vertex AI**.
+**Google ADK + Vertex AI** real-time plant disease scanner.
 
-## 🏗 System Architecture
+---
 
-The system follows a strict sequential multi-agent orchestration pattern. Every request flows through five specialized agents:
+## Architecture
 
-1.  **Planner Agent**: Inspects the input (image/text) and determines the execution strategy (input type and top-k retrieval parameters).
-2.  **Embedding Agent**: Handles image uploads to Google Cloud Storage (GCS) and generates a 1408-dimensional multimodal embedding vector using Vertex AI.
-3.  **Retrieval Agent**: Performs a top-k vector similarity search against a Vertex AI Vector Search index to find candidate diagnoses.
-4.  **Validation Agent**: Uses **Gemini 2 Flash** to cross-reference the user's input against retrieved candidates for semantic relevance and reasoning.
-5.  **Aggregator Agent**: Assembles the final structured JSON response with confidence scores and alternatives.
+```
+Phone Camera (30fps)
+    │
+    ▼
+MediaPipe (on-device) → bounding boxes (< 50ms)
+    │
+    │  every 10th frame → crop each box → base64 → WebSocket
+    ▼
+┌──────────── Cloud Run (this backend) ────────────────────┐
+│  WS /ws/scan                                             │
+│                                                          │
+│  Google ADK SequentialAgent (per region, concurrent):     │
+│    ① CropEmbedAgent  → Vertex AI Embedding (1408-dim)    │
+│    ② VectorMatchAgent → Vertex AI Vector Search          │
+│    ③ ReasoningAgent   → fast-path or Vertex AI Gemini    │
+│                                                          │
+│  Response: [{label, confidence, bbox, severity}, ...]    │
+└──────────────────────────────────────────────────────────┘
+    │
+    ▼
+Frontend overlays labels on bounding boxes
+If abnormal → Firestore → Cloud Function grid propagation
+```
 
-## 🛠 Tech Stack
+---
 
-*   **Framework**: FastAPI
-*   **Orchestration**: Google Agent Development Kit (ADK)
-*   **AI Models**: Gemini 2 Flash, Multimodal Embedding (Vertex AI)
-*   **Infrastructure**: Vertex AI Vector Search, Google Cloud Storage (GCS)
-*   **Language**: Python 3.10+
+## Google Cloud Stack
 
-## 📁 Project Structure
+| Component | Service |
+|---|---|
+| Agent Orchestration | **Google ADK** SequentialAgent |
+| Feature Extraction | **Vertex AI** Multimodal Embedding (1408-dim) |
+| Vector Database | **Vertex AI** Vector Search |
+| Reasoning LLM | **Vertex AI** Gemini 2 Flash |
+| Real-time Sync | **Cloud Firestore** |
+| Compute | **Cloud Run** |
 
-```text
+---
+
+## Project Structure
+
+```
 backend/diagnosis/
-├── agents/             # ADK-based sub-agents
-│   ├── base_agent.py   # ADK BaseAgent re-export
-│   ├── planner.py
-│   ├── embedding.py
-│   ├── retrieval.py
-│   ├── validation.py
-│   └── aggregator.py
-├── api/                # API Routing layer
-├── config/             # Settings and environment config
-├── models/             # Pydantic request/response schemas
-├── orchestration/      # ADK SequentialAgent & Runner setup
-├── services/           # Low-level Google Cloud SDK wrappers
-├── main.py             # Entrypoint
-└── requirements.txt
+├── main.py                        FastAPI entry point
+├── requirements.txt               Dependencies
+├── .env.example                   Environment template
+│
+├── agents/                        Google ADK BaseAgent sub-agents
+│   ├── base_agent.py              ADK BaseAgent re-export
+│   ├── crop_embed_agent.py        base64 → Vertex AI 1408-dim embedding
+│   ├── vector_match_agent.py      Vertex AI Vector Search + confidence gate
+│   └── reasoning_agent.py         fast-path or Vertex AI Gemini Flash
+│
+├── orchestration/
+│   └── pipeline.py                ADK SequentialAgent (LiveScanPipeline)
+│
+├── api/
+│   └── router.py                  WS /ws/scan endpoint
+│
+├── services/
+│   ├── embedding_service.py       Vertex AI Multimodal Embedding
+│   ├── vector_search_service.py   Vertex AI Vector Search queries
+│   ├── llm_service.py             Vertex AI Gemini 2 Flash
+│   └── firestore_service.py       Cloud Firestore write-back
+│
+├── models/
+│   ├── scan_models.py             BoundingBox, ScanFrame, ScanResult
+│   └── candidate.py               RetrievalCandidate
+│
+└── config/
+    └── settings.py                Pydantic Settings / env loader
 ```
 
-## 🚀 Getting Started
+---
 
-### 1. Installation
+## WebSocket Protocol
 
-```bash
-pip install -r requirements.txt
-```
+### `WS /ws/scan`
 
-### 2. Configuration
-
-Copy `.env.example` to `.env` and fill in your Google Cloud credentials:
-
-```bash
-GCP_PROJECT_ID="your-project"
-GCP_REGION="us-central1"
-GCS_BUCKET_NAME="your-bucket"
-# ... other Vertex AI parameters
-```
-
-### 3. Running Locally
-
-```bash
-uvicorn main:app --reload
-```
-
-## 📡 API Reference
-
-### POST `/analyze`
-
-Analyzes a plant image and/or text description.
-
-**Request**: `multipart/form-data`
-*   `image`: (Optional) File
-*   `text`: (Optional) String
-
-**Response**:
+**Client → Server:**
 ```json
 {
-  "result": "Bacterial Leaf Blight",
-  "confidence": 0.95,
-  "reason": "The visual patterns and symptoms described perfectly match...",
-  "alternatives": ["Leaf Smut"]
+  "grid_id": "grid_abc",
+  "frame_number": 42,
+  "regions": [
+    {
+      "cropped_image_b64": "/9j/4AAQ...",
+      "bbox": {"x": 0.1, "y": 0.3, "width": 0.2, "height": 0.3,
+               "mediapipe_label": "leaf", "detection_score": 0.9}
+    }
+  ]
+}
+```
+
+**Server → Client:**
+```json
+{
+  "frame_number": 42,
+  "results": [
+    {
+      "label": "Rice Blast",
+      "confidence": 0.94,
+      "reason": "High-confidence Vertex AI Vector Search match.",
+      "severity": "critical",
+      "is_abnormal": true,
+      "bbox": {"x": 0.1, "y": 0.3, "width": 0.2, "height": 0.3,
+               "mediapipe_label": "leaf", "detection_score": 0.9},
+      "alternatives": ["Brown Spot"]
+    }
+  ]
 }
 ```
 
 ---
-*Developed for Future-AI-Hack*
+
+## Two Speed Paths
+
+| Path | When | Latency | Gemini Call |
+|---|---|---|---|
+| **Fast** | Vector Search score ≥ 0.85 | ~100ms | ❌ Skipped |
+| **LLM** | Score < 0.85 | ~300ms | ✅ Gemini Flash |
+
+---
+
+## Setup (You Handle)
+
+1. **Vertex AI Vector Search** — embed reference images → deploy streaming index
+2. **Cloud Firestore** — `grids` + `scanReports` collections
+3. **`.env`** — copy `.env.example`, fill in your GCP values
+4. **Frontend MediaPipe** — on-device detection → crops → WebSocket
+5. `pip install -r requirements.txt`
+6. `uvicorn main:app --reload --host 0.0.0.0 --port 8000`
+
+---
+
+*Built on Google ADK + Vertex AI for Future-AI-Hack*

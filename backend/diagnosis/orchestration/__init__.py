@@ -1,3 +1,5 @@
-from .pipeline import DiagnosisPipeline
+"""Orchestration — Google ADK pipeline."""
 
-__all__ = ["DiagnosisPipeline"]
+from orchestration.pipeline import LiveScanPipeline
+
+__all__ = ["LiveScanPipeline"]
