@@ -43,3 +43,11 @@ firebase-adminsdk*.json
 .firebase-*/
 .firebaserc.local
 .runtimeconfig.json
+
+# ── Python Swarm Service ──────────────────────
+swarm/.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
