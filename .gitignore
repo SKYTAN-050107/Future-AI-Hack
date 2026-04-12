@@ -25,6 +25,7 @@ frontend/dist/**
 !.env.example
 !.env.template
 !.env.sample
+!.env.example
 
 # Credential and key material
 *.pem
@@ -37,6 +38,8 @@ frontend/dist/**
 *.pfx
 serviceAccount*.json
 firebase-adminsdk*.json
+**/service-account.json
+**/service-account*.json
 
 # Firebase local state
 .firebase/
