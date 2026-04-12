@@ -55,21 +55,6 @@ class VectorMatchAgent(BaseAgent):
         candidates = [c for c in candidates if c.score >= threshold]
         state["candidates"] = candidates
 
-        # ── Fast-match gate ──────────────────────────────────────────
-        fast_match = None
-        if candidates and candidates[0].score >= settings.VECTOR_SEARCH_FAST_MATCH_THRESHOLD:
-            top = candidates[0]
-            fast_match = {
-                "id": top.id,
-                "score": top.score,
-                "metadata": top.metadata,
-            }
-            logger.info(
-                "[%s] Fast-match: id=%s score=%.3f → skip Gemini",
-                self.name, top.id, top.score,
-            )
-
-        state["fast_match"] = fast_match
         logger.info(
             "[%s] %d candidate(s) after threshold=%.2f",
             self.name, len(candidates), threshold,

@@ -3,16 +3,14 @@ Reasoning Agent — Google ADK BaseAgent.
 
 Produces the final disease label, confidence, severity, and reasoning.
 
-Two execution paths:
-1. **Fast path** — ``fast_match`` set by VectorMatchAgent (score ≥ 0.85).
-   Label is taken directly from the Vertex AI Vector Search metadata.
-   No Gemini call → lowest latency (~100 ms total).
-2. **LLM path** — Gemini 2 Flash (via Vertex AI) reasons over all
-   candidates to select the best match and assign severity (~300 ms).
+This agent enforces a pure LLM analysis pipeline:
+Because our dataset metadata only contains `cropType` and `disease`, 
+this agent invokes Gemini 2.0 Flash to intelligently conjure the missing 
+`severityScore`, `survivalProb`, and `treatmentPlan` to satisfy the strict 
+JSON payload requirements for downstream agents.
 
 State keys read:
     candidates  (list[RetrievalCandidate])
-    fast_match  (dict | None)
     bbox        (dict)
     grid_id     (str | None)
 
@@ -46,23 +44,12 @@ class ReasoningAgent(BaseAgent):
         self, ctx: InvocationContext
     ) -> AsyncGenerator[Event, None]:
         state = ctx.session.state
-        fast_match = state.get("fast_match")
         candidates = state.get("candidates", [])
         bbox = state.get("bbox", {})
         grid_id = state.get("grid_id")
 
-        # ── Path 1: Fast match — vector result only, no Gemini ───────
-        if fast_match:
-            metadata = fast_match.get("metadata", {})
-            disease = self._label_from_metadata(metadata)
-            cropType = str(metadata.get("cropType", "Unknown"))
-            severityScore = float(fast_match.get("score", 0.0))
-            severity = "High" if severityScore > 0.8 else "Moderate"
-            treatmentPlan = str(metadata.get("treatmentPlan", "Consult Agrologist"))
-            survivalProb = float(metadata.get("survivalProb", 0.5))
-
-        # ── Path 2: LLM — Gemini 2 Flash via Vertex AI ───────────────
-        elif candidates:
+        if candidates:
+            # ── LLM Reasoning via Gemini 2 Flash ───────────────
             candidate_dicts = [c.model_dump() for c in candidates]
             validation = await self._llm_svc.validate_candidates(
                 user_input={"text": None},
@@ -75,7 +62,7 @@ class ReasoningAgent(BaseAgent):
             treatmentPlan = str(validation.get("treatmentPlan", "Consult Agrologist"))
             survivalProb = float(validation.get("survivalProb", 0.5))
 
-        # ── Path 3: Nothing matched ──────────────────────────────────
+        # ── Nothing matched ──────────────────────────────────
         else:
             cropType = "Unknown"
             disease = "Healthy"
