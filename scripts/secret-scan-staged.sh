@@ -2,13 +2,17 @@
 set -euo pipefail
 
 # Block known sensitive file names/extensions from entering commits.
+# Intentionally allow env templates/examples that do not contain live secrets.
 blocked_files_regex='(^|/)\.env($|\.)|(^|/)serviceAccount[^/]*\.json$|(^|/)firebase-adminsdk[^/]*\.json$|(^|/)\.runtimeconfig\.json$|\.(pem|p12|key|jks|keystore|pfx|crt|cer)$'
 
 staged_files="$(git diff --cached --name-only --diff-filter=ACMR)"
 if [[ -n "${staged_files}" ]]; then
-  if echo "${staged_files}" | grep -Eiq "${blocked_files_regex}"; then
+  blocked_candidates="$(echo "${staged_files}" | grep -Ei "${blocked_files_regex}" | grep -Eiv '(^|/)\.env\.(example|template|sample)$' || true)"
+  if [[ -n "${blocked_candidates}" ]]; then
     echo "[secret-scan] Blocked: staged file path matches sensitive pattern."
     echo "[secret-scan] Remove it from index with: git rm --cached <file>"
+    echo "[secret-scan] Matched file(s):"
+    echo "${blocked_candidates}"
     exit 1
   fi
 fi
