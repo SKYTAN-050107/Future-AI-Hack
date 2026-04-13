@@ -4,10 +4,14 @@ Firestore service — records scan results and grid health updates.
 Writes to:
 - ``scanReports`` — triggers the ``updateGridStatus`` Cloud Function.
 - ``grids`` — direct health-state writes (triggers ``spatialPropagationAnalysis``).
+
+Uses ``asyncio.to_thread`` to run the synchronous Firestore SDK
+without blocking the event loop.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 
@@ -38,7 +42,7 @@ class FirestoreService:
         survivalProb: float,
         is_abnormal: bool,
     ) -> str:
-        """Write a scan report to Firestore.
+        """Write a scan report to Firestore and update grid health.
 
         This triggers the ``updateGridStatus`` Cloud Function,
         which sets the grid health to 'Infected' when abnormal.
@@ -60,11 +64,62 @@ class FirestoreService:
             "timestamp": datetime.now(timezone.utc),
         }
 
+        # Run synchronous Firestore writes in a thread to avoid blocking the event loop
+        doc_id = await asyncio.to_thread(self._write_scan_report, doc_data)
+
+        # If abnormal, update the grid health status
+        if is_abnormal and grid_id:
+            await asyncio.to_thread(
+                self._update_grid_health,
+                grid_id=grid_id,
+                disease=disease,
+                severity=severity,
+                severityScore=severityScore,
+            )
+
+        return doc_id
+
+    # ── Internal synchronous Firestore operations ─────────────────────
+
+    def _write_scan_report(self, doc_data: dict) -> str:
+        """Synchronous write to scanReports collection."""
         doc_ref = self._db.collection(self._report_col).document()
         doc_ref.set(doc_data)
 
         logger.info(
             "Firestore scanReport %s → grid=%s disease=%s abnormal=%s",
-            doc_ref.id, grid_id, disease, is_abnormal,
+            doc_ref.id,
+            doc_data.get("gridId"),
+            doc_data.get("disease"),
+            doc_data.get("abnormal"),
         )
         return doc_ref.id
+
+    def _update_grid_health(
+        self,
+        grid_id: str,
+        disease: str,
+        severity: str,
+        severityScore: float,
+    ) -> None:
+        """Update grid document health status to 'Infected'.
+
+        This write triggers the ``spatialPropagationAnalysis`` Cloud Function
+        which automatically flags neighboring grids within 200m as 'At-Risk'.
+        """
+        grid_ref = self._db.collection(self._grid_col).document(grid_id)
+        grid_ref.set(
+            {
+                "healthStatus": "Infected",
+                "lastDetectedDisease": disease,
+                "lastSeverity": severity,
+                "lastSeverityScore": severityScore,
+                "lastInfectionTimestamp": datetime.now(timezone.utc),
+            },
+            merge=True,  # Don't overwrite existing grid data (e.g., location)
+        )
+
+        logger.info(
+            "Firestore grid %s → healthStatus='Infected' (disease=%s)",
+            grid_id, disease,
+        )

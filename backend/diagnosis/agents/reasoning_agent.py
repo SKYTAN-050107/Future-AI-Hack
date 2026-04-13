@@ -3,14 +3,16 @@ Reasoning Agent — Google ADK BaseAgent.
 
 Produces the final disease label, confidence, severity, and reasoning.
 
-This agent enforces a pure LLM analysis pipeline:
-Because our dataset metadata only contains `cropType` and `disease`, 
-this agent invokes Gemini 2.0 Flash to intelligently conjure the missing 
-`severityScore`, `survivalProb`, and `treatmentPlan` to satisfy the strict 
-JSON payload requirements for downstream agents.
+Two speed paths:
+1. **Fast Path (Vector-Direct):** If VectorMatchAgent sets ``fast_match``
+   (score ≥ 0.85), the label is assigned immediately from vector metadata
+   without calling the LLM. (~100ms)
+2. **LLM Path (Reasoned):** If lower confidence, Gemini 2.0 Flash analyzes
+   the candidates to provide a final diagnosis and reasoning. (~300ms)
 
 State keys read:
     candidates  (list[RetrievalCandidate])
+    fast_match  (dict | None) — set by VectorMatchAgent when top score ≥ threshold
     bbox        (dict)
     grid_id     (str | None)
 
@@ -45,11 +47,31 @@ class ReasoningAgent(BaseAgent):
     ) -> AsyncGenerator[Event, None]:
         state = ctx.session.state
         candidates = state.get("candidates", [])
+        fast_match = state.get("fast_match")
         bbox = state.get("bbox", {})
         grid_id = state.get("grid_id")
 
-        if candidates:
-            # ── LLM Reasoning via Gemini 2 Flash ───────────────
+        # ── Fast Path: skip LLM entirely ─────────────────────────
+        if fast_match:
+            metadata = fast_match.get("metadata", {})
+            cropType = str(metadata.get("cropType", "Unknown"))
+            disease = str(metadata.get("disease", "Healthy"))
+            score = float(fast_match.get("score", 0.0))
+
+            # Infer severity from the disease label
+            is_abnormal = disease.lower() not in ["healthy", "normal", "unknown"]
+            severity = "High" if is_abnormal else "Low"
+            severityScore = score if is_abnormal else 0.0
+            survivalProb = max(0.0, 1.0 - score * 0.5) if is_abnormal else 1.0
+            treatmentPlan = "Consult Agrologist" if is_abnormal else "None"
+
+            logger.info(
+                "[%s] ⚡ FAST PATH: %s | %s | score=%.3f — LLM skipped",
+                self.name, cropType, disease, score,
+            )
+
+        # ── LLM Path: use Gemini for reasoning ────────────────────
+        elif candidates:
             candidate_dicts = [c.model_dump() for c in candidates]
             validation = await self._llm_svc.validate_candidates(
                 user_input={"text": None},
@@ -61,8 +83,9 @@ class ReasoningAgent(BaseAgent):
             severityScore = float(validation.get("severityScore", 0.5))
             treatmentPlan = str(validation.get("treatmentPlan", "Consult Agrologist"))
             survivalProb = float(validation.get("survivalProb", 0.5))
+            is_abnormal = disease.lower() not in ["healthy", "normal", "unknown"]
 
-        # ── Nothing matched ──────────────────────────────────
+        # ── Nothing matched ──────────────────────────────────────────
         else:
             cropType = "Unknown"
             disease = "Healthy"
@@ -70,8 +93,7 @@ class ReasoningAgent(BaseAgent):
             severityScore = 0.0
             treatmentPlan = "None"
             survivalProb = 1.0
-
-        is_abnormal = disease.lower() not in ["healthy", "normal", "unknown"]
+            is_abnormal = False
 
         state["scan_result"] = {
             "cropType": cropType,

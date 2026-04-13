@@ -55,6 +55,24 @@ class VectorMatchAgent(BaseAgent):
         candidates = [c for c in candidates if c.score >= threshold]
         state["candidates"] = candidates
 
+        # ── Fast-match gate ──────────────────────────────────────────
+        # If the top result exceeds the fast-match threshold (default 0.85),
+        # write a fast_match dict so ReasoningAgent can skip the LLM call.
+        fast_threshold = settings.VECTOR_SEARCH_FAST_MATCH_THRESHOLD
+        if candidates and candidates[0].score >= fast_threshold:
+            top = candidates[0]
+            state["fast_match"] = {
+                "id": top.id,
+                "score": top.score,
+                "metadata": top.metadata,
+            }
+            logger.info(
+                "[%s] ⚡ FAST MATCH: score=%.3f ≥ %.2f — LLM will be skipped",
+                self.name, top.score, fast_threshold,
+            )
+        else:
+            state["fast_match"] = None
+
         logger.info(
             "[%s] %d candidate(s) after threshold=%.2f",
             self.name, len(candidates), threshold,

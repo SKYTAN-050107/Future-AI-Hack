@@ -9,6 +9,7 @@ best match with structured JSON output.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any
@@ -50,6 +51,11 @@ If NO candidate is relevant or it is a healthy plant, respond with:
 """
 
 
+# ── Retry Configuration ───────────────────────────────────────────────
+MAX_RETRIES = 3
+RETRY_DELAY_SECONDS = 1.0
+
+
 class LLMService:
     """Validates retrieval candidates using Gemini 2 Flash."""
 
@@ -78,8 +84,9 @@ class LLMService:
                         minimum ``"id"``, ``"score"``, ``"metadata"``.
 
         Returns:
-            Parsed JSON dict with keys: ``best_match_id``, ``result``,
-            ``confidence``, ``reason``, ``alternatives``.
+            Parsed JSON dict with keys matching ``ScanResult`` schema:
+            ``cropType``, ``disease``, ``severity``, ``severityScore``,
+            ``treatmentPlan``, ``survivalProb``.
         """
         user_text = user_input.get("text") or "No text description provided."
         candidate_summary = json.dumps(candidates, indent=2, default=str)
@@ -91,30 +98,50 @@ class LLMService:
             "Select the best matching candidate and provide your reasoning."
         )
 
-        response = self._client.models.generate_content(
-            model=self._model_name,
-            contents=user_prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=SYSTEM_PROMPT,
-                response_mime_type="application/json",
-                temperature=0.2,
-                max_output_tokens=1024,
-            ),
-        )
+        fallback = {
+            "cropType": "Unknown",
+            "disease": "Unknown",
+            "severity": "Moderate",
+            "severityScore": 0.0,
+            "treatmentPlan": "Consult Agrologist",
+            "survivalProb": 0.5,
+        }
 
-        raw_text = response.text.strip()
-        logger.info("LLM validation response received (%d chars)", len(raw_text))
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                response = self._client.models.generate_content(
+                    model=self._model_name,
+                    contents=user_prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=SYSTEM_PROMPT,
+                        response_mime_type="application/json",
+                        temperature=0.2,
+                        max_output_tokens=1024,
+                    ),
+                )
 
-        try:
-            result = json.loads(raw_text)
-        except json.JSONDecodeError:
-            logger.error("LLM returned invalid JSON: %s", raw_text[:200])
-            result = {
-                "best_match_id": None,
-                "result": "Validation failed — invalid LLM response",
-                "confidence": 0.0,
-                "reason": "The LLM did not return parseable JSON.",
-                "alternatives": [],
-            }
+                raw_text = response.text.strip()
+                logger.info("LLM validation response received (%d chars)", len(raw_text))
 
-        return result
+                try:
+                    result = json.loads(raw_text)
+                    return result
+                except json.JSONDecodeError:
+                    logger.error("LLM returned invalid JSON: %s", raw_text[:200])
+                    if attempt == MAX_RETRIES:
+                        return fallback
+                    # Retry — the model may produce valid JSON on the next attempt
+
+            except Exception as e:
+                if attempt == MAX_RETRIES:
+                    logger.error(
+                        "LLM call failed after %d attempts: %s", MAX_RETRIES, e,
+                    )
+                    return fallback
+                logger.warning(
+                    "LLM attempt %d/%d failed: %s — retrying in %.1fs...",
+                    attempt, MAX_RETRIES, e, RETRY_DELAY_SECONDS,
+                )
+                await asyncio.sleep(RETRY_DELAY_SECONDS)
+
+        return fallback  # unreachable, satisfies type checker

@@ -3,10 +3,13 @@ Embedding service — Vertex AI Multimodal Embedding API.
 
 Generates 1408-dimensional vectors via ``multimodalembedding@001``.
 Supports embedding from in-memory bytes (live scan) or GCS URI.
+
+Includes retry logic for transient API failures.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import vertexai
@@ -19,6 +22,10 @@ from vertexai.vision_models import (
 from config import get_settings
 
 logger = logging.getLogger(__name__)
+
+# ── Retry Configuration ───────────────────────────────────────────────
+MAX_RETRIES = 3
+RETRY_DELAY_SECONDS = 1.0
 
 
 class EmbeddingService:
@@ -48,14 +55,35 @@ class EmbeddingService:
 
         Returns:
             1408-dimensional embedding vector.
+
+        Raises:
+            RuntimeError: If all retry attempts fail.
         """
-        image = VertexImage(image_bytes=image_bytes)
-        response: MultiModalEmbeddingResponse = self._model.get_embeddings(
-            image=image,
-            dimension=self._dimension,
-        )
-        logger.info("Vertex AI embedding from bytes (%d bytes)", len(image_bytes))
-        return list(response.image_embedding)
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                image = VertexImage(image_bytes=image_bytes)
+                response: MultiModalEmbeddingResponse = self._model.get_embeddings(
+                    image=image,
+                    dimension=self._dimension,
+                )
+                logger.info("Vertex AI embedding from bytes (%d bytes)", len(image_bytes))
+                return list(response.image_embedding)
+            except Exception as e:
+                if attempt == MAX_RETRIES:
+                    logger.error(
+                        "Embedding from bytes failed after %d attempts: %s",
+                        MAX_RETRIES, e,
+                    )
+                    raise RuntimeError(
+                        f"Vertex AI Embedding failed after {MAX_RETRIES} retries: {e}"
+                    ) from e
+                logger.warning(
+                    "Embedding attempt %d/%d failed: %s — retrying in %.1fs...",
+                    attempt, MAX_RETRIES, e, RETRY_DELAY_SECONDS,
+                )
+                await asyncio.sleep(RETRY_DELAY_SECONDS)
+
+        return []  # unreachable, satisfies type checker
 
     # ── Additional methods (for data ingestion / batch processing) ────
 
@@ -67,14 +95,35 @@ class EmbeddingService:
 
         Returns:
             1408-dimensional embedding vector.
+
+        Raises:
+            RuntimeError: If all retry attempts fail.
         """
-        image = VertexImage.load_from_file(gcs_uri)
-        response: MultiModalEmbeddingResponse = self._model.get_embeddings(
-            image=image,
-            dimension=self._dimension,
-        )
-        logger.info("Vertex AI embedding from GCS: %s", gcs_uri)
-        return list(response.image_embedding)
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                image = VertexImage.load_from_file(gcs_uri)
+                response: MultiModalEmbeddingResponse = self._model.get_embeddings(
+                    image=image,
+                    dimension=self._dimension,
+                )
+                logger.info("Vertex AI embedding from GCS: %s", gcs_uri)
+                return list(response.image_embedding)
+            except Exception as e:
+                if attempt == MAX_RETRIES:
+                    logger.error(
+                        "Embedding from GCS failed after %d attempts for %s: %s",
+                        MAX_RETRIES, gcs_uri, e,
+                    )
+                    raise RuntimeError(
+                        f"Vertex AI Embedding failed for {gcs_uri} after {MAX_RETRIES} retries: {e}"
+                    ) from e
+                logger.warning(
+                    "Embedding GCS attempt %d/%d failed: %s — retrying in %.1fs...",
+                    attempt, MAX_RETRIES, e, RETRY_DELAY_SECONDS,
+                )
+                await asyncio.sleep(RETRY_DELAY_SECONDS)
+
+        return []  # unreachable
 
     async def embed_text(self, text: str) -> list[float]:
         """Generate embedding from text.
@@ -84,10 +133,31 @@ class EmbeddingService:
 
         Returns:
             1408-dimensional embedding vector.
+
+        Raises:
+            RuntimeError: If all retry attempts fail.
         """
-        response: MultiModalEmbeddingResponse = self._model.get_embeddings(
-            contextual_text=text,
-            dimension=self._dimension,
-        )
-        logger.info("Vertex AI text embedding (%d chars)", len(text))
-        return list(response.text_embedding)
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                response: MultiModalEmbeddingResponse = self._model.get_embeddings(
+                    contextual_text=text,
+                    dimension=self._dimension,
+                )
+                logger.info("Vertex AI text embedding (%d chars)", len(text))
+                return list(response.text_embedding)
+            except Exception as e:
+                if attempt == MAX_RETRIES:
+                    logger.error(
+                        "Text embedding failed after %d attempts: %s",
+                        MAX_RETRIES, e,
+                    )
+                    raise RuntimeError(
+                        f"Vertex AI text embedding failed after {MAX_RETRIES} retries: {e}"
+                    ) from e
+                logger.warning(
+                    "Text embedding attempt %d/%d failed: %s — retrying in %.1fs...",
+                    attempt, MAX_RETRIES, e, RETRY_DELAY_SECONDS,
+                )
+                await asyncio.sleep(RETRY_DELAY_SECONDS)
+
+        return []  # unreachable
