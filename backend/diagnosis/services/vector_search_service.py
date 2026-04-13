@@ -4,10 +4,13 @@ Vector Search service wrapping Vertex AI Matching Engine.
 Performs Top-K similarity search against a pre-deployed index.
 Metadata is stored directly on Vector Search datapoints —
 no external metadata store is used.
+
+Includes retry logic and timeout handling.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -19,6 +22,11 @@ from config import get_settings
 from models.candidate import RetrievalCandidate
 
 logger = logging.getLogger(__name__)
+
+# ── Retry Configuration ───────────────────────────────────────────────
+MAX_RETRIES = 3
+RETRY_DELAY_SECONDS = 1.0
+SEARCH_TIMEOUT_SECONDS = 30
 
 
 class VectorSearchService:
@@ -48,33 +56,69 @@ class VectorSearchService:
             List of ``RetrievalCandidate`` objects sorted by
             descending similarity score.  Metadata is extracted
             from the datapoint restricts (schema-free).
+
+        Raises:
+            RuntimeError: If all retry attempts fail.
         """
-        responses = self._endpoint.find_neighbors(
-            deployed_index_id=self._deployed_index_id,
-            queries=[embedding],
-            num_neighbors=top_k,
-        )
-
-        candidates: list[RetrievalCandidate] = []
-
-        for match_list in responses:
-            for neighbor in match_list:
-                metadata = self._extract_metadata(neighbor)
-                candidates.append(
-                    RetrievalCandidate(
-                        id=str(neighbor.id),
-                        score=float(neighbor.distance),
-                        metadata=metadata,
-                    )
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                # Run the synchronous SDK call in a thread with a timeout
+                responses = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self._endpoint.find_neighbors,
+                        deployed_index_id=self._deployed_index_id,
+                        queries=[embedding],
+                        num_neighbors=top_k,
+                    ),
+                    timeout=SEARCH_TIMEOUT_SECONDS,
                 )
 
-        candidates.sort(key=lambda c: c.score, reverse=True)
-        logger.info(
-            "Vector search returned %d candidate(s) (top_k=%d)",
-            len(candidates),
-            top_k,
-        )
-        return candidates
+                candidates: list[RetrievalCandidate] = []
+
+                for match_list in responses:
+                    for neighbor in match_list:
+                        metadata = self._extract_metadata(neighbor)
+                        candidates.append(
+                            RetrievalCandidate(
+                                id=str(neighbor.id),
+                                score=float(neighbor.distance),
+                                metadata=metadata,
+                            )
+                        )
+
+                candidates.sort(key=lambda c: c.score, reverse=True)
+                logger.info(
+                    "Vector search returned %d candidate(s) (top_k=%d)",
+                    len(candidates),
+                    top_k,
+                )
+                return candidates
+
+            except asyncio.TimeoutError:
+                logger.error(
+                    "Vector search timed out after %ds (attempt %d/%d)",
+                    SEARCH_TIMEOUT_SECONDS, attempt, MAX_RETRIES,
+                )
+                if attempt == MAX_RETRIES:
+                    raise RuntimeError(
+                        f"Vector search timed out after {MAX_RETRIES} attempts"
+                    )
+            except Exception as e:
+                if attempt == MAX_RETRIES:
+                    logger.error(
+                        "Vector search failed after %d attempts: %s",
+                        MAX_RETRIES, e,
+                    )
+                    raise RuntimeError(
+                        f"Vector search failed after {MAX_RETRIES} retries: {e}"
+                    ) from e
+                logger.warning(
+                    "Vector search attempt %d/%d failed: %s — retrying in %.1fs...",
+                    attempt, MAX_RETRIES, e, RETRY_DELAY_SECONDS,
+                )
+                await asyncio.sleep(RETRY_DELAY_SECONDS)
+
+        return []  # unreachable
 
     # ── Internal ──────────────────────────────────────────────────────
 
