@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { IconArrowLeft, IconSparkles } from '../../components/icons/UiIcons'
+import { IconClock, IconSparkles } from '../../components/icons/UiIcons'
 
 function formatCaptureTime(date) {
   return new Intl.DateTimeFormat('en-MY', {
@@ -123,21 +123,19 @@ export default function Scanner() {
         <button
           type="button"
           className="pg-scanner-overlay-btn"
-          onClick={() => navigate('/app')}
-          aria-label="Back to home"
+          onClick={() => navigate('/app/history')}
+          aria-label="Open scan history"
         >
-          <IconArrowLeft className="pg-icon" />
+          <IconClock className="pg-icon" />
         </button>
-        <div className="pg-scanner-top-actions">
-          <button
-            type="button"
-            className="pg-scanner-overlay-btn pg-scanner-chatbot-btn"
-            onClick={() => navigate('/app/chatbot')}
-            aria-label="Open AI chatbot"
-          >
-            <IconSparkles className="pg-icon" />
-          </button>
-        </div>
+        <button
+          type="button"
+          className="pg-scanner-overlay-btn"
+          onClick={() => navigate('/app/report')}
+          aria-label="Open swarm analysis report"
+        >
+          <IconSparkles className="pg-icon" />
+        </button>
       </header>
 
       <div className="pg-scanner-viewfinder" aria-hidden="true">

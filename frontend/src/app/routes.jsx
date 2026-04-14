@@ -5,7 +5,6 @@ import { usePWA } from '../hooks/usePWA'
 import { useSessionContext } from '../hooks/useSessionContext'
 import { clearPostAuthPath, getLastAppPath, getPostAuthPath, setPostAuthPath } from '../utils/navigationState'
 import Dashboard from '../pages/app/Dashboard'
-import History from '../pages/app/History'
 import Chatbot from '../pages/app/Chatbot'
 import Inventory from '../pages/app/Inventory'
 import MapPage from '../pages/app/Map'
@@ -171,7 +170,6 @@ export const appRoutes = [
       { path: 'scan', element: <Scanner /> },
       { path: 'report', element: <Report /> },
       { path: 'treatment', element: <Treatment /> },
-      { path: 'history', element: <History /> },
       { path: 'chatbot', element: <Chatbot /> },
       { path: 'inventory', element: <Inventory /> },
       { path: 'profile', element: <Profile /> },
