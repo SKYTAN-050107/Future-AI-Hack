@@ -38,6 +38,11 @@ class VectorSearchService:
             index_endpoint_name=settings.VECTOR_SEARCH_INDEX_ENDPOINT,
         )
         self._deployed_index_id = settings.VECTOR_SEARCH_DEPLOYED_INDEX_ID
+        logger.info(
+            "VectorSearchService initialized with endpoint=%s, deployed_index_id=%s",
+            settings.VECTOR_SEARCH_INDEX_ENDPOINT,
+            settings.VECTOR_SEARCH_DEPLOYED_INDEX_ID,
+        )
 
     # ── Public API ────────────────────────────────────────────────────
 
@@ -69,6 +74,7 @@ class VectorSearchService:
                         deployed_index_id=self._deployed_index_id,
                         queries=[embedding],
                         num_neighbors=top_k,
+                        return_full_datapoint=True,
                     ),
                     timeout=SEARCH_TIMEOUT_SECONDS,
                 )
@@ -78,6 +84,14 @@ class VectorSearchService:
                 for match_list in responses:
                     for neighbor in match_list:
                         metadata = self._extract_metadata(neighbor)
+                        logger.info(
+                            "Neighbor %s: distance=%.4f, metadata=%s, restricts=%s, numeric_restricts=%s",
+                            neighbor.id,
+                            neighbor.distance,
+                            metadata,
+                            getattr(neighbor, "restricts", None),
+                            getattr(neighbor, "numeric_restricts", None),
+                        )
                         candidates.append(
                             RetrievalCandidate(
                                 id=str(neighbor.id),
@@ -86,12 +100,7 @@ class VectorSearchService:
                             )
                         )
 
-                candidates.sort(key=lambda c: c.score, reverse=True)
-                logger.info(
-                    "Vector search returned %d candidate(s) (top_k=%d)",
-                    len(candidates),
-                    top_k,
-                )
+                logger.info("Vector search built %d candidate(s)", len(candidates))
                 return candidates
 
             except asyncio.TimeoutError:
@@ -124,20 +133,38 @@ class VectorSearchService:
 
     @staticmethod
     def _extract_metadata(neighbor: Any) -> dict[str, Any]:
-        """Extract metadata from a MatchNeighbor's restricts.
+        """Extract metadata from a MatchNeighbor.
 
-        Vertex AI Vector Search stores metadata as ``restricts``
-        (list of Namespace objects with allow/deny token lists) and
-        ``numeric_restricts``.  We flatten these into a plain dict
-        so the rest of the system stays schema-free.
+        Vertex AI Vector Search stores metadata in multiple possible locations:
+        - embedding_metadata: custom metadata dict
+        - restricts: list of Namespace objects with allow/deny token lists
+        - numeric_restricts: numeric metadata
+        We flatten these into a plain dict.
         """
         metadata: dict[str, Any] = {}
+        
+        # First, try to get metadata from embedding_metadata attribute
+        if hasattr(neighbor, "embedding_metadata") and neighbor.embedding_metadata:
+            logger.debug("[_extract_metadata] Found embedding_metadata: %s", neighbor.embedding_metadata)
+            if isinstance(neighbor.embedding_metadata, dict):
+                metadata.update(neighbor.embedding_metadata)
+            else:
+                # Try to treat it as an object with attributes
+                for key in dir(neighbor.embedding_metadata):
+                    if not key.startswith('_'):
+                        try:
+                            val = getattr(neighbor.embedding_metadata, key)
+                            metadata[key] = val
+                        except Exception:
+                            pass
 
         # Token restricts → string values
         if hasattr(neighbor, "restricts") and neighbor.restricts:
             for restrict in neighbor.restricts:
-                namespace = getattr(restrict, "namespace", None)
-                tokens = getattr(restrict, "allow_list", [])
+                namespace = getattr(restrict, "namespace", None) or getattr(restrict, "name", None)
+                tokens = getattr(restrict, "allow_tokens", None)
+                if tokens is None:
+                    tokens = getattr(restrict, "allow_list", [])
                 if namespace and tokens:
                     # Single-value namespaces → scalar; multi → list
                     metadata[namespace] = (

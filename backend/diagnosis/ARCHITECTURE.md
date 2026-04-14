@@ -1,108 +1,135 @@
-# 🌾 PadiGuard AI — Live-Scan Backend Documentation
+# PadiGuard AI Diagnosis Architecture (Current)
 
-## 1. 🏗 System Architecture Overview
+本文档描述 `backend/diagnosis` 当前实现（以代码为准）的架构与数据流。
 
-PadiGuard AI uses a **Parallel-Stream "Vector-First"** architecture designed for low-latency, real-time crop disease scanning. It moves away from static image uploads to a continuous live-stream processing model.
+## 1. High-Level Design
 
-### The Three Layers
-*   **Layer 1: The BOX (On-Device)**
-    *   Powered by **MediaPipe** (JavaScript) running on the mobile browser.
-    *   Detects plants/leaves and renders "ghost" bounding boxes locally in **< 50ms**.
-*   **Layer 2: The VECTOR (Cloud Run)**
-    *   Powered by **Google ADK** (Agent Development Kit) and **Vertex AI**.
-    *   Processes cropped regions every 10 frames via WebSocket.
-    *   Matches visual patterns against a vector index in **< 300ms**.
-*   **Layer 3: The DISPLAY (WebSocket)**
-    *   Pushes labels (e.g., "Rice Blast", "Healthy") back to the phone.
-    *   Syncs results to **Cloud Firestore** to trigger spatial risk propagation.
+系统采用 **Vector-first** 的实时诊断架构：
 
----
+- 输入：前端发送每帧中的多个裁剪病斑区域（base64 + bbox）
+- 编排：后端对每个 region 并发执行 ADK SequentialAgent
+- 推理：使用 Vector Search Top-1 id 到 Firestore 查询诊断字段后生成结果
+- 输出：返回结构化 `ScanResponse`
+- 落库：异常结果写入 Firestore，触发下游网格状态更新/扩散逻辑
 
-## 2. 🤖 Agentic Pipeline (Google ADK)
+## 2. Runtime Components
 
-The backend logic is orchestrated by a **SequentialAgent** pipeline that ensures high-performance multimodal analysis.
+| Component | File | Responsibility |
+| --- | --- | --- |
+| FastAPI App | `main.py` | App lifecycle, CORS, `/health`, router mount |
+| WS API | `api/router.py` | 接收 `ScanFrame`，并发处理 regions，返回 `ScanResponse` |
+| Pipeline Orchestrator | `orchestration/pipeline.py` | 创建 ADK session + Runner，串联 3 agents |
+| Embed Agent | `agents/crop_embed_agent.py` | base64 -> image bytes -> 1408-d embedding |
+| Match Agent | `agents/vector_match_agent.py` | Vector Search Top-K + threshold filtering |
+| Reasoning Agent | `agents/reasoning_agent.py` | 用 top candidate id 查询 Firestore，生成最终诊断结果 |
+| Embedding Service | `services/embedding_service.py` | Vertex AI `multimodalembedding@001` |
+| Vector Search Service | `services/vector_search_service.py` | Vertex AI Matching Engine `find_neighbors` |
+| Firestore Service | `services/firestore_service.py` | 写 `scanReports`、更新 `grids` |
 
-| Agent | Responsibility | AI Model / Service |
-| :--- | :--- | :--- |
-| **CropEmbedAgent** | Decodes base64 crops into raw bytes and generates a feature vector. | `multimodalembedding@001` (1408-dim) |
-| **VectorMatchAgent** | Queries the vector database to find the "closest" matching disease photos. | **Vertex AI Vector Search** |
-| **ReasoningAgent** | Decides on the final label. Uses a "Fast Path" if confidence is high. | **Gemini 2.0 Flash** |
+## 3. Sequence Flow
 
-### ⚡ Two Speed Paths
-1.  **Fast Path (Vector-Direct):** If the vector search similarity is **≥ 0.85**, the system assigns the label immediately without calling the LLM. (~100ms)
-2.  **LLM Path (Reasoned):** If lower confidence, **Gemini 2.0 Flash** analyzes the candidates to provide a final diagnosis and reasoning. (~300ms)
-
----
-
-## 3. 🛠 Google Cloud Tech Stack
-
-The system is built natively on Google Cloud to ensure maximum reliability and speed.
-
-| Component | GCP Service | Role |
-| :--- | :--- | :--- |
-| **Orchestration** | **Google ADK** | Manages the multi-agent session state and flow. |
-| **Intelligence** | **Gemini 2.0 Flash** | Multimodal reasoning and fallback validation. |
-| **Identity** | **Vertex AI Vector Search** | High-speed similarity matching for diseases. |
-| **Embeddings** | **Multimodal Embedding API** | Converts pixels into mathematical vectors. |
-| **Real-time DB** | **Cloud Firestore** | Stores scan history and triggers grid health updates. |
-| **Execution** | **Cloud Run** | Serverless hosting for the Python/FastAPI backend. |
-
----
-
-## 🔌 4. WebSocket Protocol (`WS /ws/scan`)
-
-The system communicates over a high-speed WebSocket protocol using structured JSON.
-
-### Inbound Frame (`ScanFrame`)
-The frontend sends multiple cropped regions from a single camera frame.
-```json
-{
-  "grid_id": "section_A1",
-  "frame_number": 120,
-  "regions": [
-    {
-      "cropped_image_b64": "...", 
-      "bbox": { "x": 0.1, "y": 0.2, "width": 0.3, "height": 0.4 }
-    }
-  ]
-}
+```text
+Client
+  -> WS /ws/scan (ScanFrame)
+Router
+  -> validate ScanFrame
+  -> asyncio.gather(run pipeline per region)
+Pipeline.run(region)
+  -> create ADK in-memory session (state: cropped_image_b64, bbox, grid_id)
+  -> SequentialAgent:
+       1) CropEmbedAgent
+       2) VectorMatchAgent
+       3) ReasoningAgent
+  -> collect scan_result
+Router
+  -> build ScanResult list
+  -> if result.is_abnormal: FirestoreService.record_scan_result(...)
+  -> send ScanResponse
 ```
 
-### Outbound Result (`ScanResponse`)
-The server returns labels for each region.
-```json
-{
-  "frame_number": 120,
-  "results": [
-    {
-      "label": "Rice Blast",
-      "confidence": 0.92,
-      "severity": "critical",
-      "is_abnormal": true,
-      "reason": "Visual match with BPH nymph clusters found in ref DB."
-    }
-  ]
-}
-```
+## 4. Agent-Level Behavior
 
----
+### 4.1 CropEmbedAgent
 
-## 🔄 5. Firestore & Grid Propagation
+- 读取：`cropped_image_b64`
+- 行为：base64 解码后调用 `EmbeddingService.embed_image_bytes`
+- 写入：`embedding: list[float]`
+- 异常策略：写空 embedding，允许下游继续
 
-When an **abnormal result** (Disease/Pest) is confirmed:
-1.  **`record_scan_result`**: Backend writes a detailed report to the `scanReports` collection.
-2.  **Health State Transition**: This triggers the existing Cloud Function to set the associated **GridID** to `Infected`.
-3.  **Spatial Analysis**: Neighboring grids within 200m are automatically flagged as `At-Risk` via the spatial propagation engine.
+### 4.2 VectorMatchAgent
 
----
+- 读取：`embedding`
+- 行为：
+  1. 调用 `VectorSearchService.search(embedding, top_k)`
+  2. 按 `VECTOR_SEARCH_CONFIDENCE_THRESHOLD` 过滤
+  3. 若 top1 >= `VECTOR_SEARCH_FAST_MATCH_THRESHOLD`，写 `fast_match`
+- 写入：`candidates`, `fast_match`
+- 异常策略：写空候选并返回
 
-## 🚀 6. Setup Requirements
+### 4.3 ReasoningAgent
 
-To deploy this module, ensure the following are configured in your GCP project:
-1.  **Vector Search Index**: Created using 1408-dimension multimodal vectors.
-2.  **Firestore Collections**: `grids` and `scanReports` collections defined with appropriate indexes.
-3.  **Authentication**: Service Account JSON with `Vertex AI Administrator` and `Cloud Datastore User` roles.
-4.  **Environment**: Fill in the `.env` file with your `GCP_PROJECT_ID` and `VECTOR_SEARCH_INDEX_ENDPOINT`.
+- 读取：`candidates`, `bbox`, `grid_id`
+- 当前实现：取 top candidate `id`，查询 Firestore 候选文档（不调用 LLM）构造
+  - `cropType`, `disease`
+  - `severity`, `severityScore`, `treatmentPlan`, `survivalProb`
+  - `is_abnormal`, `bbox`, `grid_id`
+- 写入：`scan_result`
 
----
-*Built for Future-AI-Hack | Empowering Malaysian Padi Farmers*
+## 5. Data Contracts
+
+定义位于 `models/scan_models.py`。
+
+### 5.1 Inbound: `ScanFrame`
+
+- `grid_id: str | None`
+- `frame_number: int`
+- `regions: list[ScanRegion]`（至少 1 个）
+
+`ScanRegion`:
+- `cropped_image_b64: str`
+- `bbox: BoundingBox`
+
+### 5.2 Outbound: `ScanResponse`
+
+- `frame_number: int`
+- `results: list[ScanResult]`
+
+`ScanResult`:
+- `cropType`, `disease`, `severity`
+- `severityScore` (0..1)
+- `treatmentPlan`
+- `survivalProb` (0..1)
+- `is_abnormal`
+- `bbox`
+
+## 6. External Dependencies
+
+| Capability | Service / SDK |
+| --- | --- |
+| Agent orchestration | `google-adk` |
+| Embedding | Vertex AI Vision Models (`multimodalembedding@001`) |
+| Vector retrieval | Vertex AI Matching Engine |
+| Persistence | Cloud Firestore |
+| API layer | FastAPI + Uvicorn |
+
+## 7. Configuration Surface
+
+配置入口：`config/settings.py`（Pydantic Settings）。
+
+关键变量：
+
+- `GCP_PROJECT_ID`
+- `GCP_REGION`
+- `GOOGLE_APPLICATION_CREDENTIALS`
+- `VECTOR_SEARCH_INDEX_ENDPOINT`
+- `VECTOR_SEARCH_DEPLOYED_INDEX_ID`
+- `VECTOR_SEARCH_CONFIDENCE_THRESHOLD`
+- `VECTOR_SEARCH_FAST_MATCH_THRESHOLD`
+- `FIRESTORE_GRID_COLLECTION`
+- `FIRESTORE_REPORT_COLLECTION`
+- `FIRESTORE_CANDIDATE_COLLECTION`
+- `DEFAULT_TOP_K`
+
+## 8. Notes on LLM Usage
+
+`services/llm_service.py` 目前仍在仓库中并可独立复用，但当前 `LiveScanPipeline` 主链路不依赖 LLM。诊断结果由 Vector Search top candidate id + Firestore 候选文档驱动。

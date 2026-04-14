@@ -1,144 +1,154 @@
-# PadiGuard AI — Live-Scan Backend
+# PadiGuard AI Diagnosis Backend
 
-**Google ADK + Vertex AI** real-time plant disease scanner.
+实时病虫害诊断后端（FastAPI + Google ADK + Vertex AI），通过 `WS /ws/scan` 接收前端裁剪图并返回结构化诊断结果。
 
----
+## Current Diagnosis Flow (最新)
 
-## Architecture
+每个 region 走同一条 ADK 顺序流水线：
 
-```
-Phone Camera (30fps)
-    │
-    ▼
-MediaPipe (on-device) → bounding boxes (< 50ms)
-    │
-    │  every 10th frame → crop each box → base64 → WebSocket
-    ▼
-┌──────────── Cloud Run (this backend) ────────────────────┐
-│  WS /ws/scan                                             │
-│                                                          │
-│  Google ADK SequentialAgent (per region, concurrent):     │
-│    ① CropEmbedAgent  → Vertex AI Embedding (1408-dim)    │
-│    ② VectorMatchAgent → Vertex AI Vector Search          │
-│    ③ ReasoningAgent   → fast-path or Vertex AI Gemini    │
-│                                                          │
-│  Response: [{label, confidence, bbox, severity}, ...]    │
-└──────────────────────────────────────────────────────────┘
-    │
-    ▼
-Frontend overlays labels on bounding boxes
-If abnormal → Firestore → Cloud Function grid propagation
-```
+1. `CropEmbedAgent`：base64 图像解码 -> Vertex AI Multimodal Embedding（1408 维）
+2. `VectorMatchAgent`：Vertex AI Vector Search Top-K 检索 + 置信度阈值过滤
+3. `ReasoningAgent`：使用最高分候选 `id` 到 Firestore 查询 `cropType`/`disease` 后生成最终诊断
 
----
+> 当前主路径是 **Vector-first, Firestore-enriched**。`services/llm_service.py` 存在但不在这条线上被调用。
 
-## Google Cloud Stack
+## Runtime Architecture
 
-| Component | Service |
-|---|---|
-| Agent Orchestration | **Google ADK** SequentialAgent |
-| Feature Extraction | **Vertex AI** Multimodal Embedding (1408-dim) |
-| Vector Database | **Vertex AI** Vector Search |
-| Reasoning LLM | **Vertex AI** Gemini 2 Flash |
-| Real-time Sync | **Cloud Firestore** |
-| Compute | **Cloud Run** |
-
----
-
-## Project Structure
-
-```
-backend/diagnosis/
-├── main.py                        FastAPI entry point
-├── requirements.txt               Dependencies
-├── .env.example                   Environment template
-│
-├── agents/                        Google ADK BaseAgent sub-agents
-│   ├── base_agent.py              ADK BaseAgent re-export
-│   ├── crop_embed_agent.py        base64 → Vertex AI 1408-dim embedding
-│   ├── vector_match_agent.py      Vertex AI Vector Search + confidence gate
-│   └── reasoning_agent.py         fast-path or Vertex AI Gemini Flash
-│
-├── orchestration/
-│   └── pipeline.py                ADK SequentialAgent (LiveScanPipeline)
-│
-├── api/
-│   └── router.py                  WS /ws/scan endpoint
-│
-├── services/
-│   ├── embedding_service.py       Vertex AI Multimodal Embedding
-│   ├── vector_search_service.py   Vertex AI Vector Search queries
-│   ├── llm_service.py             Vertex AI Gemini 2 Flash
-│   └── firestore_service.py       Cloud Firestore write-back
-│
-├── models/
-│   ├── scan_models.py             BoundingBox, ScanFrame, ScanResult
-│   └── candidate.py               RetrievalCandidate
-│
-└── config/
-    └── settings.py                Pydantic Settings / env loader
+```text
+Frontend (MediaPipe bbox + crop b64)
+        |
+        |  WS /ws/scan
+        v
+FastAPI Router
+  - parse ScanFrame
+  - concurrent per-region pipeline
+        |
+        v
+LiveScanPipeline (Google ADK SequentialAgent)
+  CropEmbed -> VectorMatch -> Reasoning
+        |
+        v
+ScanResponse (frame_number + results[])
+        |
+        +--> if is_abnormal: Firestore scanReports + grids update
 ```
 
----
+## WebSocket Contract
 
-## WebSocket Protocol
+### Client -> Server (`ScanFrame`)
 
-### `WS /ws/scan`
-
-**Client → Server:**
 ```json
 {
-  "grid_id": "grid_abc",
-  "frame_number": 42,
+  "grid_id": "section_A1",
+  "frame_number": 120,
   "regions": [
     {
-      "cropped_image_b64": "/9j/4AAQ...",
-      "bbox": {"x": 0.1, "y": 0.3, "width": 0.2, "height": 0.3,
-               "mediapipe_label": "leaf", "detection_score": 0.9}
+      "cropped_image_b64": "...",
+      "bbox": {
+        "x": 0.1,
+        "y": 0.2,
+        "width": 0.3,
+        "height": 0.4,
+        "mediapipe_label": "leaf",
+        "detection_score": 0.9
+      }
     }
   ]
 }
 ```
 
-**Server → Client:**
+### Server -> Client (`ScanResponse`)
+
 ```json
 {
-  "frame_number": 42,
+  "frame_number": 120,
   "results": [
     {
-      "label": "Rice Blast",
-      "confidence": 0.94,
-      "reason": "High-confidence Vertex AI Vector Search match.",
-      "severity": "critical",
+      "cropType": "Rice",
+      "disease": "Rice Blast",
+      "severity": "Moderate",
+      "severityScore": 0.91,
+      "treatmentPlan": "Reference image: gs://...",
+      "survivalProb": 0.6,
       "is_abnormal": true,
-      "bbox": {"x": 0.1, "y": 0.3, "width": 0.2, "height": 0.3,
-               "mediapipe_label": "leaf", "detection_score": 0.9},
-      "alternatives": ["Brown Spot"]
+      "bbox": {
+        "x": 0.1,
+        "y": 0.2,
+        "width": 0.3,
+        "height": 0.4,
+        "mediapipe_label": "leaf",
+        "detection_score": 0.9
+      }
     }
   ]
 }
 ```
 
----
+## Key Env Variables
 
-## Two Speed Paths
+`config/settings.py` 当前依赖：
 
-| Path | When | Latency | Gemini Call |
-|---|---|---|---|
-| **Fast** | Vector Search score ≥ 0.85 | ~100ms | ❌ Skipped |
-| **LLM** | Score < 0.85 | ~300ms | ✅ Gemini Flash |
+- `GCP_PROJECT_ID`
+- `GCP_REGION` (default: `us-central1`)
+- `GOOGLE_APPLICATION_CREDENTIALS` (optional string path, but usually needed for local run)
+- `VECTOR_SEARCH_INDEX_ENDPOINT`
+- `VECTOR_SEARCH_DEPLOYED_INDEX_ID`
+- `VECTOR_SEARCH_CONFIDENCE_THRESHOLD` (default `0.65`)
+- `VECTOR_SEARCH_FAST_MATCH_THRESHOLD` (default `0.85`)
+- `FIRESTORE_GRID_COLLECTION` (default `grids`)
+- `FIRESTORE_REPORT_COLLECTION` (default `scanReports`)
+- `FIRESTORE_CANDIDATE_COLLECTION` (default `candidateMetadata`，文档 ID 需等于 Vector candidate id)
+- `DEFAULT_TOP_K` (default `5`)
 
----
+## Local Run
 
-## Setup (You Handle)
+```bash
+cd backend/diagnosis
+pip install -r requirements.txt
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
+```
 
-1. **Vertex AI Vector Search** — embed reference images → deploy streaming index
-2. **Cloud Firestore** — `grids` + `scanReports` collections
-3. **`.env`** — copy `.env.example`, fill in your GCP values
-4. **Frontend MediaPipe** — on-device detection → crops → WebSocket
-5. `pip install -r requirements.txt`
-6. `uvicorn main:app --reload --host 0.0.0.0 --port 8000`
+健康检查：`GET /health`
 
----
+## Upload Metadata To Firestore
 
-*Built on Google ADK + Vertex AI for Future-AI-Hack*
+When ReasoningAgent receives a Vector Search candidate id, it reads diagnosis labels from Firestore.
+You can bulk upload your metadata JSON/JSONL file with:
+
+```bash
+cd backend/diagnosis
+python scripts/upload_candidate_metadata.py --input ../../my_metadata.json
+```
+
+Optional flags:
+
+- `--collection candidateMetadata` (default from `.env` -> `FIRESTORE_CANDIDATE_COLLECTION`)
+- `--id-field id` (field used as Firestore document id)
+- `--dry-run` (validate without writing)
+
+Required data rule:
+
+- Every item must include `id`, and that value must match Vector Search neighbor id.
+
+## Project Structure (Diagnosis Module)
+
+```text
+backend/diagnosis/
+├── main.py
+├── api/router.py
+├── orchestration/pipeline.py
+├── agents/
+│   ├── crop_embed_agent.py
+│   ├── vector_match_agent.py
+│   └── reasoning_agent.py
+├── services/
+│   ├── embedding_service.py
+│   ├── vector_search_service.py
+│   ├── firestore_service.py
+│   └── llm_service.py
+├── models/
+│   ├── scan_models.py
+│   └── candidate.py
+├── config/settings.py
+└── tests/test_pipeline.py
+```

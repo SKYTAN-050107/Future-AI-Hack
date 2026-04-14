@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 
 import vertexai
 from vertexai.vision_models import (
@@ -33,6 +34,10 @@ class EmbeddingService:
 
     def __init__(self) -> None:
         settings = get_settings()
+        # Ensure GOOGLE_APPLICATION_CREDENTIALS from .env is visible to google-auth
+        if settings.GOOGLE_APPLICATION_CREDENTIALS and "GOOGLE_APPLICATION_CREDENTIALS" not in os.environ:
+            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = settings.GOOGLE_APPLICATION_CREDENTIALS
+
         vertexai.init(
             project=settings.GCP_PROJECT_ID,
             location=settings.GCP_REGION,
