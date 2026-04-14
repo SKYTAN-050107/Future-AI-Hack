@@ -1,13 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { onAuthStateChanged } from 'firebase/auth'
 import {
   addDoc,
   collection,
+  deleteDoc,
   doc,
+  getDocs,
   onSnapshot,
+  query,
   serverTimestamp,
+  setDoc,
   updateDoc,
+  where,
 } from 'firebase/firestore'
-import { db, isFirebaseConfigured } from '../firebase'
+import { auth, db, isFirebaseConfigured } from '../firebase'
 
 const GRID_COLLECTION = 'grids'
 
@@ -31,10 +37,63 @@ function sortByHealthAndTime(grids) {
   })
 }
 
+function getOwnedGridDocId(ownerUid, mapFeatureId) {
+  return `${ownerUid}_${String(mapFeatureId)}`
+}
+
+function serializeGeometry(geometry) {
+  if (!geometry) {
+    return null
+  }
+
+  return JSON.stringify(geometry)
+}
+
+function deserializeGeometry(value) {
+  if (!value) {
+    return null
+  }
+
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value)
+    } catch {
+      return null
+    }
+  }
+
+  return value
+}
+
+function toFriendlyFirestoreError(error, fallback) {
+  if (error?.code === 'permission-denied') {
+    return 'Missing or insufficient permissions. Please sign in again and ensure Firestore rules are deployed.'
+  }
+
+  return error?.message || fallback
+}
+
 export function useGrids() {
   const [grids, setGrids] = useState([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [authStateReady, setAuthStateReady] = useState(() => !isFirebaseConfigured || !auth)
+  const [authUser, setAuthUser] = useState(() => auth?.currentUser || null)
+
+  useEffect(() => {
+    if (!isFirebaseConfigured || !auth) {
+      setAuthStateReady(true)
+      setAuthUser(null)
+      return undefined
+    }
+
+    const unsubscribe = onAuthStateChanged(auth, (nextUser) => {
+      setAuthUser(nextUser)
+      setAuthStateReady(true)
+    })
+
+    return () => unsubscribe()
+  }, [])
 
   useEffect(() => {
     if (!isFirebaseConfigured || !db) {
@@ -43,36 +102,58 @@ export function useGrids() {
       return undefined
     }
 
+    if (!authStateReady) {
+      setIsLoading(true)
+      setError(null)
+      return undefined
+    }
+
+    if (!authUser) {
+      setIsLoading(false)
+      setGrids([])
+      setError('Sign in is required to sync grids.')
+      return undefined
+    }
+
+    setIsLoading(true)
     const gridsRef = collection(db, GRID_COLLECTION)
+    const gridsQuery = query(gridsRef, where('ownerUid', '==', authUser.uid))
     const unsubscribe = onSnapshot(
-      gridsRef,
+      gridsQuery,
       (snapshot) => {
-        const nextGrids = snapshot.docs.map((item) => ({
-          id: item.id,
-          ...item.data(),
-        }))
+        const nextGrids = snapshot.docs.map((item) => {
+          const data = item.data()
+
+          return {
+            id: item.id,
+            ...data,
+            polygon: deserializeGeometry(data.polygon),
+            bufferZone: deserializeGeometry(data.bufferZone),
+          }
+        })
 
         setGrids(sortByHealthAndTime(nextGrids))
         setIsLoading(false)
         setError(null)
       },
       (snapshotError) => {
-        setError(snapshotError.message || 'Failed to stream farm grids')
+        setError(toFriendlyFirestoreError(snapshotError, 'Failed to stream farm grids'))
         setIsLoading(false)
       },
     )
 
     return () => unsubscribe()
-  }, [])
+  }, [authStateReady, authUser])
 
   const saveGrid = useCallback(async ({ gridId, polygon, areaHectares, centroid, plantDensity }) => {
-    if (!db) {
+    if (!db || !authUser?.uid) {
       throw new Error('Firebase is not configured')
     }
 
     const payload = {
+      ownerUid: authUser.uid,
       gridId,
-      polygon,
+      polygon: serializeGeometry(polygon),
       areaHectares,
       centroid,
       plantDensity: plantDensity ?? null,
@@ -82,10 +163,64 @@ export function useGrids() {
     }
 
     return addDoc(collection(db, GRID_COLLECTION), payload)
-  }, [])
+  }, [authUser?.uid])
+
+  const saveOrUpdateGridByFeature = useCallback(
+    async ({ mapFeatureId, gridId, polygon, areaHectares, centroid, plantDensity, healthState = 'Healthy' }) => {
+      if (!db || !authUser?.uid) {
+        throw new Error('Firebase is not configured')
+      }
+
+      if (!mapFeatureId) {
+        throw new Error('mapFeatureId is required')
+      }
+
+      const ownedDocId = getOwnedGridDocId(authUser.uid, mapFeatureId)
+      const target = doc(db, GRID_COLLECTION, ownedDocId)
+
+      await setDoc(
+        target,
+        {
+          ownerUid: authUser.uid,
+          mapFeatureId,
+          gridId,
+          polygon: serializeGeometry(polygon),
+          areaHectares,
+          centroid,
+          plantDensity: plantDensity ?? null,
+          healthState,
+          lastUpdated: serverTimestamp(),
+          createdAt: serverTimestamp(),
+        },
+        { merge: true },
+      )
+    },
+    [authUser?.uid],
+  )
+
+  const deleteGrid = useCallback(async (gridDocId) => {
+    if (!db || !authUser?.uid) {
+      throw new Error('Firebase is not configured')
+    }
+
+    const featureId = String(gridDocId)
+    const ownedDocId = getOwnedGridDocId(authUser.uid, featureId)
+
+    // New schema path (owner-scoped doc id)
+    await deleteDoc(doc(db, GRID_COLLECTION, ownedDocId))
+
+    // Legacy cleanup path (old doc ids using mapFeatureId)
+    const legacyQuery = query(
+      collection(db, GRID_COLLECTION),
+      where('ownerUid', '==', authUser.uid),
+      where('mapFeatureId', '==', featureId),
+    )
+    const legacySnapshot = await getDocs(legacyQuery)
+    await Promise.all(legacySnapshot.docs.map((item) => deleteDoc(item.ref)))
+  }, [authUser?.uid])
 
   const updateGridHealthState = useCallback(async (gridDocId, nextHealthState) => {
-    if (!db) {
+    if (!db || !authUser?.uid) {
       throw new Error('Firebase is not configured')
     }
 
@@ -94,7 +229,7 @@ export function useGrids() {
       healthState: nextHealthState,
       lastUpdated: serverTimestamp(),
     })
-  }, [])
+  }, [authUser?.uid])
 
   return useMemo(
     () => ({
@@ -102,9 +237,19 @@ export function useGrids() {
       isLoading,
       error,
       saveGrid,
+      saveOrUpdateGridByFeature,
+      deleteGrid,
       updateGridHealthState,
       isFirebaseConfigured,
     }),
-    [error, grids, isLoading, saveGrid, updateGridHealthState],
+    [
+      deleteGrid,
+      error,
+      grids,
+      isLoading,
+      saveGrid,
+      saveOrUpdateGridByFeature,
+      updateGridHealthState,
+    ],
   )
 }

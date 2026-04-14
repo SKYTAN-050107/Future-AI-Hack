@@ -1,1 +1,24 @@
 .vercel
+
+# Environment and secrets
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.*.local
+
+# Credential and key material
+*.pem
+*.key
+*.p12
+*.jks
+*.keystore
+*.crt
+*.cer
+*.pfx
+
+# Firebase service account or local admin credentials
+serviceAccount*.json
+firebase-adminsdk*.json
+.runtimeconfig.json

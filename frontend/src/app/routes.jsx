@@ -61,18 +61,25 @@ function WebLaunchScreen() {
 
 function RootEntry() {
   const { isInstalled } = usePWA()
-  const { isAuthenticated, isOnboarded } = useSessionContext()
-
-  if (!isInstalled && isAuthenticated) {
-    return <Navigate to={isOnboarded ? getLastAppPath() : '/onboarding'} replace />
-  }
 
   return isInstalled ? <LaunchScreen /> : <WebLaunchScreen />
 }
 
 function RequireAuth({ children }) {
   const location = useLocation()
-  const { isAuthenticated } = useSessionContext()
+  const { isAuthenticated, isAuthLoading } = useSessionContext()
+
+  if (isAuthLoading) {
+    return (
+      <div className="pg-public-screen">
+        <section className="pg-launch">
+          <div className="pg-launch-orb" />
+          <h1 className="pg-launch-title">PadiGuard AI</h1>
+          <p className="pg-launch-subtitle">Checking session…</p>
+        </section>
+      </div>
+    )
+  }
 
   if (!isAuthenticated) {
     setPostAuthPath(location.pathname)
@@ -82,16 +89,47 @@ function RequireAuth({ children }) {
 }
 
 function RequireOnboarding({ children }) {
-  const { isOnboarded } = useSessionContext()
+  const { isOnboarded, isAuthLoading } = useSessionContext()
+
+  if (isAuthLoading) {
+    return (
+      <div className="pg-public-screen">
+        <section className="pg-launch">
+          <div className="pg-launch-orb" />
+          <h1 className="pg-launch-title">PadiGuard AI</h1>
+          <p className="pg-launch-subtitle">Loading profile…</p>
+        </section>
+      </div>
+    )
+  }
+
   return isOnboarded ? children : <Navigate to="/onboarding" replace />
 }
 
 function RedirectAuthenticatedEntry() {
-  const { isAuthenticated, isOnboarded } = useSessionContext()
+  const location = useLocation()
+  const { isAuthenticated, isOnboarded, isAuthLoading } = useSessionContext()
   const postAuthPath = getPostAuthPath()
   const resumePath = postAuthPath && postAuthPath.startsWith('/app') ? postAuthPath : getLastAppPath()
+  const forceAuth = Boolean(location.state?.forceAuth)
+
+  if (isAuthLoading) {
+    return (
+      <div className="pg-public-screen">
+        <section className="pg-launch">
+          <div className="pg-launch-orb" />
+          <h1 className="pg-launch-title">PadiGuard AI</h1>
+          <p className="pg-launch-subtitle">Loading account…</p>
+        </section>
+      </div>
+    )
+  }
 
   if (!isAuthenticated) {
+    return <Auth />
+  }
+
+  if (forceAuth) {
     return <Auth />
   }
 

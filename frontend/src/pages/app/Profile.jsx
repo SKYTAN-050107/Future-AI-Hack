@@ -21,9 +21,9 @@ export default function Profile() {
           }}>
             Edit farm setup
           </button>
-          <button type="button" className="pg-btn pg-btn-primary" onClick={() => {
-            logout()
-            navigate('/auth')
+          <button type="button" className="pg-btn pg-btn-primary" onClick={async () => {
+            await logout()
+            navigate('/auth', { replace: true })
           }}>
             Sign out
           </button>
