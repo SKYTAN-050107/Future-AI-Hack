@@ -290,6 +290,10 @@ export default function Landing() {
     setInstallHint('If the app does not open automatically, launch PadiGuard AI from your home screen.')
   }
 
+  const goToAuth = () => {
+    navigate('/auth', { state: { forceAuth: true } })
+  }
+
   return (
     <div className="pg-landing-page">
       {/* ── STICKY NAV ── */}
@@ -315,7 +319,7 @@ export default function Landing() {
           </div>
 
           {/* Nav CTA */}
-          <button type="button" className="pg-landing-nav-cta" onClick={() => navigate('/auth')}>
+          <button type="button" className="pg-landing-nav-cta" onClick={goToAuth}>
             Sign in
           </button>
 
@@ -338,7 +342,7 @@ export default function Landing() {
             <button type="button" className="pg-landing-mobile-link" onClick={() => scrollToSection('workflow')}>How it works</button>
             <button type="button" className="pg-landing-mobile-link" onClick={() => scrollToSection('cta')}>Get started</button>
             <ThemeToggle showLabel className="pg-landing-mobile-link pg-landing-mobile-link--theme" />
-            <button type="button" className="pg-landing-mobile-link pg-landing-mobile-link--cta" onClick={() => navigate('/auth')}>Sign in or sign up</button>
+            <button type="button" className="pg-landing-mobile-link pg-landing-mobile-link--cta" onClick={goToAuth}>Sign in or sign up</button>
           </div>
         )}
       </nav>
@@ -367,7 +371,7 @@ export default function Landing() {
                 <IconDownload className="pg-icon pg-icon--btn" aria-hidden="true" />
                 Install app
               </button>
-              <button type="button" className="pg-btn pg-btn-ghost pg-btn-landing" onClick={() => navigate('/auth')}>
+              <button type="button" className="pg-btn pg-btn-ghost pg-btn-landing" onClick={goToAuth}>
                 Sign in or sign up
               </button>
               {previouslyInstalled && (
@@ -539,7 +543,7 @@ export default function Landing() {
               <IconDownload className="pg-icon pg-icon--btn" aria-hidden="true" />
               Install PadiGuard AI
             </button>
-            <button type="button" className="pg-btn pg-btn-ghost pg-btn-landing" onClick={() => navigate('/auth')}>
+            <button type="button" className="pg-btn pg-btn-ghost pg-btn-landing" onClick={goToAuth}>
               Sign in or sign up
             </button>
           </div>

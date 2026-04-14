@@ -1,4 +1,5 @@
 import { getApp, getApps, initializeApp } from 'firebase/app'
+import { getAuth } from 'firebase/auth'
 import { enableIndexedDbPersistence, getFirestore } from 'firebase/firestore'
 
 const firebaseConfig = {
@@ -20,10 +21,12 @@ export const isFirebaseConfigured = !hasMissingConfig && !hasPlaceholderValues
 
 let app = null
 let db = null
+let auth = null
 
 if (isFirebaseConfigured) {
   app = getApps().length ? getApp() : initializeApp(firebaseConfig)
   db = getFirestore(app)
+  auth = getAuth(app)
 
   // Force local persistence to support offline-first grid editing.
   enableIndexedDbPersistence(db).catch((error) => {
@@ -37,4 +40,4 @@ if (isFirebaseConfigured) {
   )
 }
 
-export { app, db }
+export { app, db, auth }

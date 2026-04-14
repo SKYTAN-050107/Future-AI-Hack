@@ -13,6 +13,8 @@ export default function Onboarding() {
   const [location, setLocation] = useState('')
   const [variety, setVariety] = useState('')
   const [language, setLanguage] = useState('BM')
+  const [isSaving, setIsSaving] = useState(false)
+  const [feedback, setFeedback] = useState('')
 
   const progress = useMemo(() => ((step + 1) / 3) * 100, [step])
 
@@ -21,7 +23,7 @@ export default function Onboarding() {
     (step === 1 && location.trim().length > 2) ||
     (step === 2 && variety.trim().length > 1)
 
-  const onNext = () => {
+  const onNext = async () => {
     if (!canProceed) {
       return
     }
@@ -31,10 +33,29 @@ export default function Onboarding() {
       return
     }
 
-    completeOnboarding()
-    const resumePath = getPostAuthPath()
-    clearPostAuthPath()
-    navigate(resumePath && resumePath.startsWith('/app') ? resumePath : '/app', { replace: true })
+    setIsSaving(true)
+    setFeedback('')
+
+    try {
+      const result = await completeOnboarding({
+        farmName: farmName.trim(),
+        location: location.trim(),
+        variety: variety.trim(),
+        language,
+      })
+
+      if (result?.persisted === false) {
+        setFeedback('Saved locally. Cloud sync will retry when connection is ready.')
+      }
+
+      const resumePath = getPostAuthPath()
+      clearPostAuthPath()
+      navigate(resumePath && resumePath.startsWith('/app') ? resumePath : '/app', { replace: true })
+    } catch (error) {
+      setFeedback(error?.message || 'Unable to complete setup right now. Please try again.')
+    } finally {
+      setIsSaving(false)
+    }
   }
 
   return (
@@ -97,6 +118,8 @@ export default function Onboarding() {
           </>
         ) : null}
 
+        {feedback ? <p className="pg-copy">{feedback}</p> : null}
+
         <div className="pg-cta-row">
           {fromProfile ? (
             <button
@@ -112,8 +135,8 @@ export default function Onboarding() {
               Back
             </button>
           ) : null}
-          <button type="button" className="pg-btn pg-btn-primary" onClick={onNext} disabled={!canProceed}>
-            {step === 2 ? 'Save and continue' : 'Next'}
+          <button type="button" className="pg-btn pg-btn-primary" onClick={onNext} disabled={!canProceed || isSaving}>
+            {isSaving ? 'Saving…' : step === 2 ? 'Save and continue' : 'Next'}
           </button>
         </div>
       </section>
