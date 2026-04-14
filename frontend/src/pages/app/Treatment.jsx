@@ -26,7 +26,7 @@ export default function Treatment() {
     <section className="pg-page">
       <SectionHeader
         title="Treatment"
-        align="left"
+        align="center"
         leadingAction={<BackButton fallback="/app" label="Back to home" />}
       />
 

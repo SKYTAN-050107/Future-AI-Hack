@@ -39,7 +39,7 @@ export default function Report() {
     <section className="pg-page">
       <SectionHeader
         title="Report"
-        align="left"
+        align="center"
         leadingAction={<BackButton fallback="/app/scan" label="Back to scanner" />}
       />
 

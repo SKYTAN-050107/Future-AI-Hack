@@ -14,7 +14,7 @@ export default function History() {
     <section className="pg-page">
       <SectionHeader
         title="History"
-        align="left"
+        align="center"
         leadingAction={<BackButton fallback="/app/scan" label="Back to scanner" />}
       />
 

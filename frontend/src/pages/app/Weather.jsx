@@ -16,7 +16,7 @@ export default function Weather() {
     <section className="pg-page">
       <SectionHeader
         title="7-Day Climate View"
-        align="left"
+        align="center"
         leadingAction={<BackButton fallback="/app" label="Back to dashboard" />}
       />
 

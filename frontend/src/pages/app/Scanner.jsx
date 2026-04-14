@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { IconClock, IconAgent } from '../../components/icons/UiIcons'
+import { IconArrowLeft, IconClock, IconAgent } from '../../components/icons/UiIcons'
 
 function formatCaptureTime(date) {
   return new Intl.DateTimeFormat('en-MY', {
@@ -123,19 +123,29 @@ export default function Scanner() {
         <button
           type="button"
           className="pg-scanner-overlay-btn"
-          onClick={() => navigate('/app/history')}
-          aria-label="Open scan history"
+          onClick={() => navigate('/app')}
+          aria-label="Back to home"
         >
-          <IconClock className="pg-icon" />
+          <IconArrowLeft className="pg-icon" />
         </button>
-        <button
-          type="button"
-          className="pg-scanner-overlay-btn"
-          onClick={() => navigate('/app/chatbot')}
-          aria-label="Open AI chatbot"
-        >
-          <IconAgent className="pg-icon" />
-        </button>
+        <div className="pg-scanner-top-actions">
+          <button
+            type="button"
+            className="pg-scanner-overlay-btn"
+            onClick={() => navigate('/app/chatbot')}
+            aria-label="Open chat history"
+          >
+            <IconClock className="pg-icon" />
+          </button>
+          <button
+            type="button"
+            className="pg-scanner-overlay-btn"
+            onClick={() => navigate('/app/chatbot')}
+            aria-label="Open AI chatbot"
+          >
+            <IconAgent className="pg-icon" />
+          </button>
+        </div>
       </header>
 
       <div className="pg-scanner-viewfinder" aria-hidden="true">
