@@ -657,13 +657,13 @@ body {
   position: absolute;
   left: 50%;
   top: 0;
-  width: 64px;
-  height: 64px;
+  width: 72px;
+  height: 72px;
   border-radius: 999px;
   border: 3px solid color-mix(in srgb, var(--surface) 90%, transparent);
   background: linear-gradient(140deg, #059669, #0D9488);
   color: #FFFFFF;
-  transform: translate(-50%, -40%);
+  transform: translate(-50%, -32%);
   box-shadow: 0 18px 30px rgba(5, 150, 105, 0.35);
   display: grid;
   place-items: center;
@@ -672,12 +672,12 @@ body {
 }
 
 .pg-scan-fab .pg-icon {
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
 }
 
 .pg-scan-fab:active {
-  transform: translate(-50%, -40%) scale(0.95);
+  transform: translate(-50%, -32%) scale(0.95);
 }
 
 .pg-scan-fab:focus-visible {
@@ -2001,6 +2001,93 @@ body {
 .pg-chat-input-bar:focus-within {
   border-color: rgba(var(--ring), 0.7);
   box-shadow: 0 0 0 3px rgba(var(--ring), 0.15);
+}
+
+/* Profile page */
+.pg-profile-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 0 4px;
+}
+
+.pg-profile-avatar {
+  width: 72px;
+  height: 72px;
+  border-radius: 999px;
+  background: linear-gradient(140deg, rgba(var(--primary-rgb), 0.22), rgba(var(--secondary-rgb), 0.18));
+  border: 2px solid rgba(var(--primary-rgb), 0.38);
+  display: grid;
+  place-items: center;
+  color: var(--primary);
+}
+
+.pg-profile-avatar .pg-icon {
+  width: 32px;
+  height: 32px;
+}
+
+.pg-profile-name {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.pg-profile-email {
+  margin: 0;
+  font-size: 0.84rem;
+  color: var(--text-secondary);
+}
+
+.pg-profile-details {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.pg-profile-detail-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid rgba(var(--border-rgb), 0.45);
+}
+
+.pg-profile-detail-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.pg-profile-detail-row .pg-icon {
+  width: 20px;
+  height: 20px;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.pg-profile-detail-row > div {
+  flex: 1;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  min-width: 0;
+}
+
+.pg-profile-detail-label {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.pg-profile-detail-value {
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  text-align: right;
 }
 
 .pg-skeleton-card {

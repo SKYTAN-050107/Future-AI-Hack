@@ -17,6 +17,7 @@ function getPathRank(pathname) {
     pathname.startsWith('/app/scan')
     || pathname.startsWith('/app/report')
     || pathname.startsWith('/app/history')
+    || pathname.startsWith('/app/chatbot')
   ) {
     return 2
   }

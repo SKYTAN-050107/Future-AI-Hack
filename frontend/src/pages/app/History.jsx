@@ -1,5 +1,6 @@
 import SectionHeader from '../../components/ui/SectionHeader'
 import TimelineList from '../../components/ui/TimelineList'
+import BackButton from '../../components/navigation/BackButton'
 import { useScanHistory } from '../../hooks/useScanHistory'
 
 export default function History() {
@@ -13,7 +14,8 @@ export default function History() {
     <section className="pg-page">
       <SectionHeader
         title="History"
-        align="center"
+        align="left"
+        leadingAction={<BackButton fallback="/app/scan" label="Back to scanner" />}
       />
 
       <article className="pg-card">

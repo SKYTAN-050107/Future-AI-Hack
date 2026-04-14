@@ -1,236 +1,159 @@
 import { useEffect, useRef, useState } from 'react'
-import { IconImage, IconSend } from '../../components/icons/UiIcons'
-import SectionHeader from '../../components/ui/SectionHeader'
-import { scanDisease } from '../../api/scan'
-import { useGrids } from '../../hooks/useGrids'
-import { useScanReports } from '../../hooks/useScanReports'
+import { useNavigate } from 'react-router-dom'
+import { IconClock, IconAgent } from '../../components/icons/UiIcons'
+
+function formatCaptureTime(date) {
+  return new Intl.DateTimeFormat('en-MY', {
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(date)
+}
 
 export default function Scanner() {
-  const [chatMessages, setChatMessages] = useState([
-    {
-      id: 1,
-      role: 'ai',
-      text: 'Take a photo or ask about your crops.',
-    },
-  ])
-  const [messageInput, setMessageInput] = useState('')
-  const [selectedImage, setSelectedImage] = useState(null)
-  const [isScanning, setIsScanning] = useState(false)
-  const [selectedGridDocId, setSelectedGridDocId] = useState('')
-  const [syncStatus, setSyncStatus] = useState('')
-  const fileInputRef = useRef(null)
-  const chatScrollRef = useRef(null)
-  const { grids } = useGrids()
-  const { saveScanReport, isFirebaseConfigured } = useScanReports()
+  const navigate = useNavigate()
+  const videoRef = useRef(null)
+  const streamRef = useRef(null)
+  const [cameraState, setCameraState] = useState('loading')
+  const [statusMessage, setStatusMessage] = useState('Initializing rear camera...')
+  const [lastCaptureTime, setLastCaptureTime] = useState('')
+  const [isCaptureFlashVisible, setIsCaptureFlashVisible] = useState(false)
 
   useEffect(() => {
-    if (!selectedGridDocId && grids.length > 0) {
-      setSelectedGridDocId(grids[0].id)
-    }
-  }, [grids, selectedGridDocId])
+    let isMounted = true
 
-  useEffect(() => {
-    if (!chatScrollRef.current) {
-      return
-    }
-    chatScrollRef.current.scrollTo({
-      top: chatScrollRef.current.scrollHeight,
-      behavior: 'smooth',
-    })
-  }, [chatMessages, isScanning, selectedImage])
-
-  useEffect(() => {
-    return () => {
-      if (selectedImage?.previewUrl) {
-        URL.revokeObjectURL(selectedImage.previewUrl)
+    async function startCamera() {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setCameraState('blocked')
+        setStatusMessage('Camera is unavailable on this device.')
+        return
       }
-    }
-  }, [selectedImage])
 
-  const onSelectImage = (event) => {
-    const file = event.target.files?.[0]
-    if (!file) {
-      return
-    }
-
-    if (selectedImage?.previewUrl) {
-      URL.revokeObjectURL(selectedImage.previewUrl)
-    }
-
-    const previewUrl = URL.createObjectURL(file)
-    setSelectedImage({ file, previewUrl, name: file.name || 'photo' })
-    event.target.value = ''
-  }
-
-  const onSendMessage = async () => {
-    const textValue = messageInput.trim()
-    if (!textValue && !selectedImage) {
-      return
-    }
-
-    const userMessage = {
-      id: Date.now(),
-      role: 'user',
-      text: textValue,
-      imageUrl: selectedImage?.previewUrl || null,
-      imageName: selectedImage?.name || null,
-    }
-    setChatMessages((current) => [...current, userMessage])
-    setMessageInput('')
-
-    if (!selectedImage) {
-      setChatMessages((current) => [
-        ...current,
-        {
-          id: Date.now() + 1,
-          role: 'ai',
-          text: 'Please attach a leaf photo so I can check disease signs.',
-        },
-      ])
-      return
-    }
-
-    setIsScanning(true)
-    const selectedGrid = grids.find((item) => item.id === selectedGridDocId)
-    const result = await scanDisease({
-      source: 'camera',
-      gridId: selectedGrid?.gridId || null,
-    })
-
-    const status = Number(result.severity || 0) >= 50 ? 'abnormal' : 'normal'
-
-    if (isFirebaseConfigured) {
       try {
-        await saveScanReport({
-          ...result,
-          gridId: selectedGrid?.gridId || null,
-          status,
-          source: 'camera',
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: 'environment' },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+          },
+          audio: false,
         })
-        setSyncStatus(selectedGrid?.gridId
-          ? `Scan linked to ${selectedGrid.gridId} and synced.`
-          : 'Scan synced without grid link.')
-      } catch (syncError) {
-        setSyncStatus(syncError.message || 'Scan saved locally, but sync failed.')
+
+        if (!isMounted) {
+          stream.getTracks().forEach((track) => track.stop())
+          return
+        }
+
+        streamRef.current = stream
+
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream
+          videoRef.current.onloadedmetadata = () => {
+            if (!isMounted) {
+              return
+            }
+
+            setCameraState('ready')
+            setStatusMessage('Camera ready. Hold leaf inside guide frame.')
+          }
+
+          videoRef.current.play().catch(() => {
+            if (!isMounted) {
+              return
+            }
+            setCameraState('blocked')
+            setStatusMessage('Tap browser camera permission to continue scanning.')
+          })
+        }
+      } catch {
+        if (!isMounted) {
+          return
+        }
+        setCameraState('blocked')
+        setStatusMessage('Camera permission denied. Enable it to start scanning.')
       }
-    } else {
-      setSyncStatus('Firebase not configured yet. Scan report not synced.')
     }
 
-    setChatMessages((current) => [
-      ...current,
-      {
-        id: Date.now() + 2,
-        role: 'ai',
-        text: `${result.disease} detected${selectedGrid?.gridId ? ` for ${selectedGrid.gridId}` : ''}. Severity is around ${result.severity}% with ${result.confidence}% match confidence.`,
-      },
-    ])
-    setSelectedImage(null)
-    setIsScanning(false)
+    startCamera()
+
+    return () => {
+      isMounted = false
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop())
+      }
+    }
+  }, [])
+
+  const handleCapture = () => {
+    if (cameraState !== 'ready') {
+      setStatusMessage('Camera is still preparing. Try again in a moment.')
+      return
+    }
+
+    setIsCaptureFlashVisible(true)
+    window.setTimeout(() => {
+      setIsCaptureFlashVisible(false)
+    }, 110)
+
+    const capturedAt = new Date()
+    setLastCaptureTime(formatCaptureTime(capturedAt))
+    setStatusMessage('Frame captured. Sending to swarm diagnosis pipeline...')
   }
 
   return (
-    <section className="pg-scanner-chat-page" aria-label="Crop scanner chat">
-      <SectionHeader title="Chat Agent" align="center" />
-      <div className="pg-chat-thread" ref={chatScrollRef}>
-        {chatMessages.map((message) => (
-          <article
-            key={message.id}
-            className={`pg-chat-message ${message.role === 'user' ? 'is-user' : 'is-ai'}`}
-          >
-            {message.imageUrl ? (
-              <div className="pg-chat-image-wrap">
-                <img src={message.imageUrl} alt={message.imageName || 'Selected crop photo'} className="pg-chat-image" />
-              </div>
-            ) : null}
-            {message.text ? <p>{message.text}</p> : null}
-          </article>
-        ))}
-        {isScanning ? (
-          <article className="pg-chat-message is-ai">
-            <p>Checking your leaf photo…</p>
-          </article>
-        ) : null}
-      </div>
+    <section className="pg-scanner-page" aria-label="Live crop scanner">
+      <div className="pg-scanner-feed-layer">
+        <video
+          ref={videoRef}
+          className={`pg-scanner-video ${cameraState === 'ready' ? 'is-ready' : ''}`}
+          autoPlay
+          muted
+          playsInline
+        />
 
-      <div className="pg-chat-input-shell">
-        <div className="pg-chat-grid-picker">
-          <label htmlFor="gridPicker">Active grid</label>
-          <select
-            id="gridPicker"
-            value={selectedGridDocId}
-            onChange={(event) => setSelectedGridDocId(event.target.value)}
-            disabled={grids.length === 0}
-          >
-            {grids.length === 0 ? <option value="">No grids yet</option> : null}
-            {grids.map((grid) => (
-              <option key={grid.id} value={grid.id}>
-                {grid.gridId || grid.id} - {grid.healthState || 'Healthy'}
-              </option>
-            ))}
-          </select>
-          {syncStatus ? <small>{syncStatus}</small> : null}
-        </div>
-
-        {selectedImage ? (
-          <div className="pg-chat-selected-image">
-            <img src={selectedImage.previewUrl} alt="Selected leaf preview" className="pg-chat-selected-thumb" />
-            <p>{selectedImage.name}</p>
-            <button
-              type="button"
-              className="pg-chat-clear-image"
-              onClick={() => {
-                if (selectedImage.previewUrl) {
-                  URL.revokeObjectURL(selectedImage.previewUrl)
-                }
-                setSelectedImage(null)
-              }}
-            >
-              Remove
-            </button>
+        {cameraState !== 'ready' ? (
+          <div className="pg-scanner-loading" role="status" aria-live="polite">
+            <p>{statusMessage}</p>
           </div>
         ) : null}
-
-        <div className="pg-chat-input-bar">
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            capture="environment"
-            className="pg-chat-file-input"
-            onChange={onSelectImage}
-          />
-          <button
-            type="button"
-            className="pg-chat-icon-btn"
-            onClick={() => fileInputRef.current?.click()}
-            aria-label="Take or upload photo"
-          >
-            <IconImage className="pg-icon" />
-          </button>
-          <input
-            className="pg-chat-text-input"
-            placeholder="Ask about your crop or send a photo"
-            value={messageInput}
-            onChange={(event) => setMessageInput(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.shiftKey) {
-                event.preventDefault()
-                onSendMessage()
-              }
-            }}
-          />
-          <button
-            type="button"
-            className="pg-chat-send-btn"
-            onClick={onSendMessage}
-            disabled={isScanning || (!messageInput.trim() && !selectedImage)}
-            aria-label="Send message"
-          >
-            <IconSend className="pg-icon" />
-          </button>
-        </div>
       </div>
+
+      {isCaptureFlashVisible ? <div className="pg-scanner-flash" aria-hidden="true" /> : null}
+
+      <header className="pg-scanner-top-overlay">
+        <button
+          type="button"
+          className="pg-scanner-overlay-btn"
+          onClick={() => navigate('/app/history')}
+          aria-label="Open scan history"
+        >
+          <IconClock className="pg-icon" />
+        </button>
+        <button
+          type="button"
+          className="pg-scanner-overlay-btn"
+          onClick={() => navigate('/app/chatbot')}
+          aria-label="Open AI chatbot"
+        >
+          <IconAgent className="pg-icon" />
+        </button>
+      </header>
+
+      <div className="pg-scanner-viewfinder" aria-hidden="true">
+        <div className="pg-scanner-viewfinder-frame" />
+      </div>
+
+      <footer className="pg-scanner-bottom-overlay">
+        <p className="pg-scanner-status">
+          {lastCaptureTime ? `Last capture at ${lastCaptureTime}` : statusMessage}
+        </p>
+
+        <button
+          type="button"
+          className="pg-scanner-capture-btn"
+          onClick={handleCapture}
+          aria-label="Capture crop photo"
+        />
+      </footer>
     </section>
   )
 }
