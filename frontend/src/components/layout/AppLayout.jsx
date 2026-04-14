@@ -1,29 +1,32 @@
-import { NavLink, Outlet, useLocation } from 'react-router-dom'
+import { Outlet, useLocation } from 'react-router-dom'
 import { useEffect, useRef, useState } from 'react'
 import { clearPostAuthPath, setLastAppPath } from '../../utils/navigationState'
-import { IconHome, IconMap, IconAgent, IconList, IconUser } from '../icons/UiIcons'
+import BottomNav from '../BottomNav'
 import ThemeToggle from '../ui/ThemeToggle'
 
-const tabs = [
-  { to: '/app', label: 'Home', Icon: IconHome },
-  { to: '/app/map', label: 'Map', Icon: IconMap },
-  { to: '/app/scan', label: 'Chat', Icon: IconAgent },
-  { to: '/app/history', label: 'History', Icon: IconList },
-  { to: '/app/profile', label: 'Profile', Icon: IconUser },
-]
-
 function getPathRank(pathname) {
-  const tabIndex = tabs.findIndex((tab) => tab.to === pathname)
-  if (tabIndex >= 0) {
-    return tabIndex
+  if (pathname === '/app') {
+    return 0
   }
 
-  if (pathname.startsWith('/app/report')) {
+  if (pathname.startsWith('/app/map') || pathname.startsWith('/app/weather')) {
+    return 1
+  }
+
+  if (
+    pathname.startsWith('/app/scan')
+    || pathname.startsWith('/app/report')
+    || pathname.startsWith('/app/history')
+  ) {
     return 2
   }
 
-  if (pathname.startsWith('/app/treatment')) {
+  if (pathname.startsWith('/app/inventory') || pathname.startsWith('/app/treatment')) {
     return 3
+  }
+
+  if (pathname.startsWith('/app/profile')) {
+    return 4
   }
 
   return 0
@@ -47,8 +50,8 @@ export default function AppLayout() {
 
   return (
     <div className="pg-shell">
-      <ThemeToggle className="pg-theme-toggle-app" />
-      <main className={`pg-main-content ${isScannerRoute ? 'pg-main-content-chat' : ''}`}>
+      {!isScannerRoute ? <ThemeToggle className="pg-theme-toggle-app" /> : null}
+      <main className={`pg-main-content ${isScannerRoute ? 'pg-main-content-scanner' : ''}`}>
         <div
           key={location.pathname}
           className={`pg-route-stage dir-${direction} ${isScannerRoute ? 'pg-route-stage-static' : ''}`}
@@ -57,23 +60,7 @@ export default function AppLayout() {
         </div>
       </main>
 
-      <nav className="pg-bottom-tabs" aria-label="Primary">
-        {tabs.map((tab) => {
-          const TabIcon = tab.Icon
-          return (
-            <NavLink
-              key={tab.to}
-              to={tab.to}
-              className={({ isActive }) => `pg-tab ${isActive ? 'is-active' : ''}`}
-            >
-              <span className="pg-tab-icon-wrap" aria-hidden="true">
-                <TabIcon className="pg-icon" />
-              </span>
-              <span className="pg-tab-label">{tab.label}</span>
-            </NavLink>
-          )
-        })}
-      </nav>
+      {!isScannerRoute ? <BottomNav /> : null}
     </div>
   )
 }

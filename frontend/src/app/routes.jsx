@@ -4,13 +4,15 @@ import AppLayout from '../components/layout/AppLayout'
 import { usePWA } from '../hooks/usePWA'
 import { useSessionContext } from '../hooks/useSessionContext'
 import { clearPostAuthPath, getLastAppPath, getPostAuthPath, setPostAuthPath } from '../utils/navigationState'
-import Dashboard from '../pages/app/Dashboard'
+import Dashboard from '../pages/app/Dashboard.tsx'
 import History from '../pages/app/History'
+import Inventory from '../pages/app/Inventory.tsx'
 import MapPage from '../pages/app/Map'
 import Profile from '../pages/app/Profile'
 import Report from '../pages/app/Report'
-import Scanner from '../pages/app/Scanner'
+import Scanner from '../pages/app/Scanner.tsx'
 import Treatment from '../pages/app/Treatment'
+import Weather from '../pages/app/Weather.tsx'
 import Onboarding from '../pages/onboarding/Onboarding'
 import Auth from '../pages/public/Auth'
 import Landing from '../pages/public/Landing'
@@ -164,10 +166,12 @@ export const appRoutes = [
     children: [
       { index: true, element: <Dashboard /> },
       { path: 'map', element: <MapPage /> },
+      { path: 'weather', element: <Weather /> },
       { path: 'scan', element: <Scanner /> },
       { path: 'report', element: <Report /> },
       { path: 'treatment', element: <Treatment /> },
       { path: 'history', element: <History /> },
+      { path: 'inventory', element: <Inventory /> },
       { path: 'profile', element: <Profile /> },
     ],
   },

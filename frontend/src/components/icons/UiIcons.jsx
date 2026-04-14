@@ -49,6 +49,25 @@ export function IconCamera({ className }) {
   )
 }
 
+export function IconClock({ className }) {
+  return (
+    <Svg className={className}>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M12 7.2v5.2l3.4 2" />
+    </Svg>
+  )
+}
+
+export function IconSparkles({ className }) {
+  return (
+    <Svg className={className}>
+      <path d="M12 3.2l1.4 3.4L17 8l-3.6 1.4L12 13l-1.4-3.6L7 8l3.6-1.4L12 3.2z" />
+      <path d="M18.5 13.7l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9.9-2.1z" />
+      <path d="M5.5 14.2l.7 1.7 1.7.7-1.7.7-.7 1.7-.7-1.7-1.7-.7 1.7-.7.7-1.7z" />
+    </Svg>
+  )
+}
+
 export function IconAgent({ className }) {
   return (
     <Svg className={className}>
@@ -63,6 +82,54 @@ export function IconList({ className }) {
   return (
     <Svg className={className}>
       <path d="M8 6h13M8 12h13M8 18h13M4 6h.01M4 12h.01M4 18h.01" />
+    </Svg>
+  )
+}
+
+export function IconChevronRight({ className }) {
+  return (
+    <Svg className={className}>
+      <path d="M9 5l7 7-7 7" />
+    </Svg>
+  )
+}
+
+export function IconPlus({ className }) {
+  return (
+    <Svg className={className}>
+      <path d="M12 5v14M5 12h14" />
+    </Svg>
+  )
+}
+
+export function IconBug({ className }) {
+  return (
+    <Svg className={className}>
+      <path d="M7.5 9.5h9M6.5 13h11M9.5 6.2h5" />
+      <path d="M9 8.4V6.2a3 3 0 0 1 6 0v2.2" />
+      <path d="M8.2 18a3.8 3.8 0 0 1-2.2-3.4V10h12v4.6a3.8 3.8 0 0 1-2.2 3.4" />
+      <path d="M4.8 8l2 1.2M19.2 8l-2 1.2M4.8 16l2-1.2M19.2 16l-2-1.2" />
+    </Svg>
+  )
+}
+
+export function IconShieldLeaf({ className }) {
+  return (
+    <Svg className={className}>
+      <path d="M12 3l7 3v5.1c0 4.5-2.7 7.7-7 9.9-4.3-2.2-7-5.4-7-9.9V6l7-3z" />
+      <path d="M9.2 13.6c1.8-2.3 4.7-3.2 7.2-3.3" />
+      <path d="M11.2 15.7c.2-2.4.9-4.3 2.7-6" />
+    </Svg>
+  )
+}
+
+export function IconSprout({ className }) {
+  return (
+    <Svg className={className}>
+      <path d="M12 20v-7" />
+      <path d="M12 13c0-3.5 2.7-6.5 6.2-6.8-.1 3.8-2.4 6.6-6.2 6.8z" />
+      <path d="M12 15c-3.8-.2-6.1-3-6.2-6.8C9.3 8.5 12 11.5 12 15z" />
+      <path d="M9 21h6" />
     </Svg>
   )
 }
