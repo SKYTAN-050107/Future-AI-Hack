@@ -75,13 +75,12 @@ class LLMService:
         user_input: dict[str, Any],
         candidates: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        """Ask Gemini to validate and rank retrieval candidates.
+        """Ask Gemini to analyze image and diagnose disease using vector search results as reference.
 
         Args:
-            user_input: Dict with the user's original query context.
-                        Expected key: ``"text"`` (str or None).
-            candidates: List of candidate dicts, each containing at
-                        minimum ``"id"``, ``"score"``, ``"metadata"``.
+            user_input: Dict with the user's original query context (may be None for direct analysis).
+            candidates: List of similar cases retrieved from vector search.
+                        Used as reference context for Gemini's diagnosis.
 
         Returns:
             Parsed JSON dict with keys matching ``ScanResult`` schema:

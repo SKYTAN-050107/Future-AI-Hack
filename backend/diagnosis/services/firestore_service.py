@@ -30,6 +30,20 @@ class FirestoreService:
         self._db = firestore.Client(project=settings.GCP_PROJECT_ID)
         self._report_col = settings.FIRESTORE_REPORT_COLLECTION
         self._grid_col = settings.FIRESTORE_GRID_COLLECTION
+        self._candidate_col = settings.FIRESTORE_CANDIDATE_COLLECTION
+
+    async def get_candidate_metadata_by_id(self, candidate_id: str) -> dict:
+        """Read candidate metadata from Firestore using Vector Search candidate ID.
+
+        Args:
+            candidate_id: Vector Search neighbor/datapoint ID.
+
+        Returns:
+            Metadata dict from Firestore document. Empty dict when not found.
+        """
+        if not candidate_id:
+            return {}
+        return await asyncio.to_thread(self._read_candidate_metadata, candidate_id)
 
     async def record_scan_result(
         self,
@@ -94,6 +108,27 @@ class FirestoreService:
             doc_data.get("abnormal"),
         )
         return doc_ref.id
+
+    def _read_candidate_metadata(self, candidate_id: str) -> dict:
+        """Synchronous read from candidate metadata collection by document ID."""
+        doc_ref = self._db.collection(self._candidate_col).document(candidate_id)
+        snapshot = doc_ref.get()
+        if not snapshot.exists:
+            logger.warning(
+                "Candidate metadata not found in Firestore: collection=%s id=%s",
+                self._candidate_col,
+                candidate_id,
+            )
+            return {}
+
+        data = snapshot.to_dict() or {}
+        logger.info(
+            "Firestore candidate metadata loaded: collection=%s id=%s keys=%s",
+            self._candidate_col,
+            candidate_id,
+            list(data.keys()),
+        )
+        return data
 
     def _update_grid_health(
         self,

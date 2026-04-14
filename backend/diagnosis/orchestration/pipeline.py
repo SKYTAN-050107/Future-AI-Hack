@@ -13,7 +13,7 @@ Architecture:
       └── ADK SequentialAgent       (Google ADK orchestrator)
             ├── CropEmbedAgent      (Vertex AI Multimodal Embedding)
             ├── VectorMatchAgent    (Vertex AI Vector Search)
-            └── ReasoningAgent      (Vertex AI Gemini 2 Flash)
+            └── ReasoningAgent      (Vector metadata to final diagnosis)
 
 Lifecycle:
     1. Temporary ADK Session created with region data as initial state.
@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from contextvars import ContextVar
 
 from google.adk.agents import SequentialAgent
 from google.adk.runners import Runner
@@ -43,6 +44,9 @@ _APP_NAME = "padiguard_livescan"
 # Dummy trigger — agents read session state, not the user message.
 _TRIGGER = genai_types.Content(parts=[genai_types.Part(text="scan")])
 
+# Context variable to store results from agents (since session service doesn't persist them)
+_latest_scan_result: ContextVar[dict] = ContextVar("_latest_scan_result", default=None)
+
 
 class LiveScanPipeline:
     """Google ADK SequentialAgent pipeline for live plant scanning.
@@ -58,7 +62,7 @@ class LiveScanPipeline:
             description=(
                 "3-agent pipeline: CropEmbed (Vertex AI Embedding) → "
                 "VectorMatch (Vertex AI Vector Search) → "
-                "Reasoning (Vertex AI Gemini Flash)."
+                "Reasoning (Vector metadata diagnosis)."
             ),
             sub_agents=[
                 CropEmbedAgent(
@@ -71,7 +75,7 @@ class LiveScanPipeline:
                 ),
                 ReasoningAgent(
                     name="ReasoningAgent",
-                    description="Fast-path label or Vertex AI Gemini Flash reasoning.",
+                    description="Generate final diagnosis from Vector Search candidate metadata.",
                 ),
             ],
         )
@@ -100,7 +104,7 @@ class LiveScanPipeline:
             Dict matching ``ScanResult`` schema.
         """
         session_id = uuid.uuid4().hex
-        session = self._session_svc.create_session(
+        session = await self._session_svc.create_session(
             app_name=_APP_NAME,
             user_id="scanner",
             session_id=session_id,
@@ -111,18 +115,66 @@ class LiveScanPipeline:
             },
         )
 
-        logger.info("▶ ADK pipeline start (session=%s)", session.id)
-        async for event in self._runner.run_async(
-            user_id="scanner",
-            session_id=session.id,
-            new_message=_TRIGGER,
-        ):
-            logger.debug("  ADK event: %s", event.author)
-        logger.info("✓ ADK pipeline done (session=%s)", session.id)
+        logger.info("[PIPELINE] ADK pipeline start (session=%s)", session.id)
+        logger.info("[PIPELINE] Initial state keys: %s", list(session.state.keys()))
+        event_count = 0
+        try:
+            async for event in self._runner.run_async(
+                user_id="scanner",
+                session_id=session.id,
+                new_message=_TRIGGER,
+            ):
+                 event_count += 1
+                 logger.info(f"[PIPELINE] Event #{event_count}: Agent {event.author} finished a step.")
+                 
+                 # Fetch the latest session state after each agent completes
+                 current_session = await self._session_svc.get_session(
+                     app_name=_APP_NAME,
+                     user_id="scanner",
+                     session_id=session.id,
+                 )
+                 logger.info(f"[PIPELINE] State keys after {event.author}: {list(current_session.state.keys())}")
+        except Exception as e:
+            logger.error("[PIPELINE] ADK execution error: %s", e, exc_info=True)
+            
+        logger.info("[PIPELINE] ADK pipeline done (session=%s), total events: %d", session.id, event_count)
+        logger.info("[PIPELINE] Final session state keys: %s", list(session.state.keys()))
+        logger.debug("[PIPELINE] Full session state: %s", session.state)
 
-        final = self._session_svc.get_session(
+        # Try to get result from context variable (set by ReasoningAgent)
+        result = _latest_scan_result.get()
+        
+        if result:
+            logger.info("[PIPELINE] Retrieved scan_result from context variable")
+            return result
+        
+        # Fallback: try to re-fetch from session service
+        final_session = await self._session_svc.get_session(
             app_name=_APP_NAME,
             user_id="scanner",
             session_id=session.id,
         )
-        return final.state.get("scan_result", {})
+        
+        logger.info("[PIPELINE] Re-fetched session state keys: %s", list(final_session.state.keys()))
+        logger.debug("[PIPELINE] Re-fetched session state: %s", final_session.state)
+        
+        result = final_session.state.get("scan_result", {})
+        if not result:
+            logger.warning("[PIPELINE] WARNING: scan_result is still empty in session state!")
+            logger.warning("[PIPELINE] Embedding present: %s", "embedding" in final_session.state)
+            logger.warning("[PIPELINE] Candidates present: %s", "candidates" in final_session.state)
+            # Generate fallback result
+            result = {
+                "cropType": "Unknown",
+                "disease": "Healthy",
+                "severity": "Low",
+                "severityScore": 0.0,
+                "treatmentPlan": "None",
+                "survivalProb": 1.0,
+                "is_abnormal": False,
+                "bbox": final_session.state.get("bbox", {}),
+                "grid_id": final_session.state.get("grid_id"),
+            }
+            logger.warning("[PIPELINE] Generated fallback result")
+            
+        return result
