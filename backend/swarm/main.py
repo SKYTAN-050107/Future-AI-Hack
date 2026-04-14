@@ -11,10 +11,12 @@ Usage:
 """
 
 import asyncio
+from pathlib import Path
 from dotenv import load_dotenv
 
 # ── Load .env FIRST (before any config imports) ──────────────────
-load_dotenv()
+BACKEND_ENV_PATH = Path(__file__).resolve().parents[1] / ".env"
+load_dotenv(dotenv_path=BACKEND_ENV_PATH)
 
 from genkit.ai import Genkit
 

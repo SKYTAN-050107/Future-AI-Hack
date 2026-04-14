@@ -2,10 +2,12 @@
 
 import asyncio
 import os
+from pathlib import Path
 os.environ.setdefault("MCP_SERVER_URL", "https://mcp.manamurah.com/sse")
 
 from dotenv import load_dotenv
-load_dotenv()
+BACKEND_ENV_PATH = Path(__file__).resolve().parents[2] / ".env"
+load_dotenv(dotenv_path=BACKEND_ENV_PATH)
 
 from config.settings import settings
 settings.mcp_server_url = "https://mcp.manamurah.com/sse"
