@@ -1594,15 +1594,8 @@ body {
   padding-bottom: calc(182px + env(safe-area-inset-bottom));
 }
 
-.pg-inventory-header h1 {
-  margin: 0;
-  font-family: var(--font-display);
-  font-size: clamp(1.25rem, 5.2vw, 1.6rem);
-  line-height: 1.2;
-}
-
 .pg-inventory-stat-row {
-  margin-top: 10px;
+  margin-top: 0;
   display: flex;
   gap: 8px;
   overflow-x: auto;

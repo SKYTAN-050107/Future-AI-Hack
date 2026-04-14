@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom'
 import { IconCloud, IconSun } from '../../components/icons/UiIcons'
+import SectionHeader from '../../components/ui/SectionHeader'
 
 const weatherSnapshot = {
   condition: 'Passing Rain',
@@ -40,7 +41,8 @@ export default function Dashboard() {
   const WeatherIcon = safeToSpray ? IconSun : IconCloud
 
   return (
-    <section className="pg-dashboard-page" aria-label="Financial and climate command center">
+    <section className="pg-page pg-dashboard-page" aria-label="Financial and climate command center">
+      <SectionHeader title="Home" align="center" />
       <div className="pg-dashboard-grid">
         <button
           type="button"

@@ -6,6 +6,7 @@ import {
   IconShieldLeaf,
   IconSprout,
 } from '../../components/icons/UiIcons'
+import SectionHeader from '../../components/ui/SectionHeader'
 
 const FILTERS = ['All', 'Pesticides', 'Fungicides', 'Fertilizers']
 
@@ -60,16 +61,14 @@ export default function Inventory() {
   )
 
   return (
-    <section className="pg-inventory-page" aria-label="Chemical inventory">
-      <header className="pg-inventory-header">
-        <h1>Chemical Inventory</h1>
+    <section className="pg-page pg-inventory-page" aria-label="Chemical inventory">
+      <SectionHeader title="Inventory" align="center" />
 
-        <div className="pg-inventory-stat-row" aria-label="Inventory quick statistics">
-          <span className="pg-inventory-stat-chip">Total Items: {INVENTORY_ITEMS.length}</span>
-          <span className="pg-inventory-stat-chip pg-inventory-stat-chip-alert">Low Stock: {lowStockCount}</span>
-          <span className="pg-inventory-stat-chip">Last Updated: Today</span>
-        </div>
-      </header>
+      <div className="pg-inventory-stat-row" aria-label="Inventory quick statistics">
+        <span className="pg-inventory-stat-chip">Total Items: {INVENTORY_ITEMS.length}</span>
+        <span className="pg-inventory-stat-chip pg-inventory-stat-chip-alert">Low Stock: {lowStockCount}</span>
+        <span className="pg-inventory-stat-chip">Last Updated: Today</span>
+      </div>
 
       <div className="pg-inventory-filter-row" role="tablist" aria-label="Filter inventory category">
         {FILTERS.map((filter) => (
