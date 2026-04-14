@@ -50,6 +50,25 @@ If NO candidate is relevant or it is a healthy plant, respond with:
 "disease": "Healthy", "severity": "Low", "severityScore": 0.0, "survivalProb": 1.0, "treatmentPlan": "None"
 """
 
+ASSISTANT_SYSTEM_PROMPT = """\
+You are PadiGuard AI Assistant, a practical farming copilot.
+
+You will receive a structured diagnosis result from the internal diagnosis agents.
+Your job is to turn that diagnosis into a farmer-friendly response.
+
+Rules:
+- You MUST answer in Simplified Chinese.
+- You MUST include these section headers exactly:
+    1) 这是什么
+    2) 治疗方案
+    3) 立即行动
+    4) 复查时间
+- Be concise, clear, and actionable.
+- Mention what was detected and confidence context in plain language.
+- Do not hallucinate unavailable lab data.
+- If disease is Apple Scab, clearly mention Apple Scab management priorities.
+"""
+
 
 # ── Retry Configuration ───────────────────────────────────────────────
 MAX_RETRIES = 3
@@ -144,3 +163,76 @@ class LLMService:
                 await asyncio.sleep(RETRY_DELAY_SECONDS)
 
         return fallback  # unreachable, satisfies type checker
+
+    async def generate_assistant_dialogue(
+        self,
+        scan_result: dict[str, Any],
+        user_prompt: str,
+    ) -> str:
+        """Generate a conversational assistant response from diagnosis output."""
+        disease = str(scan_result.get("disease", "Unknown"))
+        crop_type = str(scan_result.get("cropType", "Unknown"))
+        severity = str(scan_result.get("severity", "Moderate"))
+        severity_score = float(scan_result.get("severityScore", 0.0) or 0.0)
+        treatment_plan = str(scan_result.get("treatmentPlan", "Consult agrologist"))
+        survival_prob = float(scan_result.get("survivalProb", 0.0) or 0.0)
+        is_abnormal = bool(scan_result.get("is_abnormal", False))
+        disease_normalized = disease.strip().lower()
+
+        def build_fallback_dialogue() -> str:
+            disease_label = disease if disease.strip() else "Inconclusive"
+            plan_text = treatment_plan.strip() or "请先重拍清晰近照，再根据复扫结果决定用药。"
+
+            if disease_normalized in ["healthy", "normal"]:
+                plan_text = "当前不建议立即用药，先持续监测并记录新症状。"
+            elif disease_normalized in ["unknown", "unknown disease", "inconclusive", "error", ""]:
+                disease_label = "Inconclusive"
+                plan_text = "结果暂时不明确，请在光线充足下拍摄叶片病斑近照后复扫，再决定具体药剂。"
+
+            return (
+                f"这是什么\n{disease_label}（作物类型：{crop_type}，严重度：{severity}，评分：{severity_score:.2f}）\n\n"
+                f"治疗方案\n{plan_text}\n\n"
+                "立即行动\n"
+                "1. 先隔离明显异常叶片，避免交叉传播。\n"
+                "2. 记录拍摄区域与时间，便于后续对比病情变化。\n"
+                f"3. 关注存活概率参考值：{survival_prob:.2f}，结合田间观察调整策略。\n\n"
+                "复查时间\n24-48小时后复拍同一区域；若病斑扩大，立即升级处理。"
+            )
+
+        fallback = build_fallback_dialogue()
+
+        prompt = (
+            f"User message:\n{user_prompt}\n\n"
+            f"Diagnosis result JSON:\n{json.dumps(scan_result, ensure_ascii=True)}\n\n"
+            "Generate a direct reply addressed to the farmer."
+        )
+
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                response = self._client.models.generate_content(
+                    model=self._model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=ASSISTANT_SYSTEM_PROMPT,
+                        temperature=0.35,
+                        max_output_tokens=380,
+                    ),
+                )
+                text = (response.text or "").strip()
+                if text:
+                    required_sections = ["这是什么", "治疗方案", "立即行动", "复查时间"]
+                    if all(section in text for section in required_sections):
+                        return text
+                    return f"{text}\n\n{fallback}"
+            except Exception as e:
+                logger.warning(
+                    "Assistant dialogue attempt %d/%d failed: %s",
+                    attempt,
+                    MAX_RETRIES,
+                    e,
+                )
+
+            if attempt < MAX_RETRIES:
+                await asyncio.sleep(RETRY_DELAY_SECONDS)
+
+        return fallback

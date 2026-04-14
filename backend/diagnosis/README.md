@@ -2,6 +2,8 @@
 
 实时病虫害诊断后端（FastAPI + Google ADK + Vertex AI），通过 `WS /ws/scan` 接收前端裁剪图并返回结构化诊断结果。
 
+新增：支持 `POST /api/assistant/scan`，用于“拍照后直跳 Chatbot”场景，返回诊断结果 + Gemini 对话回复。
+
 ## Current Diagnosis Flow (最新)
 
 每个 region 走同一条 ADK 顺序流水线：
@@ -10,7 +12,7 @@
 2. `VectorMatchAgent`：Vertex AI Vector Search Top-K 检索 + 置信度阈值过滤
 3. `ReasoningAgent`：使用最高分候选 `id` 到 Firestore 查询 `cropType`/`disease` 后生成最终诊断
 
-> 当前主路径是 **Vector-first, Firestore-enriched**。`services/llm_service.py` 存在但不在这条线上被调用。
+> 当前主诊断路径是 **Vector-first, Firestore-enriched**。`services/llm_service.py` 仅在 `/api/assistant/scan` 的对话增强链路中调用。
 
 ## Runtime Architecture
 
@@ -31,6 +33,9 @@ LiveScanPipeline (Google ADK SequentialAgent)
 ScanResponse (frame_number + results[])
         |
         +--> if is_abnormal: Firestore scanReports + grids update
+
+      Scanner -> Chatbot flow:
+      Frontend capture -> POST /api/assistant/scan -> LiveScanPipeline -> AssistantReplyAgent -> assistant reply
 ```
 
 ## WebSocket Contract
@@ -54,6 +59,34 @@ ScanResponse (frame_number + results[])
       }
     }
   ]
+}
+```
+
+## REST Assistant Contract
+
+### Client -> Server (`POST /api/assistant/scan`)
+
+```json
+{
+  "source": "camera",
+  "grid_id": "section_A1",
+  "base64_image": "...",
+  "user_prompt": "I just took this photo. Please explain what to do next."
+}
+```
+
+### Server -> Client
+
+```json
+{
+  "disease": "Apple Scab",
+  "severity": 82,
+  "confidence": 91,
+  "spread_risk": "High",
+  "zone": "section_A1",
+  "crop_type": "Apple",
+  "treatment_plan": "Consult agrologist",
+  "assistant_reply": "I analyzed your photo..."
 }
 ```
 
@@ -138,9 +171,13 @@ backend/diagnosis/
 ├── api/router.py
 ├── orchestration/pipeline.py
 ├── agents/
+│   ├── assistant_reply_agent.py
 │   ├── crop_embed_agent.py
 │   ├── vector_match_agent.py
 │   └── reasoning_agent.py
+├── orchestration/
+│   ├── assistant_pipeline.py
+│   └── pipeline.py
 ├── services/
 │   ├── embedding_service.py
 │   ├── vector_search_service.py

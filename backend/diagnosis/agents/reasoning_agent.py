@@ -77,19 +77,28 @@ class ReasoningAgent(BaseAgent):
                 disease = candidate_doc.get("disease", "Unknown disease")
                 gcs_uri = candidate_doc.get("gcs_uri", "")
 
-                if str(disease).lower() in ["healthy", "normal", "unknown", "unknown disease"]:
+                disease_normalized = str(disease).strip().lower()
+                if disease_normalized in ["healthy", "normal"]:
                     severity = "Low"
                     treatmentPlan = "None"
                     survivalProb = 0.95
+                    is_abnormal = False
+                elif disease_normalized in ["unknown", "unknown disease", ""]:
+                    severity = "Moderate"
+                    treatmentPlan = (
+                        "Inconclusive result. Please capture a closer, well-lit leaf photo and re-scan."
+                    )
+                    survivalProb = 0.5
+                    is_abnormal = False
                 else:
                     severity = "Moderate"
                     treatmentPlan = "Consult agrologist"
                     survivalProb = 0.6
+                    is_abnormal = True
 
                 if gcs_uri:
                     treatmentPlan = f"Reference image: {gcs_uri}"
 
-                is_abnormal = disease.lower() not in ["healthy", "normal", "unknown"]
                 severityScore = score
                 
                 logger.info(
@@ -98,13 +107,13 @@ class ReasoningAgent(BaseAgent):
                 )
             else:
                 # No candidates found from vector search
-                logger.warning("[%s] No candidates found from vector search, defaulting to Healthy", self.name)
+                logger.warning("[%s] No candidates found from vector search, returning inconclusive", self.name)
                 cropType = "Unknown"
-                disease = "Healthy"
-                severity = "Low"
+                disease = "Inconclusive"
+                severity = "Moderate"
                 severityScore = 0.0
-                treatmentPlan = "None"
-                survivalProb = 1.0
+                treatmentPlan = "Inconclusive result. Please capture a clearer close-up photo and re-scan."
+                survivalProb = 0.5
                 is_abnormal = False
 
             state["scan_result"] = {

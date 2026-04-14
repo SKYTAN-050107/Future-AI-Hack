@@ -2171,6 +2171,7 @@ body {
 .pg-chatbot-history-item:focus-visible,
 .pg-chatbot-quick-btn:focus-visible,
 .pg-chatbot-send-btn:focus-visible,
+.pg-chatbot-upload-btn:focus-visible,
 .pg-chatbot-input:focus-visible {
   outline: 2px solid rgba(var(--ring), 0.9);
   outline-offset: 2px;
@@ -2458,6 +2459,36 @@ body {
   gap: 8px;
   padding: 8px;
   box-shadow: 0 10px 24px rgba(var(--text-rgb), 0.14);
+}
+
+.pg-chatbot-photo-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.pg-chatbot-upload-btn {
+  width: 46px;
+  height: 46px;
+  border: 1px solid rgba(var(--border-rgb), 0.76);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
+  color: var(--text-primary);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.pg-chatbot-upload-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.pg-chatbot-upload-btn .pg-icon {
+  width: 19px;
+  height: 19px;
 }
 
 .pg-chatbot-input {

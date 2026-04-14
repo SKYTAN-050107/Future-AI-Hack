@@ -11,17 +11,21 @@
 - 推理：使用 Vector Search Top-1 id 到 Firestore 查询诊断字段后生成结果
 - 输出：返回结构化 `ScanResponse`
 - 落库：异常结果写入 Firestore，触发下游网格状态更新/扩散逻辑
+- 会话增强：拍照后可直接进入 Chatbot，调用诊断并由 Gemini 生成对话回复
 
 ## 2. Runtime Components
 
 | Component | File | Responsibility |
 | --- | --- | --- |
 | FastAPI App | `main.py` | App lifecycle, CORS, `/health`, router mount |
+| REST API | `api/router.py` | `POST /api/scan` 与 `POST /api/assistant/scan` |
 | WS API | `api/router.py` | 接收 `ScanFrame`，并发处理 regions，返回 `ScanResponse` |
 | Pipeline Orchestrator | `orchestration/pipeline.py` | 创建 ADK session + Runner，串联 3 agents |
+| Assistant Orchestrator | `orchestration/assistant_pipeline.py` | 接收 `scan_result`，运行对话 agent |
 | Embed Agent | `agents/crop_embed_agent.py` | base64 -> image bytes -> 1408-d embedding |
 | Match Agent | `agents/vector_match_agent.py` | Vector Search Top-K + threshold filtering |
 | Reasoning Agent | `agents/reasoning_agent.py` | 用 top candidate id 查询 Firestore，生成最终诊断结果 |
+| Assistant Reply Agent | `agents/assistant_reply_agent.py` | 读取诊断结果并调用 Gemini 生成聊天回复 |
 | Embedding Service | `services/embedding_service.py` | Vertex AI `multimodalembedding@001` |
 | Vector Search Service | `services/vector_search_service.py` | Vertex AI Matching Engine `find_neighbors` |
 | Firestore Service | `services/firestore_service.py` | 写 `scanReports`、更新 `grids` |
@@ -45,6 +49,13 @@ Router
   -> build ScanResult list
   -> if result.is_abnormal: FirestoreService.record_scan_result(...)
   -> send ScanResponse
+
+Client (Scanner -> Chatbot)
+  -> POST /api/assistant/scan (base64 + user_prompt)
+Router
+  -> run LiveScanPipeline once (CropEmbed -> VectorMatch -> Reasoning)
+  -> run AssistantPipeline (AssistantReplyAgent)
+  -> return diagnosis + assistant_reply
 ```
 
 ## 4. Agent-Level Behavior
@@ -75,6 +86,12 @@ Router
   - `is_abnormal`, `bbox`, `grid_id`
 - 写入：`scan_result`
 
+### 4.4 AssistantReplyAgent
+
+- 读取：`scan_result`, `user_prompt`
+- 行为：调用 `LLMService.generate_assistant_dialogue`（Gemini）把诊断结果转成面向用户的自然语言答复
+- 写入：`assistant_reply`
+
 ## 5. Data Contracts
 
 定义位于 `models/scan_models.py`。
@@ -101,6 +118,14 @@ Router
 - `survivalProb` (0..1)
 - `is_abnormal`
 - `bbox`
+
+### 5.3 REST: `HttpScanAssistantRequest` / `HttpScanAssistantResponse`
+
+- `HttpScanAssistantRequest`
+  - `source`, `grid_id`, `base64_image`, `user_prompt`
+- `HttpScanAssistantResponse`
+  - `disease`, `severity`, `confidence`, `spread_risk`, `zone`, `crop_type`, `treatment_plan`
+  - `assistant_reply`
 
 ## 6. External Dependencies
 
@@ -132,4 +157,6 @@ Router
 
 ## 8. Notes on LLM Usage
 
-`services/llm_service.py` 目前仍在仓库中并可独立复用，但当前 `LiveScanPipeline` 主链路不依赖 LLM。诊断结果由 Vector Search top candidate id + Firestore 候选文档驱动。
+`LiveScanPipeline` 主诊断链路仍不依赖 LLM（Vector + Firestore）。
+
+LLM（Gemini）当前用于会话增强链路：`AssistantReplyAgent` 接收 `ReasoningAgent` 的诊断结果后，生成用户可读的对话回复。
