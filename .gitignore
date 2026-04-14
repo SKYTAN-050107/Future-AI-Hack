@@ -47,8 +47,10 @@ firebase-adminsdk*.json
 .firebaserc.local
 .runtimeconfig.json
 
-# ── Python Swarm Service ──────────────────────
-swarm/.venv/
+# ── Python Backend Service ──────────────────────
+backend/.venv/
+backend/diagnosis/.venv/
+backend/swarm/.venv/
 __pycache__/
 **/__pycache__/
 *.pyc

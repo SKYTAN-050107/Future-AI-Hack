@@ -1,6 +1,6 @@
 {
   "functions": {
-    "source": "backend/functions"
+    "source": "backend/cloud-functions"
   },
   "firestore": {
     "rules": "firestore.rules",
