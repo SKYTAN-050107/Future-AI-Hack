@@ -166,3 +166,53 @@ export function IconMoon({ className }) {
     </Svg>
   )
 }
+
+export function IconEye({ className }) {
+  return (
+    <Svg className={className}>
+      <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z" />
+      <circle cx="12" cy="12" r="3" />
+    </Svg>
+  )
+}
+
+export function IconEyeOff({ className }) {
+  return (
+    <Svg className={className}>
+      <path d="M3 3l18 18" />
+      <path d="M10.6 10.6a2 2 0 0 0 2.8 2.8" />
+      <path d="M9.9 5.1A11.8 11.8 0 0 1 12 5c6.5 0 10 7 10 7a18.4 18.4 0 0 1-3.7 4.3" />
+      <path d="M6.3 6.4A18.6 18.6 0 0 0 2 12s3.5 7 10 7a11 11 0 0 0 3-.4" />
+    </Svg>
+  )
+}
+
+export function IconGoogle({ className }) {
+  return (
+    <Svg className={className}>
+      <path d="M21.8 12.2c0-.7-.1-1.4-.2-2.1H12v4h5.5a4.8 4.8 0 0 1-2.1 3.2v2.7h3.4a10 10 0 0 0 3-7.8z" />
+      <path d="M12 22c2.7 0 4.9-.9 6.5-2.4l-3.4-2.7c-.9.6-2 .9-3.1.9-2.4 0-4.5-1.6-5.2-3.9H3.2v2.8A10 10 0 0 0 12 22z" />
+      <path d="M6.8 13.9A6 6 0 0 1 6.5 12c0-.7.1-1.3.3-1.9V7.3H3.2A10 10 0 0 0 2 12c0 1.6.4 3.1 1.2 4.5l3.6-2.6z" />
+      <path d="M12 6.2c1.5 0 2.8.5 3.8 1.5l2.8-2.8A10 10 0 0 0 12 2 10 10 0 0 0 3.2 7.3l3.6 2.8c.7-2.3 2.8-3.9 5.2-3.9z" />
+    </Svg>
+  )
+}
+
+export function IconApple({ className }) {
+  return (
+    <Svg className={className}>
+      <path d="M16.8 12.8c0-2.6 2.1-3.9 2.2-4-1.2-1.8-3.1-2-3.8-2-.2 0-2 .1-3.2 1.2-1-.8-2.6-1.2-3.2-1.2-2.7 0-5.4 2.2-5.4 6.2 0 1.2.2 2.5.7 3.8.6 1.7 2.7 5.8 4.9 5.7 1 0 1.7-.7 3-.7 1.2 0 1.9.7 3 .7 2.2 0 4.2-3.8 4.9-5.5-0.1 0-3.1-1.2-3.1-4.2z" />
+      <path d="M14.9 5.5c.5-.6.9-1.6.8-2.5-.8.1-1.8.6-2.3 1.2-.5.6-.9 1.6-.8 2.4.9.1 1.8-.4 2.3-1.1z" />
+    </Svg>
+  )
+}
+
+export function IconPhone({ className }) {
+  return (
+    <Svg className={className}>
+      <rect x="7" y="2.5" width="10" height="19" rx="2" />
+      <path d="M10 5.5h4" />
+      <circle cx="12" cy="18.5" r="0.8" fill="currentColor" stroke="none" />
+    </Svg>
+  )
+}

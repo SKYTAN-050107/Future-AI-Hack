@@ -1036,6 +1036,33 @@ body {
   background-color: color-mix(in srgb, var(--surface) 92%, transparent) !important;
 }
 
+.pg-map-centroid-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pg-map-centroid-icon {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  color: var(--primary);
+}
+
+.pg-map-centroid-icon svg {
+  width: 100%;
+  height: 100%;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.pg-map-centroid-icon svg circle:nth-of-type(2) {
+  fill: currentColor;
+}
+
 .mapboxgl-ctrl button .mapboxgl-ctrl-icon,
 .mapboxgl-ctrl-group button .mapboxgl-ctrl-icon {
   filter: saturate(0.7);

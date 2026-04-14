@@ -9,13 +9,47 @@ const db = admin.firestore()
 const GRID_COLLECTION = 'grids'
 const REPORT_COLLECTION = 'scanReports'
 const AT_RISK_DISTANCE_KM = 0.2
+const BUFFER_ZONE_KM = 0.2
 
-function polygonToFeature(gridDoc) {
-  if (!gridDoc?.polygon || gridDoc.polygon.type !== 'Polygon') {
+function deserializeGeometry(value) {
+  if (!value) {
     return null
   }
 
-  return turf.feature(gridDoc.polygon, {
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value)
+    } catch {
+      return null
+    }
+  }
+
+  return value
+}
+
+function shouldMarkAbnormal(report) {
+  const severity = Number(report?.severity || 0)
+  const status = String(report?.status || '').toLowerCase()
+  const spreadRisk = String(report?.spreadRisk || report?.spread_risk || '').toLowerCase()
+  const severityLevel = String(report?.severityLevel || '').toLowerCase()
+
+  return (
+    status === 'abnormal' ||
+    report?.abnormal === true ||
+    severityLevel === 'high' ||
+    severity >= 50 ||
+    spreadRisk === 'high'
+  )
+}
+
+function polygonToFeature(gridDoc) {
+  const polygon = deserializeGeometry(gridDoc?.polygon)
+
+  if (!polygon || polygon.type !== 'Polygon') {
+    return null
+  }
+
+  return turf.feature(polygon, {
     gridId: gridDoc.gridId,
   })
 }
@@ -29,10 +63,7 @@ exports.updateGridStatus = onDocumentWritten(
       return
     }
 
-    const isAbnormal =
-      after.status === 'abnormal' ||
-      after.abnormal === true ||
-      after.severityLevel === 'high'
+    const isAbnormal = shouldMarkAbnormal(after)
 
     if (!isAbnormal || !after.gridId) {
       return
@@ -77,6 +108,22 @@ exports.spatialPropagationAnalysis = onDocumentWritten(
 
     const infectedCentroid = turf.centroid(infectedFeature)
     const allGridsSnapshot = await db.collection(GRID_COLLECTION).get()
+
+    // Persist an optional buffer zone for map-side visualization and spray guidance.
+    const infectedBuffer = turf.buffer(infectedFeature, BUFFER_ZONE_KM, {
+      units: 'kilometers',
+    })
+
+    await event.data.after.ref.set(
+      {
+        bufferZone: JSON.stringify(infectedBuffer.geometry),
+        bufferZoneKm: BUFFER_ZONE_KM,
+        bufferZoneReason: 'Preventive spray perimeter around infected section',
+        bufferZoneAdvice: 'Prioritize preventive spray in nearby sections within this zone.',
+        lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    )
 
     const writeBatch = db.batch()
     let updates = 0
