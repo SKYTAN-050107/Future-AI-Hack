@@ -19,6 +19,11 @@ frontend/dist/**
 !frontend/dist/index.html
 !frontend/dist/sw.js
 
+# Allow tracked frontend dev hosting service worker only
+!frontend/dev-dist/
+frontend/dev-dist/**
+!frontend/dev-dist/sw.js
+
 # Environment and secrets (all workspaces)
 .env
 .env.*
