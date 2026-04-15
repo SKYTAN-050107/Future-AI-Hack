@@ -1,6 +1,10 @@
 {
+<<<<<<< HEAD
     "python.defaultInterpreterPath": "${workspaceFolder}/swarm/.venv/Scripts/python.exe",
     "python.analysis.extraPaths": [
         "${workspaceFolder}/swarm"
     ]
+=======
+    "python-envs.defaultEnvManager": "ms-python.python:system"
+>>>>>>> ead3cdb6e53897a33577c1486f29dfd579e364d9
 }

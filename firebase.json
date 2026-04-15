@@ -1,6 +1,10 @@
 {
   "functions": {
+<<<<<<< HEAD
     "source": "backend/functions"
+=======
+    "source": "backend/cloud-functions"
+>>>>>>> ead3cdb6e53897a33577c1486f29dfd579e364d9
   },
   "firestore": {
     "rules": "firestore.rules",
