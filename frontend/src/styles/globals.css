@@ -1577,12 +1577,35 @@ body {
   pointer-events: none;
 }
 
+.pg-scanner-viewfinder-stack {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+}
+
 .pg-scanner-viewfinder-frame {
   width: min(70vw, 320px);
   aspect-ratio: 4 / 5;
   border-radius: 20px;
   border: 1px solid rgba(255, 255, 255, 0.42);
   box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.28);
+}
+
+.pg-scanner-viewfinder-hint {
+  margin: 0;
+  border-radius: 999px;
+  padding: 6px 12px;
+  background: rgba(0, 0, 0, 0.42);
+  color: #ECFEFF;
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.25);
+}
+
+.pg-scanner-viewfinder-hint.has-alert {
+  background: rgba(185, 28, 28, 0.72);
+  color: #FEF2F2;
 }
 
 .pg-scanner-bottom-overlay {

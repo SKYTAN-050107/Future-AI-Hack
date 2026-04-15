@@ -145,6 +145,14 @@ function loadPendingCapture() {
   }
 }
 
+function loadPendingCaptureFromRouteState(routeState) {
+  const payload = routeState?.pendingCapture
+  if (!payload?.base64Image) {
+    return null
+  }
+  return payload
+}
+
 function clearPendingCapture() {
   if (typeof window === 'undefined') {
     return
@@ -252,7 +260,7 @@ export default function Chatbot() {
       return
     }
 
-    const pendingCapture = loadPendingCapture()
+    const pendingCapture = loadPendingCaptureFromRouteState(location.state) || loadPendingCapture()
     if (!pendingCapture?.base64Image) {
       autoScanTriggeredRef.current = true
       navigate('/app/chatbot', { replace: true })
@@ -277,7 +285,7 @@ export default function Chatbot() {
 
     setIsAutoProcessing(true)
     setIsThinking(true)
-    navigate('/app/chatbot', { replace: true })
+    navigate('/app/chatbot', { replace: true, state: null })
 
     scanAndAskAssistant({
       source: pendingCapture.source || 'camera',
@@ -327,6 +335,7 @@ export default function Chatbot() {
     isAutoProcessing,
     isThinking,
     location.search,
+    location.state,
     navigate,
     saveScanReport,
   ])

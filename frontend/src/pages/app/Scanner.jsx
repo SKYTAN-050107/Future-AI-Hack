@@ -6,7 +6,11 @@ const PENDING_CAPTURE_KEY = 'pg_pending_scan_capture_v1'
 const DEFAULT_BACKEND_URL = 'http://localhost:8000'
 const BACKEND_URL = String(import.meta.env.VITE_DIAGNOSIS_API_URL || DEFAULT_BACKEND_URL).replace(/\/+$/, '')
 const WS_SCAN_URL = `${BACKEND_URL.replace(/^http/i, 'ws')}/ws/scan`
-const LIVE_FRAME_INTERVAL_MS = 1300
+const LIVE_FRAME_INTERVAL_MS = 900
+const LIVE_RESPONSE_TIMEOUT_MS = 9000
+const LIVE_FRAME_CAPTURE_OPTIONS = { maxWidth: 960, quality: 0.82 }
+const CHAT_CAPTURE_OPTIONS = { maxWidth: 1280, quality: 0.86 }
+const PEST_KEYWORDS = ['pest', 'mite', 'insect', 'worm', 'larva', 'hopper', 'bug', 'weevil', 'aphid', 'borer', 'thrip', 'slug', 'snail']
 
 function formatCaptureTime(date) {
   return new Intl.DateTimeFormat('en-MY', {
@@ -39,13 +43,50 @@ function captureFrameAsDataUrl(videoElement, options = {}) {
 
 function savePendingCapture(payload) {
   if (typeof window === 'undefined') {
-    return
+    return false
   }
 
   try {
     window.sessionStorage.setItem(PENDING_CAPTURE_KEY, JSON.stringify(payload))
+    return true
   } catch {
-    // Ignore storage failures and let chatbot run without auto-processing.
+    // Let caller use a fallback transport when storage is constrained.
+    return false
+  }
+}
+
+function isPestDetection(detection) {
+  const cropType = String(detection?.cropType || '').toLowerCase()
+  const disease = String(detection?.disease || '').toLowerCase()
+  if (cropType.includes('pest')) {
+    return true
+  }
+  return PEST_KEYWORDS.some((keyword) => disease.includes(keyword))
+}
+
+function isMeaningfulDetection(detection) {
+  const cropType = String(detection?.cropType || '').trim().toLowerCase()
+  const disease = String(detection?.disease || '').trim().toLowerCase()
+  if (!cropType || cropType === 'unknown') {
+    return false
+  }
+  if (!disease || disease === 'unknown' || disease === 'inconclusive') {
+    return false
+  }
+  return true
+}
+
+function summarizeLiveDetections(detections) {
+  let pests = 0
+  for (const detection of detections) {
+    if (isPestDetection(detection)) {
+      pests += 1
+    }
+  }
+
+  return {
+    plants: Math.max(0, detections.length - pests),
+    pests,
   }
 }
 
@@ -56,6 +97,7 @@ export default function Scanner() {
   const wsRef = useRef(null)
   const frameTimerRef = useRef(null)
   const reconnectTimerRef = useRef(null)
+  const responseTimeoutRef = useRef(null)
   const frameCounterRef = useRef(0)
   const requestInFlightRef = useRef(false)
   const isMountedRef = useRef(false)
@@ -65,16 +107,26 @@ export default function Scanner() {
   const [isCaptureFlashVisible, setIsCaptureFlashVisible] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [liveDetections, setLiveDetections] = useState([])
+  const liveSummary = summarizeLiveDetections(liveDetections)
+
+  const clearResponseTimeout = () => {
+    if (responseTimeoutRef.current) {
+      window.clearTimeout(responseTimeoutRef.current)
+      responseTimeoutRef.current = null
+    }
+  }
 
   const stopLiveLoop = () => {
     if (frameTimerRef.current) {
       window.clearInterval(frameTimerRef.current)
       frameTimerRef.current = null
     }
+    clearResponseTimeout()
     requestInFlightRef.current = false
   }
 
   const closeLiveSocket = () => {
+    clearResponseTimeout()
     if (wsRef.current) {
       try {
         wsRef.current.close()
@@ -110,18 +162,48 @@ export default function Scanner() {
     }
 
     try {
-      const base64Image = captureFrameAsDataUrl(video, { maxWidth: 720, quality: 0.72 })
+      const base64Image = captureFrameAsDataUrl(video, LIVE_FRAME_CAPTURE_OPTIONS)
+      const normalizedBase64 = base64Image.startsWith('data:') && base64Image.includes(',')
+        ? base64Image.split(',', 2)[1]
+        : base64Image
+
+      clearResponseTimeout()
       requestInFlightRef.current = true
       frameCounterRef.current += 1
       ws.send(
         JSON.stringify({
           frame_number: frameCounterRef.current,
           grid_id: null,
-          base64_image: base64Image,
-          regions: [],
+          base64_image: null,
+          regions: [
+            {
+              cropped_image_b64: normalizedBase64,
+              bbox: {
+                x: 0,
+                y: 0,
+                width: 1,
+                height: 1,
+                mediapipe_label: 'leaf',
+                detection_score: 1,
+              },
+            },
+          ],
         }),
       )
+
+      responseTimeoutRef.current = window.setTimeout(() => {
+        responseTimeoutRef.current = null
+        requestInFlightRef.current = false
+        if (!isMountedRef.current) {
+          return
+        }
+        setStatusMessage('Realtime frame timed out. Reconnecting scanner...')
+        closeLiveSocket()
+        stopLiveLoop()
+        scheduleReconnect()
+      }, LIVE_RESPONSE_TIMEOUT_MS)
     } catch (error) {
+      clearResponseTimeout()
       requestInFlightRef.current = false
       setStatusMessage(error?.message || 'Live frame capture failed.')
     }
@@ -145,6 +227,7 @@ export default function Scanner() {
     setStatusMessage('Connecting realtime scanner...')
 
     ws.onopen = () => {
+      clearResponseTimeout()
       if (!isMountedRef.current) {
         return
       }
@@ -155,6 +238,7 @@ export default function Scanner() {
     }
 
     ws.onmessage = (event) => {
+      clearResponseTimeout()
       requestInFlightRef.current = false
       if (!isMountedRef.current) {
         return
@@ -171,11 +255,13 @@ export default function Scanner() {
           ? payload.results
               .map((item, index) => ({
                 id: `${payload.frame_number || 0}-${index}`,
+                cropType: String(item?.cropType || 'Unknown'),
                 disease: String(item?.disease || 'Unknown'),
                 severity: String(item?.severity || 'Low'),
                 bbox: item?.bbox || { x: 0, y: 0, width: 0, height: 0 },
               }))
               .filter((item) => Number(item.bbox?.width || 0) > 0 && Number(item.bbox?.height || 0) > 0)
+              .filter((item) => isMeaningfulDetection(item))
           : []
 
         setLiveDetections(nextDetections)
@@ -190,6 +276,7 @@ export default function Scanner() {
     }
 
     ws.onerror = () => {
+      clearResponseTimeout()
       requestInFlightRef.current = false
       if (isMountedRef.current) {
         setStatusMessage('Realtime connection error. Reconnecting...')
@@ -197,6 +284,7 @@ export default function Scanner() {
     }
 
     ws.onclose = () => {
+      clearResponseTimeout()
       requestInFlightRef.current = false
       stopLiveLoop()
       if (isMountedRef.current) {
@@ -236,23 +324,45 @@ export default function Scanner() {
         streamRef.current = stream
 
         if (videoRef.current) {
-          videoRef.current.srcObject = stream
+          // Set up event listeners BEFORE assigning srcObject
           videoRef.current.onloadedmetadata = () => {
+            console.log('[Camera] onloadedmetadata fired')
             if (!isMounted) {
               return
             }
-
             setCameraState('ready')
             setStatusMessage('Camera ready. Starting realtime diagnosis...')
           }
 
-          videoRef.current.play().catch(() => {
+          videoRef.current.onerror = (error) => {
+            console.error('[Camera] video element error:', error)
             if (!isMounted) {
               return
             }
             setCameraState('blocked')
-            setStatusMessage('Tap browser camera permission to continue scanning.')
-          })
+            setStatusMessage('Camera error. Please refresh and try again.')
+          }
+
+          // Assign stream after event listeners are set
+          videoRef.current.srcObject = stream
+
+          // Try to play, with proper error handling
+          const playPromise = videoRef.current.play()
+          if (playPromise && typeof playPromise.catch === 'function') {
+            playPromise.catch((playError) => {
+              console.error('[Camera] play error:', playError?.name, playError?.message)
+              if (!isMounted) {
+                return
+              }
+              // Only treat as blocked if it's a permission error
+              if (playError?.name === 'NotAllowedError') {
+                setCameraState('blocked')
+                setStatusMessage('Camera permission denied. Please enable camera access.')
+              } else {
+                console.log('[Camera] play error ignored (metadata may still load):', playError?.message)
+              }
+            })
+          }
         }
       } catch {
         if (!isMounted) {
@@ -317,15 +427,23 @@ export default function Scanner() {
     setStatusMessage('Frame captured. Opening PadiGuard AI Assistant...')
 
     try {
-      const base64Image = captureFrameAsDataUrl(videoRef.current)
-      savePendingCapture({
+      const base64Image = captureFrameAsDataUrl(videoRef.current, CHAT_CAPTURE_OPTIONS)
+      const pendingCapture = {
         source: 'camera',
         base64Image,
         capturedAt: capturedAt.toISOString(),
         userPrompt: 'I just took this photo. Please analyze it and tell me what to do next.',
-      })
+      }
 
-      navigate('/app/chatbot?fromScan=1')
+      const saved = savePendingCapture(pendingCapture)
+
+      if (saved) {
+        navigate('/app/chatbot?fromScan=1')
+      } else {
+        navigate('/app/chatbot?fromScan=1', {
+          state: { pendingCapture },
+        })
+      }
     } catch (error) {
       setStatusMessage(error?.message || 'Capture failed. Please try again.')
     } finally {
@@ -398,7 +516,12 @@ export default function Scanner() {
       </header>
 
       <div className="pg-scanner-viewfinder" aria-hidden="true">
-        <div className="pg-scanner-viewfinder-frame" />
+        <div className="pg-scanner-viewfinder-stack">
+          <div className="pg-scanner-viewfinder-frame" />
+          <p className={`pg-scanner-viewfinder-hint ${liveSummary.pests > 0 ? 'has-alert' : ''}`}>
+            {`In frame: ${liveSummary.plants} plant(s), ${liveSummary.pests} pest(s)`}
+          </p>
+        </div>
       </div>
 
       <footer className="pg-scanner-bottom-overlay">

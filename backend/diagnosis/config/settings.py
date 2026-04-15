@@ -46,6 +46,8 @@ class Settings(BaseSettings):
 
     # ── Pipeline Defaults ──────────────────────────────────────────────
     DEFAULT_TOP_K: int = 5
+    WS_AUTO_REGION_DETECTION: bool = False
+    WS_REGION_DETECTION_TIMEOUT_SECONDS: float = 2.5
 
 
 @lru_cache()

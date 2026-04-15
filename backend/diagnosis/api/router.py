@@ -22,6 +22,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
+from config import get_settings
 from models.scan_models import (
     BoundingBox,
     HttpScanAssistantRequest,
@@ -31,6 +32,7 @@ from models.scan_models import (
     HttpScanRequest,
     HttpScanResponse,
     ScanFrame,
+    ScanRegion,
     ScanResponse,
     ScanResult,
 )
@@ -43,6 +45,7 @@ from services.region_detection_service import RegionDetectionService
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+_settings = get_settings()
 
 # ── Allow imports from the sibling swarm package ──────────────────────
 _swarm_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "swarm"))
@@ -567,44 +570,74 @@ async def live_scan(websocket: WebSocket) -> None:
                     )
                     continue
 
-                region_detector = _get_region_detector()
-                if region_detector is None:
-                    await websocket.send_json(
-                        {
-                            "error": (
-                                "Region detector unavailable. "
-                                "Send pre-cropped regions or configure Gemini region detection."
-                            )
-                        }
-                    )
-                    continue
+                normalized_base64 = _strip_data_url_prefix(frame.base64_image)
+                fallback_region = ScanRegion(
+                    cropped_image_b64=normalized_base64,
+                    bbox=BoundingBox(
+                        x=0.0,
+                        y=0.0,
+                        width=1.0,
+                        height=1.0,
+                        mediapipe_label="leaf",
+                        detection_score=1.0,
+                    ),
+                )
 
-                try:
-                    frame_regions = await region_detector.detect_regions(
-                        base64_image=_strip_data_url_prefix(frame.base64_image)
-                    )
-                except Exception as detect_exc:
-                    logger.exception("WS region detection failed: %s", detect_exc)
-                    await websocket.send_json(
-                        {"error": f"Region detection failed: {detect_exc}"}
-                    )
-                    continue
+                if _settings.WS_AUTO_REGION_DETECTION:
+                    region_detector = _get_region_detector()
+                    if region_detector is None:
+                        logger.warning(
+                            "WS region detector unavailable, falling back to full-frame scan"
+                        )
+                        frame_regions = [fallback_region]
+                    else:
+                        try:
+                            detected_regions = await asyncio.wait_for(
+                                region_detector.detect_regions(base64_image=normalized_base64),
+                                timeout=float(_settings.WS_REGION_DETECTION_TIMEOUT_SECONDS),
+                            )
+                            frame_regions = detected_regions or [fallback_region]
+                        except asyncio.TimeoutError:
+                            logger.warning(
+                                "WS region detection timed out after %.1fs; using full-frame scan",
+                                _settings.WS_REGION_DETECTION_TIMEOUT_SECONDS,
+                            )
+                            frame_regions = [fallback_region]
+                        except Exception as detect_exc:
+                            logger.exception("WS region detection failed: %s", detect_exc)
+                            frame_regions = [fallback_region]
+                else:
+                    frame_regions = [fallback_region]
+
+            if not frame_regions:
+                await websocket.send_json({"error": "No scan region available for this frame"})
+                continue
+
+            normalized_regions: list[tuple[ScanRegion, str]] = []
+            for region in frame_regions:
+                normalized_region_b64 = _strip_data_url_prefix(region.cropped_image_b64)
+                if normalized_region_b64:
+                    normalized_regions.append((region, normalized_region_b64))
+
+            if not normalized_regions:
+                await websocket.send_json({"error": "No valid scan region payload for this frame"})
+                continue
 
             # ── Process all regions concurrently via ADK pipeline ─────
             tasks = [
                 _run_scan_pipeline(
-                    cropped_image_b64=region.cropped_image_b64,
+                    cropped_image_b64=region_b64,
                     bbox=region.bbox,
                     grid_id=frame.grid_id,
                 )
-                for region in frame_regions
+                for region, region_b64 in normalized_regions
             ]
             raw_results = await asyncio.gather(*tasks, return_exceptions=True)
 
             # ── Build response ────────────────────────────────────────
             results: list[ScanResult] = []
             for i, raw_result in enumerate(raw_results):
-                bbox = frame_regions[i].bbox
+                bbox = normalized_regions[i][0].bbox
 
                 if isinstance(raw_result, tuple):
                     raw_result = raw_result[0]
