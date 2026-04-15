@@ -97,11 +97,7 @@ export const gateway = {
 
   getInsurancePackages: async () => withMock({ packages: [] }),
 
-  getWeatherOutlook: async () => withMock({
-    rain_probability: 76,
-    best_spray_window: 'Today 3:00 PM - 5:00 PM',
-    advisory: 'Avoid spraying tomorrow morning due to high rain intensity.',
-  }),
+  getWeatherOutlook: async (lat, lng) => requestJson(`/api/weather?lat=${lat}&lng=${lng}`, { method: 'GET' }),
 
   scanDisease: async (input) => {
     const base64Image = normalizeBase64Image(input?.base64Image)

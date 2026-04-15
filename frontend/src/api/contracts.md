@@ -2,28 +2,38 @@
 
 This document defines the expected request and response shapes used by the frontend integration layer.
 
-## 1) Weather Outlook
+## 1) Weather Outlook (Meteorologist Agent)
 
 Route usage:
-- Dashboard summary and spray timing advisory
+- Dashboard weather intelligence card and spray timing advisory
 
 Frontend call:
-- getWeatherOutlook()
+- getWeatherOutlook(lat, lng)
+
+Request:
+- GET /api/weather?lat={float}&lng={float}
+- lat/lng sourced from navigator.geolocation, fallback to Kuala Lumpur (3.1408, 101.6932)
 
 Response shape:
 
 ```json
 {
-  "rain_probability": 76,
-  "best_spray_window": "Today 3:00 PM - 5:00 PM",
-  "advisory": "Avoid spraying tomorrow morning due to high rain intensity."
+  "condition": "Passing Rain",
+  "temperatureC": 29,
+  "windKmh": 12,
+  "windDirection": "SW",
+  "rainInHours": 2.5,
+  "safeToSpray": false
 }
 ```
 
 Required fields:
-- rain_probability: number (0-100)
-- best_spray_window: string
-- advisory: string
+- condition: string ("Clear" | "Cloudy" | "Windy" | "Light Rain" | "Passing Rain" | "Heavy Rain")
+- temperatureC: number (integer, Celsius)
+- windKmh: number (integer, km/h)
+- windDirection: string (compass abbreviation e.g. "N", "SW", "NNE")
+- rainInHours: number (hours until rain, 24.0 if no rain expected)
+- safeToSpray: boolean (false if rain expected within 4 hours)
 
 ## 2) Disease Scan
 

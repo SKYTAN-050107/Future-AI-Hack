@@ -1,14 +1,11 @@
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { IconCloud, IconSun } from '../../components/icons/UiIcons'
 import SectionHeader from '../../components/ui/SectionHeader'
+import { gateway } from '../../api/gateway'
 
-const weatherSnapshot = {
-  condition: 'Passing Rain',
-  temperatureC: 29,
-  windKmh: 12,
-  windDirection: 'SW',
-  rainInHours: 2.5,
-}
+const KL_FALLBACK_LAT = 3.1408
+const KL_FALLBACK_LNG = 101.6932
 
 const zoneHealthSummary = {
   totalAreaHectares: 38.6,
@@ -37,7 +34,36 @@ function formatCurrency(value) {
 
 export default function Dashboard() {
   const navigate = useNavigate()
-  const safeToSpray = weatherSnapshot.rainInHours >= 4
+  const [weatherSnapshot, setWeatherSnapshot] = useState(null)
+  const [weatherError, setWeatherError] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+
+    function fetchWeather(lat, lng) {
+      gateway.getWeatherOutlook(lat, lng)
+        .then((data) => {
+          if (!cancelled) setWeatherSnapshot(data)
+        })
+        .catch(() => {
+          if (!cancelled) setWeatherError(true)
+        })
+    }
+
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => fetchWeather(pos.coords.latitude, pos.coords.longitude),
+        () => fetchWeather(KL_FALLBACK_LAT, KL_FALLBACK_LNG),
+        { timeout: 5000 }
+      )
+    } else {
+      fetchWeather(KL_FALLBACK_LAT, KL_FALLBACK_LNG)
+    }
+
+    return () => { cancelled = true }
+  }, [])
+
+  const safeToSpray = weatherSnapshot ? weatherSnapshot.safeToSpray : false
   const WeatherIcon = safeToSpray ? IconSun : IconCloud
 
   return (
@@ -55,18 +81,32 @@ export default function Dashboard() {
             <WeatherIcon className="pg-icon" />
           </header>
 
-          <div className="pg-weather-primary">
-            <strong>{weatherSnapshot.temperatureC} deg C</strong>
-            <span>{weatherSnapshot.condition}</span>
-          </div>
+          {weatherError ? (
+            <div className="pg-weather-primary">
+              <strong>Weather Unavailable</strong>
+              <span>Service temporarily down</span>
+            </div>
+          ) : !weatherSnapshot ? (
+            <div className="pg-weather-primary">
+              <strong>Loading...</strong>
+              <span>Fetching weather data</span>
+            </div>
+          ) : (
+            <>
+              <div className="pg-weather-primary">
+                <strong>{weatherSnapshot.temperatureC} deg C</strong>
+                <span>{weatherSnapshot.condition}</span>
+              </div>
 
-          <p className="pg-weather-wind">
-            Wind {weatherSnapshot.windKmh} km/h {weatherSnapshot.windDirection}
-          </p>
+              <p className="pg-weather-wind">
+                Wind {weatherSnapshot.windKmh} km/h {weatherSnapshot.windDirection}
+              </p>
 
-          <span className={`pg-weather-badge ${safeToSpray ? 'is-clear' : 'is-delay'}`}>
-            {safeToSpray ? 'CLEAR' : 'DELAY'}
-          </span>
+              <span className={`pg-weather-badge ${safeToSpray ? 'is-clear' : 'is-delay'}`}>
+                {safeToSpray ? 'CLEAR' : 'DELAY'}
+              </span>
+            </>
+          )}
         </button>
 
         <button

@@ -5,6 +5,8 @@ API router for diagnosis inference.
     Single-frame REST endpoint used by frontend capture flow.
 - POST /api/assistant/scan
     Single-frame REST endpoint that returns diagnosis + chatbot reply.
+- GET /api/weather
+    Dashboard weather intelligence endpoint (Meteorologist Agent).
 - WS /ws/scan
     Real-time endpoint for multi-region key frames.
 """
@@ -13,9 +15,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import sys
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel
 
 from models.scan_models import (
     BoundingBox,
@@ -38,6 +43,49 @@ from services.region_detection_service import RegionDetectionService
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# ── Allow imports from the sibling swarm package ──────────────────────
+_swarm_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "swarm"))
+if _swarm_dir not in sys.path:
+    sys.path.insert(0, _swarm_dir)
+
+
+# ── Weather dashboard helpers ─────────────────────────────────────────
+
+class WeatherDashboardResponse(BaseModel):
+    """Structured response for the frontend Dashboard weather card."""
+    condition: str
+    temperatureC: int
+    windKmh: int
+    windDirection: str
+    rainInHours: float
+    safeToSpray: bool
+
+
+def _determine_condition(precip_prob: float, wind_kmh: float) -> str:
+    """Deterministic condition string from precipitation probability."""
+    if precip_prob > 80:
+        return "Heavy Rain"
+    if precip_prob > 50:
+        return "Passing Rain"
+    if precip_prob > 20:
+        return "Light Rain"
+    if precip_prob > 5:
+        return "Cloudy"
+    if wind_kmh > 20:
+        return "Windy"
+    return "Clear"
+
+
+def _degrees_to_compass(degrees: int) -> str:
+    """Convert wind direction degrees (0-360) to a compass abbreviation."""
+    directions = [
+        "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+        "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW",
+    ]
+    index = int((degrees / 22.5) + 0.5) % 16
+    return directions[index]
+
 
 _region_detector: RegionDetectionService | None = None
 _region_detector_init_error: str | None = None
@@ -582,3 +630,39 @@ async def live_scan(websocket: WebSocket) -> None:
             await websocket.close(code=1011, reason=str(e))
         except Exception:
             pass
+
+
+# ── Meteorologist Agent: Dashboard Weather Endpoint ───────────────────
+
+@router.get("/api/weather", response_model=WeatherDashboardResponse)
+async def get_dashboard_weather(
+    lat: float = Query(..., description="Latitude of the farm or user location"),
+    lng: float = Query(..., description="Longitude of the farm or user location"),
+) -> WeatherDashboardResponse:
+    """Fetch live weather data from Tomorrow.io via the swarm weather tool
+    and return a fast, deterministic summary for the Dashboard card."""
+    try:
+        from tools.weather_tool import fetch_weather, WeatherInput
+
+        weather_out = await fetch_weather(WeatherInput(lat=lat, lng=lng))
+
+        w = weather_out["weather"]
+        safe_to_spray = weather_out["safe_to_spray"]
+
+        precip_prob = w.get("precipitation_probability", 0)
+        wind_kmh = w.get("wind_speed_kmh", 0)
+        temp_c = w.get("temperature_c", 0)
+        wind_deg = w.get("wind_direction_degrees", 0)
+        rain_hr = w.get("rain_expected_within_hours")
+
+        return WeatherDashboardResponse(
+            condition=_determine_condition(precip_prob, wind_kmh),
+            temperatureC=int(temp_c),
+            windKmh=int(wind_kmh),
+            windDirection=_degrees_to_compass(wind_deg),
+            rainInHours=float(rain_hr) if rain_hr is not None else 24.0,
+            safeToSpray=bool(safe_to_spray),
+        )
+    except Exception as exc:
+        logger.exception("Weather fetch failed: %s", exc)
+        raise HTTPException(status_code=500, detail="Weather fetch failed") from exc
