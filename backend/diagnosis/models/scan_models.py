@@ -33,7 +33,14 @@ class ScanFrame(BaseModel):
 
     grid_id: str | None = None
     frame_number: int = Field(default=0, ge=0)
-    regions: list[ScanRegion] = Field(..., min_length=1)
+    base64_image: str | None = Field(
+        default=None,
+        description="Optional full-frame image (raw base64 or data URL) for server-side region detection",
+    )
+    regions: list[ScanRegion] = Field(
+        default_factory=list,
+        description="Optional pre-cropped regions. If empty, server can auto-detect from base64_image.",
+    )
 
 
 class ScanResult(BaseModel):

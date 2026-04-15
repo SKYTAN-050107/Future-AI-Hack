@@ -1469,6 +1469,36 @@ body {
   opacity: 1;
 }
 
+.pg-scanner-detection-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  pointer-events: none;
+}
+
+.pg-scanner-bbox {
+  position: absolute;
+  border: 2px solid rgba(34, 211, 238, 0.95);
+  border-radius: 8px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25), 0 0 22px rgba(34, 211, 238, 0.22);
+}
+
+.pg-scanner-bbox-label {
+  position: absolute;
+  top: -28px;
+  left: 0;
+  max-width: 220px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(6, 182, 212, 0.9);
+  color: #FFFFFF;
+  font-size: 0.68rem;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .pg-scanner-loading {
   position: absolute;
   inset: 0;

@@ -3,6 +3,10 @@ import { useNavigate } from 'react-router-dom'
 import { IconArrowLeft, IconSparkles } from '../../components/icons/UiIcons'
 
 const PENDING_CAPTURE_KEY = 'pg_pending_scan_capture_v1'
+const DEFAULT_BACKEND_URL = 'http://localhost:8000'
+const BACKEND_URL = String(import.meta.env.VITE_DIAGNOSIS_API_URL || DEFAULT_BACKEND_URL).replace(/\/+$/, '')
+const WS_SCAN_URL = `${BACKEND_URL.replace(/^http/i, 'ws')}/ws/scan`
+const LIVE_FRAME_INTERVAL_MS = 1300
 
 function formatCaptureTime(date) {
   return new Intl.DateTimeFormat('en-MY', {
@@ -11,10 +15,11 @@ function formatCaptureTime(date) {
   }).format(date)
 }
 
-function captureFrameAsDataUrl(videoElement) {
+function captureFrameAsDataUrl(videoElement, options = {}) {
+  const maxWidth = Number(options.maxWidth || 960)
+  const quality = Number(options.quality || 0.85)
   const rawWidth = videoElement.videoWidth || 1280
   const rawHeight = videoElement.videoHeight || 720
-  const maxWidth = 960
   const scale = rawWidth > maxWidth ? maxWidth / rawWidth : 1
   const width = Math.round(rawWidth * scale)
   const height = Math.round(rawHeight * scale)
@@ -29,7 +34,7 @@ function captureFrameAsDataUrl(videoElement) {
   }
 
   context.drawImage(videoElement, 0, 0, width, height)
-  return canvas.toDataURL('image/jpeg', 0.85)
+  return canvas.toDataURL('image/jpeg', quality)
 }
 
 function savePendingCapture(payload) {
@@ -48,13 +53,162 @@ export default function Scanner() {
   const navigate = useNavigate()
   const videoRef = useRef(null)
   const streamRef = useRef(null)
+  const wsRef = useRef(null)
+  const frameTimerRef = useRef(null)
+  const reconnectTimerRef = useRef(null)
+  const frameCounterRef = useRef(0)
+  const requestInFlightRef = useRef(false)
+  const isMountedRef = useRef(false)
   const [cameraState, setCameraState] = useState('loading')
   const [statusMessage, setStatusMessage] = useState('Initializing rear camera...')
   const [lastCaptureTime, setLastCaptureTime] = useState('')
   const [isCaptureFlashVisible, setIsCaptureFlashVisible] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [liveDetections, setLiveDetections] = useState([])
+
+  const stopLiveLoop = () => {
+    if (frameTimerRef.current) {
+      window.clearInterval(frameTimerRef.current)
+      frameTimerRef.current = null
+    }
+    requestInFlightRef.current = false
+  }
+
+  const closeLiveSocket = () => {
+    if (wsRef.current) {
+      try {
+        wsRef.current.close()
+      } catch {
+        // Ignore close errors on unstable mobile networks.
+      }
+      wsRef.current = null
+    }
+  }
+
+  const scheduleReconnect = () => {
+    if (reconnectTimerRef.current || !isMountedRef.current) {
+      return
+    }
+    reconnectTimerRef.current = window.setTimeout(() => {
+      reconnectTimerRef.current = null
+      if (isMountedRef.current) {
+        connectLiveScan()
+      }
+    }, 2000)
+  }
+
+  const sendLiveFrame = () => {
+    const ws = wsRef.current
+    const video = videoRef.current
+    if (!ws || ws.readyState !== WebSocket.OPEN || !video || requestInFlightRef.current) {
+      return
+    }
+
+    const hasVideoPixels = Number(video.videoWidth || 0) > 0 && Number(video.videoHeight || 0) > 0
+    if (!hasVideoPixels) {
+      return
+    }
+
+    try {
+      const base64Image = captureFrameAsDataUrl(video, { maxWidth: 720, quality: 0.72 })
+      requestInFlightRef.current = true
+      frameCounterRef.current += 1
+      ws.send(
+        JSON.stringify({
+          frame_number: frameCounterRef.current,
+          grid_id: null,
+          base64_image: base64Image,
+          regions: [],
+        }),
+      )
+    } catch (error) {
+      requestInFlightRef.current = false
+      setStatusMessage(error?.message || 'Live frame capture failed.')
+    }
+  }
+
+  const connectLiveScan = () => {
+    if (!isMountedRef.current || cameraState !== 'ready') {
+      return
+    }
+
+    const current = wsRef.current
+    if (current && (current.readyState === WebSocket.OPEN || current.readyState === WebSocket.CONNECTING)) {
+      return
+    }
+
+    closeLiveSocket()
+    stopLiveLoop()
+
+    const ws = new WebSocket(WS_SCAN_URL)
+    wsRef.current = ws
+    setStatusMessage('Connecting realtime scanner...')
+
+    ws.onopen = () => {
+      if (!isMountedRef.current) {
+        return
+      }
+      setStatusMessage('Realtime diagnosis active. Hold plants inside camera view.')
+      stopLiveLoop()
+      frameTimerRef.current = window.setInterval(sendLiveFrame, LIVE_FRAME_INTERVAL_MS)
+      sendLiveFrame()
+    }
+
+    ws.onmessage = (event) => {
+      requestInFlightRef.current = false
+      if (!isMountedRef.current) {
+        return
+      }
+
+      try {
+        const payload = JSON.parse(event.data)
+        if (payload?.error) {
+          setStatusMessage(String(payload.error))
+          return
+        }
+
+        const nextDetections = Array.isArray(payload?.results)
+          ? payload.results
+              .map((item, index) => ({
+                id: `${payload.frame_number || 0}-${index}`,
+                disease: String(item?.disease || 'Unknown'),
+                severity: String(item?.severity || 'Low'),
+                bbox: item?.bbox || { x: 0, y: 0, width: 0, height: 0 },
+              }))
+              .filter((item) => Number(item.bbox?.width || 0) > 0 && Number(item.bbox?.height || 0) > 0)
+          : []
+
+        setLiveDetections(nextDetections)
+        if (nextDetections.length > 0) {
+          setStatusMessage(`Detected ${nextDetections.length} region(s) in live frame.`)
+        } else {
+          setStatusMessage('Realtime diagnosis active. No crop region found in current frame.')
+        }
+      } catch {
+        setStatusMessage('Invalid realtime response from diagnosis backend.')
+      }
+    }
+
+    ws.onerror = () => {
+      requestInFlightRef.current = false
+      if (isMountedRef.current) {
+        setStatusMessage('Realtime connection error. Reconnecting...')
+      }
+    }
+
+    ws.onclose = () => {
+      requestInFlightRef.current = false
+      stopLiveLoop()
+      if (isMountedRef.current) {
+        setLiveDetections([])
+        setStatusMessage('Realtime scanner disconnected. Reconnecting...')
+        scheduleReconnect()
+      }
+    }
+  }
 
   useEffect(() => {
+    isMountedRef.current = true
     let isMounted = true
 
     async function startCamera() {
@@ -89,7 +243,7 @@ export default function Scanner() {
             }
 
             setCameraState('ready')
-            setStatusMessage('Camera ready. Hold leaf inside guide frame.')
+            setStatusMessage('Camera ready. Starting realtime diagnosis...')
           }
 
           videoRef.current.play().catch(() => {
@@ -112,12 +266,30 @@ export default function Scanner() {
     startCamera()
 
     return () => {
+      isMountedRef.current = false
       isMounted = false
+      if (reconnectTimerRef.current) {
+        window.clearTimeout(reconnectTimerRef.current)
+        reconnectTimerRef.current = null
+      }
+      stopLiveLoop()
+      closeLiveSocket()
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((track) => track.stop())
       }
     }
   }, [])
+
+  useEffect(() => {
+    if (cameraState === 'ready') {
+      connectLiveScan()
+      return
+    }
+
+    stopLiveLoop()
+    closeLiveSocket()
+    setLiveDetections([])
+  }, [cameraState])
 
   const handleCapture = async () => {
     if (cameraState !== 'ready') {
@@ -171,6 +343,29 @@ export default function Scanner() {
           muted
           playsInline
         />
+
+        <div className="pg-scanner-detection-overlay" aria-hidden="true">
+          {liveDetections.map((detection) => {
+            const x = Math.max(0, Math.min(1, Number(detection.bbox?.x || 0)))
+            const y = Math.max(0, Math.min(1, Number(detection.bbox?.y || 0)))
+            const width = Math.max(0, Math.min(1 - x, Number(detection.bbox?.width || 0)))
+            const height = Math.max(0, Math.min(1 - y, Number(detection.bbox?.height || 0)))
+            return (
+              <div
+                key={detection.id}
+                className="pg-scanner-bbox"
+                style={{
+                  left: `${x * 100}%`,
+                  top: `${y * 100}%`,
+                  width: `${width * 100}%`,
+                  height: `${height * 100}%`,
+                }}
+              >
+                <span className="pg-scanner-bbox-label">{`${detection.disease} • ${detection.severity}`}</span>
+              </div>
+            )
+          })}
+        </div>
 
         {cameraState !== 'ready' ? (
           <div className="pg-scanner-loading" role="status" aria-live="polite">

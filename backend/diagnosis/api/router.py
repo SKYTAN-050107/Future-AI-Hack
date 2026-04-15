@@ -511,6 +511,37 @@ async def live_scan(websocket: WebSocket) -> None:
                 await websocket.send_json({"error": f"Invalid frame: {e}"})
                 continue
 
+            frame_regions = list(frame.regions)
+            if not frame_regions:
+                if not frame.base64_image:
+                    await websocket.send_json(
+                        {"error": "Frame must include either regions or base64_image"}
+                    )
+                    continue
+
+                region_detector = _get_region_detector()
+                if region_detector is None:
+                    await websocket.send_json(
+                        {
+                            "error": (
+                                "Region detector unavailable. "
+                                "Send pre-cropped regions or configure Gemini region detection."
+                            )
+                        }
+                    )
+                    continue
+
+                try:
+                    frame_regions = await region_detector.detect_regions(
+                        base64_image=_strip_data_url_prefix(frame.base64_image)
+                    )
+                except Exception as detect_exc:
+                    logger.exception("WS region detection failed: %s", detect_exc)
+                    await websocket.send_json(
+                        {"error": f"Region detection failed: {detect_exc}"}
+                    )
+                    continue
+
             # ── Process all regions concurrently via ADK pipeline ─────
             tasks = [
                 _run_scan_pipeline(
@@ -518,14 +549,14 @@ async def live_scan(websocket: WebSocket) -> None:
                     bbox=region.bbox,
                     grid_id=frame.grid_id,
                 )
-                for region in frame.regions
+                for region in frame_regions
             ]
             raw_results = await asyncio.gather(*tasks, return_exceptions=True)
 
             # ── Build response ────────────────────────────────────────
             results: list[ScanResult] = []
             for i, raw_result in enumerate(raw_results):
-                bbox = frame.regions[i].bbox
+                bbox = frame_regions[i].bbox
 
                 if isinstance(raw_result, tuple):
                     raw_result = raw_result[0]
