@@ -15,7 +15,7 @@ from google.adk.agents.invocation_context import InvocationContext
 from google.adk.events import Event
 from pydantic import ConfigDict, PrivateAttr
 
-from services.llm_service import LLMService
+from services.llm_service import LLMService, build_farmer_fallback_dialogue
 
 logger = logging.getLogger(__name__)
 
@@ -60,13 +60,10 @@ class AssistantReplyAgent(BaseAgent):
             )
         except Exception as exc:
             logger.error("[%s] assistant reply generation failed: %s", self.name, exc, exc_info=True)
-            disease = str(scan_result.get("disease", "Unknown"))
-            treatment = str(scan_result.get("treatmentPlan", "Consult agrologist"))
-            assistant_reply = (
-                f"这是什么\n{disease}\n\n"
-                f"治疗方案\n{treatment}\n\n"
-                "立即行动\n1. 先隔离异常叶片。\n2. 记录病斑变化并准备复扫。\n\n"
-                "复查时间\n24-48小时内复扫。"
+            assistant_reply = build_farmer_fallback_dialogue(
+                scan_result=scan_result,
+                user_prompt=user_prompt,
+                reason=str(exc),
             )
 
         state["assistant_reply"] = assistant_reply

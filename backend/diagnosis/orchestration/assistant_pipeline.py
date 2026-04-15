@@ -22,6 +22,7 @@ from google.adk.sessions import InMemorySessionService
 from google.genai import types as genai_types
 
 from agents.assistant_reply_agent import AssistantReplyAgent
+from services.llm_service import build_farmer_fallback_dialogue
 
 logger = logging.getLogger(__name__)
 
@@ -55,15 +56,9 @@ class AssistantPipeline:
     async def run(self, scan_result: dict, user_prompt: str) -> str:
         """Generate chatbot text from diagnosis output."""
         token = _latest_assistant_reply.set(None)
-        fallback_reply = (
-            "这是什么\n"
-            f"{scan_result.get('disease', 'Inconclusive')}（作物类型：{scan_result.get('cropType', 'Unknown')}）\n\n"
-            "治疗方案\n"
-            f"{scan_result.get('treatmentPlan', '请根据复扫结果决定下一步处理。')}\n\n"
-            "立即行动\n"
-            "1. 保留病斑近照并记录位置。\n"
-            "2. 先隔离可疑植株或叶片，避免扩散。\n\n"
-            "复查时间\n24-48小时内复扫同一区域。"
+        fallback_reply = build_farmer_fallback_dialogue(
+            scan_result=scan_result,
+            user_prompt=user_prompt,
         )
         session = await self._session_svc.create_session(
             app_name=_ASSISTANT_APP_NAME,

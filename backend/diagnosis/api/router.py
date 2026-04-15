@@ -21,6 +21,8 @@ from models.scan_models import (
     BoundingBox,
     HttpScanAssistantRequest,
     HttpScanAssistantResponse,
+    HttpScanAssistantMultiRequest,
+    HttpScanAssistantMultiResponse,
     HttpScanRequest,
     HttpScanResponse,
     ScanFrame,
@@ -30,10 +32,35 @@ from models.scan_models import (
 from orchestration.assistant_pipeline import AssistantPipeline
 from orchestration.pipeline import LiveScanPipeline
 from services.firestore_service import FirestoreService
+from services.llm_service import LLMService, build_farmer_fallback_dialogue
+from services.region_detection_service import RegionDetectionService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+_region_detector: RegionDetectionService | None = None
+_region_detector_init_error: str | None = None
+
+
+def _get_region_detector() -> RegionDetectionService | None:
+    global _region_detector
+    global _region_detector_init_error
+
+    if _region_detector is not None:
+        return _region_detector
+
+    if _region_detector_init_error is not None:
+        return None
+
+    try:
+        _region_detector = RegionDetectionService()
+    except Exception as exc:
+        _region_detector_init_error = str(exc)
+        logger.exception("RegionDetectionService init failed: %s", exc)
+        return None
+
+    return _region_detector
 
 _pipeline: LiveScanPipeline | None = None
 _pipeline_init_error: str | None = None
@@ -275,15 +302,11 @@ def _build_assistant_fallback_reply(
     result: ScanResult,
     reason: str | None = None,
 ) -> str:
-    reason_suffix = f"\n\n附注\n{reason}" if reason else ""
-    return (
-        f"这是什么\n{result.disease}（作物类型：{result.cropType}，严重度：{result.severity}）\n\n"
-        f"治疗方案\n{result.treatmentPlan}\n\n"
-        "立即行动\n"
-        "1. 先处理最明显病斑区域，避免扩散。\n"
-        "2. 保留当前照片并记录位置，方便后续比对。\n\n"
-        "复查时间\n24-48小时后复扫同一区域。"
-        f"{reason_suffix}"
+    """Build fallback assistant reply using the new language-aware function."""
+    return build_farmer_fallback_dialogue(
+        scan_result=result.model_dump(),
+        user_prompt="I just took this photo. Please explain what was detected.",
+        reason=reason,
     )
 
 
@@ -316,6 +339,38 @@ async def scan_once(payload: HttpScanRequest) -> HttpScanResponse:
 @router.post("/api/assistant/scan", response_model=HttpScanAssistantResponse)
 async def scan_and_chat(payload: HttpScanAssistantRequest) -> HttpScanAssistantResponse:
     """Scan a capture and generate chatbot dialogue from diagnosis result."""
+    # Try to auto-detect multiple regions in the image for multi-crop analysis
+    region_detector = _get_region_detector()
+    if region_detector:
+        try:
+            detected_regions = await region_detector.detect_regions(
+                base64_image=_strip_data_url_prefix(payload.base64_image)
+            )
+            if len(detected_regions) > 1:
+                # If multiple regions detected, use multi-region endpoint
+                logger.info("Auto-detected %d regions in image, using multi-region analysis", len(detected_regions))
+                multi_payload = HttpScanAssistantMultiRequest(
+                    source=payload.source,
+                    grid_id=payload.grid_id,
+                    regions=detected_regions,
+                    user_prompt=payload.user_prompt,
+                )
+                multi_response = await scan_and_chat_multi(multi_payload)
+                # Convert multi-response to single-response format (use first region)
+                first_result = multi_response.regions_results[0] if multi_response.regions_results else HttpScanResponse(
+                    disease="Unknown",
+                    severity=0,
+                    confidence=0,
+                    spread_risk="Low",
+                )
+                return HttpScanAssistantResponse(
+                    **first_result.model_dump(),
+                    assistant_reply=multi_response.consolidated_assistant_reply,
+                )
+        except Exception as e:
+            logger.warning("Auto-detect regions failed, falling back to single-region: %s", e)
+
+    # Fallback to single full-image region
     bbox = BoundingBox(
         x=0.0,
         y=0.0,
@@ -363,6 +418,76 @@ async def scan_and_chat(payload: HttpScanAssistantRequest) -> HttpScanAssistantR
     except Exception as exc:
         logger.exception("Assistant scan failed: %s", exc)
         raise HTTPException(status_code=500, detail="Assistant scan failed") from exc
+
+
+@router.post("/api/assistant/scan-multi", response_model=HttpScanAssistantMultiResponse)
+async def scan_and_chat_multi(payload: HttpScanAssistantMultiRequest) -> HttpScanAssistantMultiResponse:
+    """Multi-region scan and chatbot dialogue for photos with multiple plants.
+
+    Each region is processed independently, then a consolidated assistant
+    reply is generated addressing all detected crops.
+    """
+    # Process all regions concurrently through pipeline
+    tasks = [
+        _run_scan_pipeline(
+            cropped_image_b64=_strip_data_url_prefix(region.cropped_image_b64),
+            bbox=region.bbox,
+            grid_id=payload.grid_id,
+        )
+        for region in payload.regions
+    ]
+    raw_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    # Build scan results for each region
+    regions_results: list[HttpScanResponse] = []
+    region_diagnoses: list[dict[str, Any]] = []
+
+    for i, raw_result in enumerate(raw_results):
+        bbox = payload.regions[i].bbox
+        pipeline_error = None
+
+        if isinstance(raw_result, tuple):
+            raw_result, pipeline_error = raw_result
+        elif isinstance(raw_result, Exception):
+            raw_result = _fallback_raw_result(str(raw_result))
+
+        result = _build_scan_result(raw_result, bbox, i)
+        regions_results.append(_to_http_scan_response(result, raw_result, payload.grid_id))
+        region_diagnoses.append(result.model_dump())
+
+        # Record abnormal scans
+        await _record_abnormal_scan(result, payload.grid_id)
+
+    # Generate consolidated assistant dialogue
+    assistant_pipeline = _get_assistant_pipeline()
+
+    if assistant_pipeline is None:
+        assistant_reason = _assistant_pipeline_init_error or "assistant pipeline unavailable"
+        consolidated_reply = build_farmer_fallback_dialogue(
+            region_diagnoses[0] if region_diagnoses else {},
+            payload.user_prompt,
+            assistant_reason,
+        )
+    else:
+        try:
+            llm_svc = LLMService()
+            consolidated_reply = await llm_svc.generate_consolidated_assistant_dialogue(
+                scan_results=region_diagnoses,
+                user_prompt=payload.user_prompt,
+            )
+        except Exception as exc:
+            logger.exception("Consolidated dialogue generation failed: %s", exc)
+            consolidated_reply = build_farmer_fallback_dialogue(
+                region_diagnoses[0] if region_diagnoses else {},
+                payload.user_prompt,
+                str(exc),
+            )
+
+    return HttpScanAssistantMultiResponse(
+        frame_number=0,
+        regions_results=regions_results,
+        consolidated_assistant_reply=consolidated_reply,
+    )
 
 
 @router.websocket("/ws/scan")
