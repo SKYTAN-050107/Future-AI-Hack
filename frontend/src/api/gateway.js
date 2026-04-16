@@ -1,6 +1,3 @@
-const DEFAULT_BACKEND_URL = 'http://localhost:8000'
-const BACKEND_URL = String(import.meta.env.VITE_DIAGNOSIS_API_URL || DEFAULT_BACKEND_URL).replace(/\/+$/, '')
-
 function normalizeBase64Image(value) {
   const input = String(value || '').trim()
   if (!input) {
@@ -17,7 +14,7 @@ function normalizeBase64Image(value) {
 async function requestJson(path, options = {}) {
   let response = null
   try {
-    response = await fetch(`${BACKEND_URL}${path}`, {
+    response = await fetch(path, {
       ...options,
       headers: {
         Accept: 'application/json',
@@ -26,7 +23,7 @@ async function requestJson(path, options = {}) {
       },
     })
   } catch {
-    throw new Error(`Cannot reach diagnosis backend at ${BACKEND_URL}. Start backend service and retry.`)
+    throw new Error('Cannot reach diagnosis backend on current origin. Ensure backend proxy is running and retry.')
   }
 
   let payload = null

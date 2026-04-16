@@ -3,10 +3,16 @@ import { useNavigate } from 'react-router-dom'
 import { IconArrowLeft, IconSparkles } from '../../components/icons/UiIcons'
 
 const PENDING_CAPTURE_KEY = 'pg_pending_scan_capture_v1'
-const DEFAULT_BACKEND_URL = 'http://localhost:8000'
-const BACKEND_URL = String(import.meta.env.VITE_DIAGNOSIS_API_URL || DEFAULT_BACKEND_URL).replace(/\/+$/, '')
-const WS_SCAN_URL = `${BACKEND_URL.replace(/^http/i, 'ws')}/ws/scan`
 const LIVE_FRAME_INTERVAL_MS = 1300
+
+function resolveWsScanUrl() {
+  if (typeof window === 'undefined') {
+    return '/ws/scan'
+  }
+
+  const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws'
+  return `${scheme}://${window.location.host}/ws/scan`
+}
 
 function formatCaptureTime(date) {
   return new Intl.DateTimeFormat('en-MY', {
@@ -140,7 +146,7 @@ export default function Scanner() {
     closeLiveSocket()
     stopLiveLoop()
 
-    const ws = new WebSocket(WS_SCAN_URL)
+    const ws = new WebSocket(resolveWsScanUrl())
     wsRef.current = ws
     setStatusMessage('Connecting realtime scanner...')
 
