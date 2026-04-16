@@ -5,6 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:backend:diagnosis": "cd ../backend/diagnosis && ../.venv/bin/python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000",
+    "dev:backend:swarm": "cd ../backend/swarm && ../.venv/bin/python main.py",
+    "dev:backend": "concurrently -k -n DIAGNOSIS,SWARM -c blue,magenta \"npm:dev:backend:diagnosis\" \"npm:dev:backend:swarm\"",
+    "dev:full": "concurrently -k -n FRONTEND,DIAGNOSIS,SWARM -c green,blue,magenta \"npm:dev\" \"npm:dev:backend:diagnosis\" \"npm:dev:backend:swarm\"",
     "build": "vite build",
     "preview": "vite preview"
   },
@@ -19,6 +23,7 @@
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.4.1",
+    "concurrently": "^9.2.1",
     "vite": "^5.4.19",
     "vite-plugin-pwa": "^1.2.0"
   }

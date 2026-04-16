@@ -1,139 +1,77 @@
-# PadiGuard AI Diagnosis Backend
+# PadiGuard Diagnosis Backend
 
-实时病虫害诊断后端（FastAPI + Google ADK + Vertex AI），通过 `WS /ws/scan` 接收前端裁剪图并返回结构化诊断结果。
+FastAPI backend for crop diagnosis, assistant responses, weather intelligence, treatment ROI, inventory, and dashboard aggregation.
 
-新增：支持 `POST /api/assistant/scan`，用于“拍照后直跳 Chatbot”场景，返回诊断结果 + Gemini 对话回复。
+## Runtime Surface
 
-## Current Diagnosis Flow (最新)
+HTTP routes:
 
-每个 region 走同一条 ADK 顺序流水线：
+- `GET /health`
+- `POST /api/scan`
+- `POST /api/assistant/scan`
+- `POST /api/assistant/scan-multi`
+- `POST /api/assistant/message`
+- `GET /api/weather`
+- `POST /api/treatment`
+- `GET /api/inventory`
+- `PATCH /api/inventory/{item_id}`
+- `POST /api/dashboard/summary`
 
-1. `CropEmbedAgent`：base64 图像解码 -> Vertex AI Multimodal Embedding（1408 维）
-2. `VectorMatchAgent`：Vertex AI Vector Search Top-K 检索 + 置信度阈值过滤
-3. `ReasoningAgent`：使用最高分候选 `id` 到 Firestore 查询 `cropType`/`disease` 后生成最终诊断
+WebSocket route:
 
-> 当前主诊断路径是 **Vector-first, Firestore-enriched**。`services/llm_service.py` 仅在 `/api/assistant/scan` 的对话增强链路中调用。
+- `WS /ws/scan`
 
-## Runtime Architecture
+## Diagnosis Pipeline
 
-```text
-Frontend (MediaPipe bbox + crop b64)
-        |
-        |  WS /ws/scan
-        v
-FastAPI Router
-  - parse ScanFrame
-  - concurrent per-region pipeline
-        |
-        v
-LiveScanPipeline (Google ADK SequentialAgent)
-  CropEmbed -> VectorMatch -> Reasoning
-        |
-        v
-ScanResponse (frame_number + results[])
-        |
-        +--> if is_abnormal: Firestore scanReports + grids update
+Each crop region is processed through the same ADK pipeline:
 
-      Scanner -> Chatbot flow:
-      Frontend capture -> POST /api/assistant/scan -> LiveScanPipeline -> AssistantReplyAgent -> assistant reply
-```
+1. `CropEmbedAgent`: image region to embedding.
+2. `VectorMatchAgent`: embedding to nearest candidates from Vector Search.
+3. `ReasoningAgent`: top candidate enrichment and diagnosis shaping.
 
-## WebSocket Contract
+The REST and WebSocket scanner routes both use this pipeline.
 
-### Client -> Server (`ScanFrame`)
+## Assistant Flows
 
-```json
-{
-  "grid_id": "section_A1",
-  "frame_number": 120,
-  "regions": [
-    {
-      "cropped_image_b64": "...",
-      "bbox": {
-        "x": 0.1,
-        "y": 0.2,
-        "width": 0.3,
-        "height": 0.4,
-        "mediapipe_label": "leaf",
-        "detection_score": 0.9
-      }
-    }
-  ]
-}
-```
+- `POST /api/assistant/scan`: photo diagnosis plus generated assistant reply.
+- `POST /api/assistant/scan-multi`: multi-region photo diagnosis and consolidated reply.
+- `POST /api/assistant/message`: text-only assistant message based on real scan history.
 
-## REST Assistant Contract
+## Agronomy and Business Flows
 
-### Client -> Server (`POST /api/assistant/scan`)
+- `GET /api/weather`: forecast and spray advisory from Tomorrow.io.
+- `POST /api/treatment`: treatment recommendation and ROI from market + inventory + weather context.
+- `GET /api/inventory`: user inventory from Firestore.
+- `PATCH /api/inventory/{item_id}`: update inventory quantity.
+- `POST /api/dashboard/summary`: aggregated weather, zone health, and financial summary.
 
-```json
-{
-  "source": "camera",
-  "grid_id": "section_A1",
-  "base64_image": "...",
-  "user_prompt": "I just took this photo. Please explain what to do next."
-}
-```
+## Key Configuration
 
-### Server -> Client
+Primary settings are in `config/settings.py`.
 
-```json
-{
-  "disease": "Apple Scab",
-  "severity": 82,
-  "confidence": 91,
-  "spread_risk": "High",
-  "zone": "section_A1",
-  "crop_type": "Apple",
-  "treatment_plan": "Consult agrologist",
-  "assistant_reply": "I analyzed your photo..."
-}
-```
-
-### Server -> Client (`ScanResponse`)
-
-```json
-{
-  "frame_number": 120,
-  "results": [
-    {
-      "cropType": "Rice",
-      "disease": "Rice Blast",
-      "severity": "Moderate",
-      "severityScore": 0.91,
-      "treatmentPlan": "Reference image: gs://...",
-      "survivalProb": 0.6,
-      "is_abnormal": true,
-      "bbox": {
-        "x": 0.1,
-        "y": 0.2,
-        "width": 0.3,
-        "height": 0.4,
-        "mediapipe_label": "leaf",
-        "detection_score": 0.9
-      }
-    }
-  ]
-}
-```
-
-## Key Env Variables
-
-`config/settings.py` 当前依赖：
+Core:
 
 - `GCP_PROJECT_ID`
-- `GCP_REGION` (default: `us-central1`)
-- `GOOGLE_APPLICATION_CREDENTIALS` (optional string path, but usually needed for local run)
+- `GCP_REGION`
+- `GOOGLE_APPLICATION_CREDENTIALS`
 - `VECTOR_SEARCH_INDEX_ENDPOINT`
 - `VECTOR_SEARCH_DEPLOYED_INDEX_ID`
-- `VECTOR_SEARCH_CONFIDENCE_THRESHOLD` (default `0.65`)
-- `VECTOR_SEARCH_FAST_MATCH_THRESHOLD` (default `0.85`)
-- `FIRESTORE_GRID_COLLECTION` (default `grids`)
-- `FIRESTORE_REPORT_COLLECTION` (default `scanReports`)
-- `FIRESTORE_CANDIDATE_COLLECTION` (default `candidateMetadata`，文档 ID 需等于 Vector candidate id)
-- `DEFAULT_TOP_K` (default `5`)
+
+Firestore:
+
+- `FIRESTORE_GRID_COLLECTION`
+- `FIRESTORE_REPORT_COLLECTION`
+- `FIRESTORE_CANDIDATE_COLLECTION`
+
+External services:
+
+- `TOMORROW_IO_API_KEY`
+- `TOMORROW_IO_BASE_URL`
+- `MCP_SERVER_URL`
 
 ## Local Run
+
+Backend only:
 
 ```bash
 cd backend/diagnosis
@@ -141,12 +79,18 @@ pip install -r requirements.txt
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-健康检查：`GET /health`
+Frontend + backend one command (from frontend workspace):
 
-## Upload Metadata To Firestore
+```bash
+cd frontend
+npm run dev:full
+```
 
-When ReasoningAgent receives a Vector Search candidate id, it reads diagnosis labels from Firestore.
-You can bulk upload your metadata JSON/JSONL file with:
+This runs Vite and diagnosis backend together; Vite proxies `/api`, `/health`, and `/ws` to the backend target.
+
+## Firestore Candidate Metadata Upload
+
+Use this script to upload candidate metadata referenced by vector IDs:
 
 ```bash
 cd backend/diagnosis
@@ -155,37 +99,24 @@ python scripts/upload_candidate_metadata.py --input ../../my_metadata.json
 
 Optional flags:
 
-- `--collection candidateMetadata` (default from `.env` -> `FIRESTORE_CANDIDATE_COLLECTION`)
-- `--id-field id` (field used as Firestore document id)
-- `--dry-run` (validate without writing)
+- `--collection candidateMetadata`
+- `--id-field id`
+- `--dry-run`
 
-Required data rule:
-
-- Every item must include `id`, and that value must match Vector Search neighbor id.
-
-## Project Structure (Diagnosis Module)
+## Module Layout
 
 ```text
 backend/diagnosis/
 ├── main.py
 ├── api/router.py
-├── orchestration/pipeline.py
-├── agents/
-│   ├── assistant_reply_agent.py
-│   ├── crop_embed_agent.py
-│   ├── vector_match_agent.py
-│   └── reasoning_agent.py
-├── orchestration/
-│   ├── assistant_pipeline.py
-│   └── pipeline.py
-├── services/
-│   ├── embedding_service.py
-│   ├── vector_search_service.py
-│   ├── firestore_service.py
-│   └── llm_service.py
-├── models/
-│   ├── scan_models.py
-│   └── candidate.py
 ├── config/settings.py
-└── tests/test_pipeline.py
+├── models/scan_models.py
+├── orchestration/pipeline.py
+├── services/
+│   ├── weather_service.py
+│   ├── treatment_service.py
+│   ├── inventory_service.py
+│   ├── dashboard_service.py
+│   └── assistant_message_service.py
+└── tests/
 ```

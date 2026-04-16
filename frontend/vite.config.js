@@ -5,6 +5,7 @@ import { VitePWA } from 'vite-plugin-pwa'
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const backendTarget = String(env.VITE_DIAGNOSIS_API_URL || 'http://localhost:8000').trim()
+  const swarmTarget = String(env.VITE_SWARM_API_URL || 'http://localhost:3400').trim()
 
   return {
     plugins: [
@@ -83,6 +84,11 @@ export default defineConfig(({ mode }) => {
           target: backendTarget,
           ws: true,
           changeOrigin: true,
+        },
+        '/swarm-api': {
+          target: swarmTarget,
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/swarm-api/, '/api'),
         },
       },
     },

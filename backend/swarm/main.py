@@ -11,6 +11,7 @@ Usage:
 """
 
 import asyncio
+import os
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -19,6 +20,7 @@ BACKEND_ENV_PATH = Path(__file__).resolve().parents[1] / ".env"
 load_dotenv(dotenv_path=BACKEND_ENV_PATH)
 
 from genkit.ai import Genkit
+from genkit.ai._server import ServerSpec
 
 from schemas.orchestrator import SwarmInput, SwarmOutput
 from schemas.spatial import PredictedBufferZone
@@ -38,7 +40,19 @@ from agents.spatial_propagation import register_spatial_agent, SpatialInput
 
 
 # ── Initialize Genkit (LLM calls go through config/llm.py) ───────
-ai = Genkit()
+# Genkit reflection server only starts in dev mode.
+os.environ.setdefault("GENKIT_ENV", "dev")
+
+SWARM_HOST = "0.0.0.0"
+SWARM_PORT = 3400
+
+ai = Genkit(
+    reflection_server_spec=ServerSpec(
+        scheme="http",
+        host=SWARM_HOST,
+        port=SWARM_PORT,
+    )
+)
 
 
 # ── Register all tools ────────────────────────────────────────────
@@ -152,4 +166,4 @@ async def swarm_orchestrator(input_data: SwarmInput) -> dict:
 
 # ── Run the Genkit server ─────────────────────────────────────────
 if __name__ == "__main__":
-    ai.start()
+    ai.run_main()
