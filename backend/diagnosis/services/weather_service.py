@@ -147,6 +147,13 @@ class WeatherService:
                 hourly=hourly,
             )
 
+            # Temperature high/low from daily values
+            temp_high = self._safe_int(values.get("temperatureMax") or values.get("temperatureApparentMax"))
+            temp_low = self._safe_int(values.get("temperatureMin") or values.get("temperatureApparentMin"))
+
+            # Extract hourly entries for this day
+            hourly_detail = self._hourly_for_day(day_iso=start_time, hourly=hourly)
+
             results.append(
                 {
                     "day": label,
@@ -155,10 +162,51 @@ class WeatherService:
                     "wind": f"{int(round(wind_speed))} km/h {self._degrees_to_compass(wind_dir)}",
                     "sprayWindow": spray_window,
                     "safe": safe,
+                    "temperature_high": temp_high,
+                    "temperature_low": temp_low,
+                    "hourly": hourly_detail,
                 }
             )
 
         return results
+
+    def _hourly_for_day(self, day_iso: str, hourly: list[dict]) -> list[dict]:
+        """Extract hourly weather entries that belong to the given day."""
+        target_date = self._parse_iso_datetime(day_iso)
+        if target_date is None:
+            return []
+
+        entries: list[dict] = []
+        for entry in hourly:
+            stamp = self._parse_iso_datetime(str((entry or {}).get("time") or ""))
+            if stamp is None or stamp.date() != target_date.date():
+                continue
+            values = (entry or {}).get("values") or {}
+            prob = int(round(float(values.get("precipitationProbability", 0.0))))
+            wind_kmh = int(round(float(values.get("windSpeed", 0.0)) * 3.6))
+            condition = self._weather_code_to_label(values.get("weatherCode"))
+            safe = prob < 35 and wind_kmh < 18
+
+            entries.append({
+                "time": stamp.strftime("%I:%M %p").lstrip("0"),
+                "temperature_c": int(round(float(values.get("temperature", 0.0)))),
+                "rain_chance": max(0, min(100, prob)),
+                "wind_kmh": wind_kmh,
+                "condition": condition,
+                "safe_to_spray": safe,
+            })
+
+        return entries
+
+    @staticmethod
+    def _safe_int(value: object) -> int | None:
+        """Convert a value to int, returning None on failure."""
+        if value is None:
+            return None
+        try:
+            return int(round(float(value)))
+        except (TypeError, ValueError):
+            return None
 
     @staticmethod
     def _rain_expected_within_hours(hourly: list[dict]) -> float | None:

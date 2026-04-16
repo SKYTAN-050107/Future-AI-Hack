@@ -123,6 +123,17 @@ class HttpScanAssistantMultiResponse(BaseModel):
     consolidated_assistant_reply: str = Field(description="Assistant dialogue addressing all regions")
 
 
+class HourlyEntry(BaseModel):
+    """One hour slot within a forecast day."""
+
+    time: str
+    temperature_c: int
+    rain_chance: int = Field(..., ge=0, le=100)
+    wind_kmh: int
+    condition: str
+    safe_to_spray: bool
+
+
 class WeatherForecastEntry(BaseModel):
     """One day forecast entry for weather page rendering."""
 
@@ -132,6 +143,9 @@ class WeatherForecastEntry(BaseModel):
     wind: str
     sprayWindow: str
     safe: bool
+    temperature_high: int | None = None
+    temperature_low: int | None = None
+    hourly: list[HourlyEntry] = Field(default_factory=list)
 
 
 class WeatherOutlookResponse(BaseModel):

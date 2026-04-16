@@ -109,6 +109,7 @@ Response shape:
 
 Route:
 - `GET /api/weather?lat=<float>&lng=<float>&days=<int>`
+- `GET /api/v1/weather?lat=<float>&lng=<float>&days=<int>` (versioned alias)
 
 Frontend call:
 - `getWeatherOutlook({ lat, lng, days })`
@@ -133,11 +134,53 @@ Response shape:
       "rainChance": 76,
       "wind": "12 km/h SW",
       "sprayWindow": "Delay spraying",
-      "safe": false
+      "safe": false,
+      "temperature_high": 33,
+      "temperature_low": 25,
+      "hourly": [
+        {
+          "time": "9:00 AM",
+          "temperature_c": 27,
+          "rain_chance": 30,
+          "wind_kmh": 8,
+          "condition": "Partly Cloudy",
+          "safe_to_spray": true
+        }
+      ]
     }
   ]
 }
 ```
+
+## 5b) Meteorologist AI Advisory
+
+Route:
+- `POST /swarm-api/runAction` (proxied to swarm :3400)
+
+Frontend call:
+- `getMeteorologistAdvisory({ lat, lng, cropType })`
+
+Request body:
+
+```json
+{
+  "key": "/flow/meteorologist_flow",
+  "input": {
+    "lat": 3.14,
+    "lng": 101.7,
+    "crop_type": "Rice"
+  }
+}
+```
+
+Response shape:
+
+```json
+{
+  "result": "🌦️ Weather Advisory for your Rice farm...\n\n✅ SAFE to spray now..."
+}
+```
+
 
 ## 6) Treatment and ROI
 

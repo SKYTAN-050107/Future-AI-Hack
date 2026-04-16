@@ -236,4 +236,25 @@ export const gateway = {
       }),
     })
   },
+
+  getMeteorologistAdvisory: async ({ lat, lng, cropType }) => {
+    const safeLat = toFiniteNumber(lat)
+    const safeLng = toFiniteNumber(lng)
+
+    if (safeLat === null || safeLng === null) {
+      throw new Error('lat and lng are required for meteorologist advisory')
+    }
+
+    return requestJson('/swarm-api/runAction', {
+      method: 'POST',
+      body: JSON.stringify({
+        key: '/flow/meteorologist_flow',
+        input: {
+          lat: safeLat,
+          lng: safeLng,
+          crop_type: String(cropType || 'Rice').trim(),
+        },
+      }),
+    })
+  },
 }

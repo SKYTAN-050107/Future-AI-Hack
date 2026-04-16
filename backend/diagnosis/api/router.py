@@ -603,6 +603,17 @@ async def weather_outlook(
     return WeatherOutlookResponse.model_validate(result)
 
 
+@router.get("/api/v1/weather", response_model=WeatherOutlookResponse)
+async def weather_outlook_v1(
+    lat: float = Query(..., description="Latitude"),
+    lng: float = Query(..., description="Longitude"),
+    days: int = Query(7, ge=1, le=10),
+) -> WeatherOutlookResponse:
+    """Versioned weather endpoint — delegates to the canonical handler."""
+    return await weather_outlook(lat=lat, lng=lng, days=days)
+
+
+
 @router.post("/api/treatment", response_model=TreatmentPlanResponse)
 async def treatment_plan(payload: TreatmentPlanRequest) -> TreatmentPlanResponse:
     """Real treatment and ROI endpoint backed by market and inventory data."""
