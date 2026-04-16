@@ -13,6 +13,9 @@ function normalizeBase64Image(value) {
 
 async function requestJson(path, options = {}) {
   let response = null
+  const method = String(options?.method || 'GET').toUpperCase()
+
+  console.debug('[API request]', { method, path })
   try {
     response = await fetch(path, {
       ...options,
@@ -34,9 +37,18 @@ async function requestJson(path, options = {}) {
   }
 
   if (!response.ok) {
-    const message = payload?.detail || payload?.error?.message || `Request failed (${response.status})`
+    const message = (
+      (typeof payload?.error === 'string' ? payload.error : null)
+      || payload?.error?.message
+      || (typeof payload?.detail === 'string' ? payload.detail : null)
+      || payload?.detail?.error
+      || `Request failed (${response.status})`
+    )
+    console.error('[API error]', { method, path, status: response.status, message, payload })
     throw new Error(message)
   }
+
+  console.debug('[API response]', { method, path, status: response.status, payload })
 
   return payload
 }
@@ -200,6 +212,33 @@ export const gateway = {
       body: JSON.stringify({
         user_id: safeUserId,
         liters: safeLiters,
+      }),
+    })
+  },
+
+  createInventoryItem: async ({ userId, name, quantity, usage, unit }) => {
+    const safeUserId = String(userId || '').trim()
+    const safeName = String(name || '').trim()
+    const safeUsage = String(usage || '').trim()
+    const safeUnit = String(unit || '').trim()
+    const safeQuantity = toFiniteNumber(quantity)
+
+    if (!safeUserId || !safeName || !safeUsage || !safeUnit) {
+      throw new Error('userId, name, usage, and unit are required for inventory creation')
+    }
+
+    if (safeQuantity === null || safeQuantity < 0) {
+      throw new Error('quantity must be a non-negative number')
+    }
+
+    return requestJson('/api/inventory', {
+      method: 'POST',
+      body: JSON.stringify({
+        user_id: safeUserId,
+        name: safeName,
+        quantity: safeQuantity,
+        usage: safeUsage,
+        unit: safeUnit,
       }),
     })
   },

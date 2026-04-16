@@ -422,3 +422,94 @@ Response shape:
   }
 }
 ```
+
+- Structured backend errors are also supported:
+
+```json
+{
+  "success": false,
+  "error": "Human-readable error message",
+  "detail": "Human-readable error message"
+}
+```
+
+## Versioned and Alias Endpoints
+
+- Inventory:
+  - `POST /api/inventory` (alias of v1 create)
+  - `POST /api/v1/inventory`
+  - `GET /api/inventory?user_id=<string>` (legacy list contract)
+  - `GET /api/v1/inventory?user_id=<string>` (canonical v1 item schema)
+  - `PATCH /api/inventory/{item_id}` (legacy absolute liters update)
+  - `PATCH /api/v1/inventory/{item_id}` (delta `quantity_change` update)
+
+### v1 Inventory Create request
+
+```json
+{
+  "user_id": "uid_123",
+  "name": "Nativo 75WG",
+  "quantity": 3.5,
+  "usage": "fungicide",
+  "unit": "liters"
+}
+```
+
+### v1 Inventory Create response
+
+```json
+{
+  "success": true,
+  "item": {
+    "id": "auto_doc_id",
+    "name": "Nativo 75WG",
+    "quantity": 3.5,
+    "usage": "fungicide",
+    "unit": "liters",
+    "created_at": "2026-04-17T10:00:00+00:00",
+    "updated_at": "2026-04-17T10:00:00+00:00"
+  }
+}
+```
+
+### v1 Inventory delta update request
+
+```json
+{
+  "user_id": "uid_123",
+  "quantity_change": -1.0
+}
+```
+
+- Zones summary:
+  - `GET /api/zones`
+  - `GET /api/zones/summary`
+  - `GET /api/v1/zones/summary`
+
+Response:
+
+```json
+{
+  "total_zones": 8,
+  "healthy": 5,
+  "warning": 2,
+  "unhealthy": 1
+}
+```
+
+- Weather:
+  - `GET /api/weather` keeps existing rich forecast contract used by current UI
+  - `GET /api/v1/weather` provides simplified widget contract
+
+### v1 Weather response
+
+```json
+{
+  "temperature": 29,
+  "humidity": 84,
+  "wind_speed": 12,
+  "rain_probability": 70,
+  "safe_to_spray": false,
+  "recommendation": "Rain expected within 2 hours. Delay spraying and recheck this evening."
+}
+```

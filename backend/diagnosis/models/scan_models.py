@@ -163,6 +163,17 @@ class WeatherOutlookResponse(BaseModel):
     forecast: list[WeatherForecastEntry] = Field(default_factory=list)
 
 
+class WeatherV1Response(BaseModel):
+    """Simplified weather payload for v1 dashboard widget contract."""
+
+    temperature: float
+    humidity: int = Field(..., ge=0, le=100)
+    wind_speed: float = Field(..., ge=0.0)
+    rain_probability: int = Field(..., ge=0, le=100)
+    safe_to_spray: bool
+    recommendation: str
+
+
 class TreatmentPlanRequest(BaseModel):
     """Input contract for treatment and ROI analysis."""
 
@@ -224,6 +235,55 @@ class InventoryUpdateResponse(BaseModel):
     updated: bool
 
 
+class InventoryCreateRequest(BaseModel):
+    """Payload for creating an inventory item in v1 endpoints."""
+
+    user_id: str = Field(..., min_length=1)
+    name: str = Field(..., min_length=1)
+    quantity: float = Field(..., ge=0.0)
+    usage: str = Field(..., min_length=1)
+    unit: str = Field(..., min_length=1)
+
+
+class InventoryCreateResponse(BaseModel):
+    """Response returned after creating an inventory item."""
+
+    success: bool = True
+    item: "InventoryV1ItemResponse"
+
+
+class InventoryStockUpdateRequest(BaseModel):
+    """Delta-based stock patch payload for v1 endpoints."""
+
+    user_id: str = Field(..., min_length=1)
+    quantity_change: float
+
+
+class InventoryV1ItemResponse(BaseModel):
+    """Canonical v1 inventory item shape."""
+
+    id: str
+    name: str
+    quantity: float = Field(..., ge=0.0)
+    usage: str
+    unit: str
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class InventoryV1ListResponse(BaseModel):
+    """Canonical v1 list payload sorted by updated_at descending."""
+
+    items: list[InventoryV1ItemResponse] = Field(default_factory=list)
+
+
+class InventoryStockUpdateResponse(BaseModel):
+    """Result of a delta stock update operation in v1."""
+
+    success: bool = True
+    item: InventoryV1ItemResponse
+
+
 class DashboardSummaryRequest(BaseModel):
     """Input contract for dashboard aggregate endpoint."""
 
@@ -273,6 +333,22 @@ class DashboardSummaryResponse(BaseModel):
     weatherSnapshot: DashboardWeatherSnapshot
     zoneHealthSummary: DashboardZoneHealthSummary
     financialSummary: DashboardFinancialSummary
+
+
+class ZoneHealthSummaryResponse(BaseModel):
+    """Zone health counters for dashboard summary cards."""
+
+    total_zones: int = Field(..., ge=0)
+    healthy: int = Field(..., ge=0)
+    warning: int = Field(..., ge=0)
+    unhealthy: int = Field(..., ge=0)
+
+
+class StandardErrorResponse(BaseModel):
+    """Structured API error payload."""
+
+    success: bool = False
+    error: str
 
 
 class AssistantMessageRequest(BaseModel):

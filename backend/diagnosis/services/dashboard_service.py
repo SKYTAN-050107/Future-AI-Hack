@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-
-from google.cloud import firestore
+import logging
 
 from config import get_settings
+from services.firebase_admin_service import get_firestore_client
 from services.inventory_service import InventoryService
 from services.treatment_service import TreatmentService
 from services.weather_service import WeatherService
+
+logger = logging.getLogger(__name__)
 
 
 class DashboardService:
@@ -17,7 +19,7 @@ class DashboardService:
 
     def __init__(self) -> None:
         settings = get_settings()
-        self._db = firestore.Client(project=settings.GCP_PROJECT_ID)
+        self._db = get_firestore_client()
         self._grid_collection = settings.FIRESTORE_GRID_COLLECTION
         self._inventory_svc = InventoryService()
         self._weather_svc = WeatherService()
@@ -79,6 +81,43 @@ class DashboardService:
                 "lowStockLiters": (low_stock or {}).get("liters"),
             },
         }
+
+    async def get_zone_summary_counts(self, user_id: str | None = None) -> dict:
+        """Return zone counters grouped into healthy, warning, unhealthy."""
+        return await asyncio.to_thread(self._get_zone_summary_counts_sync, user_id)
+
+    def _get_zone_summary_counts_sync(self, user_id: str | None) -> dict:
+        query = self._db.collection(self._grid_collection)
+        if user_id:
+            query = query.where("ownerUid", "==", user_id)
+
+        docs = query.stream()
+
+        summary = {
+            "total_zones": 0,
+            "healthy": 0,
+            "warning": 0,
+            "unhealthy": 0,
+        }
+
+        for doc in docs:
+            data = doc.to_dict() or {}
+            status = self._normalize_zone_status(
+                data.get("healthState") or data.get("healthStatus") or data.get("status")
+            )
+
+            summary["total_zones"] += 1
+            summary[status] += 1
+
+        logger.info(
+            "Firestore zones summary read: user_id=%s total=%d healthy=%d warning=%d unhealthy=%d",
+            user_id or "all",
+            summary["total_zones"],
+            summary["healthy"],
+            summary["warning"],
+            summary["unhealthy"],
+        )
+        return summary
 
     def _compute_zone_health_sync(self, user_id: str) -> dict:
         docs = (
@@ -151,3 +190,13 @@ class DashboardService:
             return float(value)
         except (TypeError, ValueError):
             return default
+
+    @staticmethod
+    def _normalize_zone_status(raw: object) -> str:
+        normalized = str(raw or "").strip().lower()
+
+        if normalized in {"infected", "critical", "high", "unhealthy"}:
+            return "unhealthy"
+        if normalized in {"at-risk", "at_risk", "risk", "warning", "moderate"}:
+            return "warning"
+        return "healthy"

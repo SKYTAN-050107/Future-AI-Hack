@@ -9,6 +9,7 @@ import logging
 import httpx
 
 from config import get_settings
+from services.llm_service import LLMService
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,7 @@ _WEATHER_CODE_TO_LABEL = {
 class WeatherSnapshot:
     condition: str
     temperature_c: int
+    humidity: int
     wind_kmh: int
     wind_direction: str
     rain_in_hours: float | None
@@ -51,6 +53,23 @@ class WeatherService:
         settings = get_settings()
         self._api_key = str(settings.TOMORROW_IO_API_KEY or "").strip()
         self._base_url = str(settings.TOMORROW_IO_BASE_URL or "").strip()
+        self._llm: LLMService | None = None
+        self._llm_init_error: str | None = None
+
+    def _get_llm_service(self) -> LLMService | None:
+        if self._llm is not None:
+            return self._llm
+        if self._llm_init_error is not None:
+            return None
+
+        try:
+            self._llm = LLMService()
+        except Exception as exc:
+            self._llm_init_error = str(exc)
+            logger.warning("LLMService unavailable for weather recommendations: %s", exc)
+            return None
+
+        return self._llm
 
     async def get_outlook(self, lat: float, lng: float, days: int = 7) -> dict:
         if not self._api_key:
@@ -68,18 +87,35 @@ class WeatherService:
 
         snapshot = self._build_snapshot(hourly=hourly)
         forecast = self._build_forecast(daily=daily, hourly=hourly, days=days)
+        recommendation = await self._generate_recommendation(snapshot)
 
         return {
             "rain_probability": snapshot.rain_probability,
             "best_spray_window": snapshot.best_spray_window,
             "advisory": snapshot.advisory,
+            "recommendation": recommendation,
             "condition": snapshot.condition,
             "temperatureC": snapshot.temperature_c,
+            "humidity": snapshot.humidity,
             "windKmh": snapshot.wind_kmh,
             "windDirection": snapshot.wind_direction,
             "rainInHours": snapshot.rain_in_hours,
             "safeToSpray": snapshot.safe_to_spray,
             "forecast": forecast,
+        }
+
+    async def get_outlook_v1(self, lat: float, lng: float, days: int = 7) -> dict:
+        """Return simplified weather schema for v1 dashboard clients."""
+        outlook = await self.get_outlook(lat=lat, lng=lng, days=days)
+        humidity = int(outlook.get("humidity") or self._extract_humidity_from_forecast(outlook.get("forecast") or []))
+
+        return {
+            "temperature": float(outlook.get("temperatureC") or 0.0),
+            "humidity": humidity,
+            "wind_speed": float(outlook.get("windKmh") or 0.0),
+            "rain_probability": int(outlook.get("rain_probability") or 0),
+            "safe_to_spray": bool(outlook.get("safeToSpray")),
+            "recommendation": str(outlook.get("recommendation") or outlook.get("advisory") or ""),
         }
 
     async def _fetch_weather_payload(self, lat: float, lng: float) -> dict:
@@ -98,6 +134,7 @@ class WeatherService:
     def _build_snapshot(self, hourly: list[dict]) -> WeatherSnapshot:
         current = (hourly[0] or {}).get("values") or {}
         current_prob = int(round(float(current.get("precipitationProbability", 0.0))))
+        humidity = int(round(float(current.get("humidity", 0.0))))
         wind_kmh = int(round(float(current.get("windSpeed", 0.0)) * 3.6))
         rain_in_hours = self._rain_expected_within_hours(hourly)
         condition = self._weather_code_to_label(current.get("weatherCode"))
@@ -110,6 +147,7 @@ class WeatherService:
         return WeatherSnapshot(
             condition=condition,
             temperature_c=int(round(float(current.get("temperature", 0.0)))),
+            humidity=max(0, min(100, humidity)),
             wind_kmh=wind_kmh,
             wind_direction=wind_direction,
             rain_in_hours=rain_in_hours,
@@ -310,3 +348,47 @@ class WeatherService:
         except ValueError:
             logger.warning("Failed to parse weather datetime: %s", value)
             return None
+
+    @staticmethod
+    def _extract_humidity_from_forecast(forecast: list[dict]) -> int:
+        if not forecast:
+            return 0
+
+        first_day = forecast[0] or {}
+        hourly = first_day.get("hourly") or []
+        if not hourly:
+            return 0
+
+        # Tomorrow.io hourly timeline doesn't always include humidity in UI contract payload,
+        # so we infer a stable value from the first available entry when present.
+        first_hour = hourly[0] or {}
+        value = first_hour.get("humidity")
+        if value is None:
+            return 0
+
+        try:
+            return max(0, min(100, int(round(float(value)))))
+        except (TypeError, ValueError):
+            return 0
+
+    async def _generate_recommendation(self, snapshot: WeatherSnapshot) -> str:
+        fallback = snapshot.advisory
+        llm = self._get_llm_service()
+        if llm is None:
+            return fallback
+
+        try:
+            recommendation = await llm.generate_weather_recommendation(
+                temperature_c=snapshot.temperature_c,
+                humidity=snapshot.humidity,
+                wind_kmh=snapshot.wind_kmh,
+                rain_probability=snapshot.rain_probability,
+                rain_in_hours=snapshot.rain_in_hours,
+                safe_to_spray=snapshot.safe_to_spray,
+                best_spray_window=snapshot.best_spray_window,
+                advisory=snapshot.advisory,
+            )
+            return recommendation or fallback
+        except Exception as exc:
+            logger.warning("Gemini weather recommendation failed, using fallback: %s", exc)
+            return fallback

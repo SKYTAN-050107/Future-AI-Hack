@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
-
-from google.cloud import firestore
 
 from config import get_settings
+from services.firebase_admin_service import get_firestore_client
 
 
 class AssistantMessageService:
@@ -15,7 +13,7 @@ class AssistantMessageService:
 
     def __init__(self) -> None:
         settings = get_settings()
-        self._db = firestore.Client(project=settings.GCP_PROJECT_ID)
+        self._db = get_firestore_client()
         self._report_collection = settings.FIRESTORE_REPORT_COLLECTION
 
     async def build_reply(self, *, user_prompt: str, user_id: str, zone: str | None = None) -> str:

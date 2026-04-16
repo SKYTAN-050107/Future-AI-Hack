@@ -178,6 +178,8 @@ export default function Weather() {
       .then((response) => {
         if (!active) return
 
+        console.log('[Weather API] outlook response', response)
+
         setWeatherData(response)
         const forecast = Array.isArray(response?.forecast)
           ? response.forecast.map((entry, index) => normalizeForecastEntry(entry, index))
@@ -203,6 +205,7 @@ export default function Weather() {
 
     getMeteorologistAdvisory({ lat, lng, cropType: 'Rice' })
       .then((response) => {
+        console.log('[Weather API] meteorologist advisory response', response)
         const text = typeof response?.result === 'string'
           ? response.result
           : typeof response === 'string'

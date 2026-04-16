@@ -7,7 +7,7 @@ import {
   IconSprout,
 } from '../../components/icons/UiIcons'
 import SectionHeader from '../../components/ui/SectionHeader'
-import { getInventory } from '../../api/inventory'
+import { createInventoryItem, getInventory } from '../../api/inventory'
 import { useSessionContext } from '../../hooks/useSessionContext'
 
 const FILTERS = ['All', 'Pesticides', 'Fungicides', 'Fertilizers']
@@ -71,6 +71,7 @@ export default function Inventory() {
   const [items, setItems] = useState([])
   const [lastUpdatedLabel, setLastUpdatedLabel] = useState('Unknown')
   const [error, setError] = useState('')
+  const [isCreatingItem, setIsCreatingItem] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -89,6 +90,8 @@ export default function Inventory() {
         if (!active) {
           return
         }
+
+        console.log('[Inventory API] list response', response)
 
         const nextItems = Array.isArray(response?.items)
           ? response.items.map(normalizeInventoryItem)
@@ -110,6 +113,68 @@ export default function Inventory() {
       active = false
     }
   }, [user?.uid])
+
+  async function handleAddInventory() {
+    const userId = String(user?.uid || '').trim()
+    if (!userId) {
+      setError('Sign in to add inventory.')
+      return
+    }
+
+    const name = window.prompt('Inventory name')
+    if (name === null) {
+      return
+    }
+
+    const quantityRaw = window.prompt('Quantity (number)')
+    if (quantityRaw === null) {
+      return
+    }
+
+    const usage = window.prompt('Usage (e.g. fertilizer, pesticide)')
+    if (usage === null) {
+      return
+    }
+
+    const unit = window.prompt('Unit (e.g. liters, kg)')
+    if (unit === null) {
+      return
+    }
+
+    const quantity = Number(quantityRaw)
+    if (!Number.isFinite(quantity) || quantity < 0) {
+      setError('Quantity must be a non-negative number.')
+      return
+    }
+
+    setIsCreatingItem(true)
+    setError('')
+
+    try {
+      const createResponse = await createInventoryItem({
+        userId,
+        name,
+        quantity,
+        usage,
+        unit,
+      })
+      console.log('[Inventory API] create response', createResponse)
+
+      const listResponse = await getInventory({ userId })
+      console.log('[Inventory API] refreshed list response', listResponse)
+
+      const nextItems = Array.isArray(listResponse?.items)
+        ? listResponse.items.map(normalizeInventoryItem)
+        : []
+
+      setItems(nextItems)
+      setLastUpdatedLabel(formatLastUpdated(listResponse?.last_updated_iso))
+    } catch (createError) {
+      setError(createError?.message || 'Unable to add inventory item')
+    } finally {
+      setIsCreatingItem(false)
+    }
+  }
 
   const lowStockCount = useMemo(
     () => items.filter((item) => item.liters < 5).length,
@@ -204,7 +269,13 @@ export default function Inventory() {
         })}
       </div>
 
-      <button type="button" className="pg-inventory-add-fab" aria-label="Add inventory item">
+      <button
+        type="button"
+        className="pg-inventory-add-fab"
+        aria-label="Add inventory item"
+        onClick={handleAddInventory}
+        disabled={isCreatingItem}
+      >
         <IconPlus className="pg-icon" />
       </button>
     </section>

@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from google.cloud import firestore
 
 from config import get_settings
+from services.firebase_admin_service import get_firestore_client
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,7 @@ class FirestoreService:
 
     def __init__(self) -> None:
         settings = get_settings()
-        self._db = firestore.Client(project=settings.GCP_PROJECT_ID)
+        self._db = get_firestore_client()
         self._report_col = settings.FIRESTORE_REPORT_COLLECTION
         self._grid_col = settings.FIRESTORE_GRID_COLLECTION
         self._candidate_col = settings.FIRESTORE_CANDIDATE_COLLECTION

@@ -12,9 +12,17 @@ HTTP routes:
 - `POST /api/assistant/scan-multi`
 - `POST /api/assistant/message`
 - `GET /api/weather`
+- `GET /api/v1/weather`
 - `POST /api/treatment`
+- `POST /api/inventory`
+- `POST /api/v1/inventory`
 - `GET /api/inventory`
+- `GET /api/v1/inventory`
 - `PATCH /api/inventory/{item_id}`
+- `PATCH /api/v1/inventory/{item_id}`
+- `GET /api/zones`
+- `GET /api/zones/summary`
+- `GET /api/v1/zones/summary`
 - `POST /api/dashboard/summary`
 
 WebSocket route:

@@ -16,6 +16,7 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse
 
 from models.scan_models import (
     AssistantMessageRequest,
@@ -27,14 +28,21 @@ from models.scan_models import (
     HttpScanAssistantResponse,
     HttpScanAssistantMultiRequest,
     HttpScanAssistantMultiResponse,
+    InventoryCreateRequest,
+    InventoryCreateResponse,
     InventoryListResponse,
+    InventoryStockUpdateRequest,
+    InventoryStockUpdateResponse,
     InventoryUpdateRequest,
     InventoryUpdateResponse,
+    InventoryV1ListResponse,
     HttpScanRequest,
     HttpScanResponse,
     ScanFrame,
     ScanResponse,
     ScanResult,
+    ZoneHealthSummaryResponse,
+    WeatherV1Response,
     TreatmentPlanRequest,
     TreatmentPlanResponse,
     WeatherOutlookResponse,
@@ -281,6 +289,17 @@ def _spread_risk_from_severity(severity_percent: int) -> str:
     if severity_percent >= 40:
         return "Medium"
     return "Low"
+
+
+def _error_response(status_code: int, message: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "success": False,
+            "error": message,
+            "detail": message,
+        },
+    )
 
 
 def _build_scan_result(raw_result: Any, bbox: BoundingBox, region_index: int) -> ScanResult:
@@ -583,34 +602,58 @@ async def weather_outlook(
     lat: float = Query(..., description="Latitude"),
     lng: float = Query(..., description="Longitude"),
     days: int = Query(7, ge=1, le=10),
-) -> WeatherOutlookResponse:
+) -> WeatherOutlookResponse | JSONResponse:
     """Real weather outlook endpoint for dashboard and weather pages."""
     service = _get_weather_service()
     if service is None:
-        raise HTTPException(
-            status_code=503,
-            detail=_weather_service_init_error or "weather service unavailable",
-        )
+        return _error_response(503, _weather_service_init_error or "weather service unavailable")
 
     try:
         result = await service.get_outlook(lat=lat, lng=lng, days=days)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _error_response(400, str(exc))
     except Exception as exc:
         logger.exception("Weather endpoint failed: %s", exc)
-        raise HTTPException(status_code=502, detail=f"Weather service failed: {exc}") from exc
+        return _error_response(502, f"Weather service failed: {exc}")
+
+    logger.info(
+        "Weather outlook response: lat=%.6f lng=%.6f days=%d safeToSpray=%s rainProbability=%s",
+        lat,
+        lng,
+        days,
+        result.get("safeToSpray"),
+        result.get("rain_probability"),
+    )
 
     return WeatherOutlookResponse.model_validate(result)
 
 
-@router.get("/api/v1/weather", response_model=WeatherOutlookResponse)
+@router.get("/api/v1/weather", response_model=WeatherV1Response)
 async def weather_outlook_v1(
     lat: float = Query(..., description="Latitude"),
     lng: float = Query(..., description="Longitude"),
     days: int = Query(7, ge=1, le=10),
-) -> WeatherOutlookResponse:
-    """Versioned weather endpoint — delegates to the canonical handler."""
-    return await weather_outlook(lat=lat, lng=lng, days=days)
+) -> WeatherV1Response | JSONResponse:
+    """Versioned weather endpoint with simplified widget contract fields."""
+    service = _get_weather_service()
+    if service is None:
+        return _error_response(503, _weather_service_init_error or "weather service unavailable")
+
+    try:
+        result = await service.get_outlook_v1(lat=lat, lng=lng, days=days)
+    except ValueError as exc:
+        return _error_response(400, str(exc))
+    except Exception as exc:
+        logger.exception("Weather v1 endpoint failed: %s", exc)
+        return _error_response(502, f"Weather service failed: {exc}")
+
+    logger.info(
+        "Weather v1 response: lat=%.6f lng=%.6f safe_to_spray=%s",
+        lat,
+        lng,
+        result.get("safe_to_spray"),
+    )
+    return WeatherV1Response.model_validate(result)
 
 
 
@@ -646,35 +689,118 @@ async def treatment_plan(payload: TreatmentPlanRequest) -> TreatmentPlanResponse
 
 
 @router.get("/api/inventory", response_model=InventoryListResponse)
-async def inventory_list(user_id: str = Query(..., min_length=1)) -> InventoryListResponse:
+async def inventory_list(user_id: str = Query(..., min_length=1)) -> InventoryListResponse | JSONResponse:
     """List user inventory from Firestore."""
     service = _get_inventory_service()
     if service is None:
-        raise HTTPException(
-            status_code=503,
-            detail=_inventory_service_init_error or "inventory service unavailable",
-        )
+        return _error_response(503, _inventory_service_init_error or "inventory service unavailable")
 
     try:
         result = await service.list_items(user_id=user_id)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _error_response(400, str(exc))
     except Exception as exc:
         logger.exception("Inventory list failed: %s", exc)
-        raise HTTPException(status_code=502, detail=f"Inventory service failed: {exc}") from exc
+        return _error_response(502, f"Inventory service failed: {exc}")
+
+    logger.info(
+        "Inventory list response: user_id=%s count=%d low_stock=%d",
+        user_id,
+        len(result.get("items") or []),
+        int(result.get("low_stock_count") or 0),
+    )
 
     return InventoryListResponse.model_validate(result)
 
 
+@router.get("/api/v1/inventory", response_model=InventoryV1ListResponse)
+async def inventory_list_v1(user_id: str = Query(..., min_length=1)) -> InventoryV1ListResponse | JSONResponse:
+    """List user inventory with canonical v1 schema sorted by updated_at."""
+    service = _get_inventory_service()
+    if service is None:
+        return _error_response(503, _inventory_service_init_error or "inventory service unavailable")
+
+    try:
+        result = await service.list_items_v1(user_id=user_id)
+    except ValueError as exc:
+        return _error_response(400, str(exc))
+    except Exception as exc:
+        logger.exception("Inventory v1 list failed: %s", exc)
+        return _error_response(502, f"Inventory service failed: {exc}")
+
+    logger.info("Inventory v1 list response: user_id=%s count=%d", user_id, len(result.get("items") or []))
+    return InventoryV1ListResponse.model_validate(result)
+
+
+@router.post("/api/inventory", response_model=InventoryCreateResponse)
+@router.post("/api/v1/inventory", response_model=InventoryCreateResponse)
+async def inventory_create(payload: InventoryCreateRequest) -> InventoryCreateResponse | JSONResponse:
+    """Create inventory stock item and persist to Firestore."""
+    service = _get_inventory_service()
+    if service is None:
+        return _error_response(503, _inventory_service_init_error or "inventory service unavailable")
+
+    try:
+        created_item = await service.create_item_v1(
+            user_id=payload.user_id,
+            name=payload.name,
+            quantity=payload.quantity,
+            usage=payload.usage,
+            unit=payload.unit,
+        )
+    except ValueError as exc:
+        return _error_response(400, str(exc))
+    except Exception as exc:
+        logger.exception("Inventory create failed: %s", exc)
+        return _error_response(502, f"Inventory service failed: {exc}")
+
+    logger.info(
+        "Inventory create response: user_id=%s item_id=%s quantity=%.3f unit=%s",
+        payload.user_id,
+        created_item.get("id"),
+        float(created_item.get("quantity") or 0.0),
+        created_item.get("unit"),
+    )
+    return InventoryCreateResponse.model_validate({"success": True, "item": created_item})
+
+
+@router.patch("/api/v1/inventory/{item_id}", response_model=InventoryStockUpdateResponse)
+async def inventory_update_v1(
+    item_id: str,
+    payload: InventoryStockUpdateRequest,
+) -> InventoryStockUpdateResponse | JSONResponse:
+    """Delta update inventory stock and prevent negative balances."""
+    service = _get_inventory_service()
+    if service is None:
+        return _error_response(503, _inventory_service_init_error or "inventory service unavailable")
+
+    try:
+        updated_item = await service.update_item_quantity_delta_v1(
+            user_id=payload.user_id,
+            item_id=item_id,
+            quantity_change=payload.quantity_change,
+        )
+    except ValueError as exc:
+        return _error_response(400, str(exc))
+    except Exception as exc:
+        logger.exception("Inventory v1 update failed: %s", exc)
+        return _error_response(502, f"Inventory service failed: {exc}")
+
+    logger.info(
+        "Inventory v1 update response: user_id=%s item_id=%s quantity_change=%.3f",
+        payload.user_id,
+        item_id,
+        payload.quantity_change,
+    )
+    return InventoryStockUpdateResponse.model_validate({"success": True, "item": updated_item})
+
+
 @router.patch("/api/inventory/{item_id}", response_model=InventoryUpdateResponse)
-async def inventory_update(item_id: str, payload: InventoryUpdateRequest) -> InventoryUpdateResponse:
+async def inventory_update(item_id: str, payload: InventoryUpdateRequest) -> InventoryUpdateResponse | JSONResponse:
     """Update user inventory liters for a specific item."""
     service = _get_inventory_service()
     if service is None:
-        raise HTTPException(
-            status_code=503,
-            detail=_inventory_service_init_error or "inventory service unavailable",
-        )
+        return _error_response(503, _inventory_service_init_error or "inventory service unavailable")
 
     try:
         result = await service.update_item_liters(
@@ -683,23 +809,55 @@ async def inventory_update(item_id: str, payload: InventoryUpdateRequest) -> Inv
             liters=payload.liters,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _error_response(400, str(exc))
     except Exception as exc:
         logger.exception("Inventory update failed: %s", exc)
-        raise HTTPException(status_code=502, detail=f"Inventory service failed: {exc}") from exc
+        return _error_response(502, f"Inventory service failed: {exc}")
+
+    logger.info(
+        "Inventory legacy update response: user_id=%s item_id=%s liters=%.3f",
+        payload.user_id,
+        item_id,
+        payload.liters,
+    )
 
     return InventoryUpdateResponse.model_validate(result)
 
 
+@router.get("/api/zones", response_model=ZoneHealthSummaryResponse)
+@router.get("/api/zones/summary", response_model=ZoneHealthSummaryResponse)
+@router.get("/api/v1/zones/summary", response_model=ZoneHealthSummaryResponse)
+async def zones_summary(user_id: str | None = Query(default=None, min_length=1)) -> ZoneHealthSummaryResponse | JSONResponse:
+    """Fetch real-time zone health counters from Firestore grids."""
+    service = _get_dashboard_service()
+    if service is None:
+        return _error_response(503, _dashboard_service_init_error or "dashboard service unavailable")
+
+    try:
+        result = await service.get_zone_summary_counts(user_id=user_id)
+    except ValueError as exc:
+        return _error_response(400, str(exc))
+    except Exception as exc:
+        logger.exception("Zones summary failed: %s", exc)
+        return _error_response(502, f"Zones summary failed: {exc}")
+
+    logger.info(
+        "Zones summary response: user_id=%s total=%d healthy=%d warning=%d unhealthy=%d",
+        user_id or "all",
+        result.get("total_zones", 0),
+        result.get("healthy", 0),
+        result.get("warning", 0),
+        result.get("unhealthy", 0),
+    )
+    return ZoneHealthSummaryResponse.model_validate(result)
+
+
 @router.post("/api/dashboard/summary", response_model=DashboardSummaryResponse)
-async def dashboard_summary(payload: DashboardSummaryRequest) -> DashboardSummaryResponse:
+async def dashboard_summary(payload: DashboardSummaryRequest) -> DashboardSummaryResponse | JSONResponse:
     """Aggregate dashboard metrics from real backend services."""
     service = _get_dashboard_service()
     if service is None:
-        raise HTTPException(
-            status_code=503,
-            detail=_dashboard_service_init_error or "dashboard service unavailable",
-        )
+        return _error_response(503, _dashboard_service_init_error or "dashboard service unavailable")
 
     try:
         result = await service.build_summary(
@@ -712,10 +870,12 @@ async def dashboard_summary(payload: DashboardSummaryRequest) -> DashboardSummar
             lng=payload.lng,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _error_response(400, str(exc))
     except Exception as exc:
         logger.exception("Dashboard summary failed: %s", exc)
-        raise HTTPException(status_code=502, detail=f"Dashboard service failed: {exc}") from exc
+        return _error_response(502, f"Dashboard service failed: {exc}")
+
+    logger.info("Dashboard summary response: user_id=%s", payload.user_id)
 
     return DashboardSummaryResponse.model_validate(result)
 

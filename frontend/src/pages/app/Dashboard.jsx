@@ -120,6 +120,7 @@ export default function Dashboard() {
         if (!active) {
           return
         }
+        console.log('[Dashboard API] summary response', response)
         setSummary(response)
       })
       .catch((error) => {
@@ -135,30 +136,20 @@ export default function Dashboard() {
     }
   }, [requestBuild.error, requestBuild.payload])
 
-  const weatherSnapshot = summary?.weatherSnapshot || {
-    condition: 'Unavailable',
-    temperatureC: 0,
-    windKmh: 0,
-    windDirection: '-',
-    rainInHours: null,
+  if (!summary && !loadError) {
+    return (
+      <section className="pg-page pg-dashboard-page" aria-label="Financial and climate command center">
+        <SectionHeader title="Home" align="center" />
+        <article className="pg-card">
+          <p>Loading dashboard summary...</p>
+        </article>
+      </section>
+    )
   }
 
-  const zoneHealthSummary = summary?.zoneHealthSummary || {
-    totalAreaHectares: 0,
-    healthy: 0,
-    atRisk: 0,
-    infected: 0,
-    zonesNeedingAttention: 0,
-  }
-
-  const financialSummary = summary?.financialSummary || {
-    roiPercent: 0,
-    projectedRoiValueRm: 0,
-    projectedYieldGainRm: 0,
-    treatmentCostRm: 0,
-    lowStockItem: null,
-    lowStockLiters: null,
-  }
+  const weatherSnapshot = summary?.weatherSnapshot || {}
+  const zoneHealthSummary = summary?.zoneHealthSummary || {}
+  const financialSummary = summary?.financialSummary || {}
 
   const rainInHours = safeNumber(weatherSnapshot.rainInHours, -1)
   const safeToSpray = rainInHours < 0 || rainInHours >= 4
@@ -186,11 +177,11 @@ export default function Dashboard() {
 
           <div className="pg-weather-primary">
             <strong>{safeNumber(weatherSnapshot.temperatureC)} deg C</strong>
-            <span>{weatherSnapshot.condition}</span>
+            <span>{weatherSnapshot.condition || 'N/A'}</span>
           </div>
 
           <p className="pg-weather-wind">
-            Wind {safeNumber(weatherSnapshot.windKmh)} km/h {weatherSnapshot.windDirection}
+            Wind {safeNumber(weatherSnapshot.windKmh)} km/h {weatherSnapshot.windDirection || '-'}
           </p>
 
           <span className={`pg-weather-badge ${safeToSpray ? 'is-clear' : 'is-delay'}`}>

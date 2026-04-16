@@ -530,3 +530,63 @@ class LLMService:
             user_prompt,
         )
         return fallback
+
+    async def generate_weather_recommendation(
+        self,
+        *,
+        temperature_c: int,
+        humidity: int,
+        wind_kmh: int,
+        rain_probability: int,
+        rain_in_hours: float | None,
+        safe_to_spray: bool,
+        best_spray_window: str,
+        advisory: str,
+    ) -> str:
+        """Generate concise spray recommendation text from weather signals."""
+        fallback = advisory or "Weather is unstable for spraying. Recheck conditions in the next cycle."
+
+        rain_window = "none expected in next 12h" if rain_in_hours is None else f"expected in ~{rain_in_hours:.0f} hour(s)"
+        spray_state = "safe to spray" if safe_to_spray else "not safe to spray now"
+
+        prompt = (
+            "You are an agronomy weather advisor. "
+            "Given the weather snapshot, output exactly one short recommendation sentence for pesticide/fungicide spray timing.\n\n"
+            f"Temperature: {temperature_c} C\n"
+            f"Humidity: {humidity}%\n"
+            f"Wind: {wind_kmh} km/h\n"
+            f"Rain probability: {rain_probability}%\n"
+            f"Rain window: {rain_window}\n"
+            f"Current spray safety: {spray_state}\n"
+            f"Best spray window: {best_spray_window}\n"
+            f"Baseline advisory: {advisory}\n\n"
+            "Constraints:\n"
+            "- Keep under 25 words\n"
+            "- No bullet points\n"
+            "- Mention either timing or delay clearly\n"
+        )
+
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                response = self._generate_content_with_model_fallback(
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        temperature=0.2,
+                        max_output_tokens=90,
+                    ),
+                )
+                text = (response.text or "").strip()
+                if text:
+                    return " ".join(text.split())
+            except Exception as exc:
+                logger.warning(
+                    "Weather recommendation attempt %d/%d failed: %s",
+                    attempt,
+                    MAX_RETRIES,
+                    exc,
+                )
+
+            if attempt < MAX_RETRIES:
+                await asyncio.sleep(RETRY_DELAY_SECONDS)
+
+        return fallback
