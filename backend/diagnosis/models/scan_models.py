@@ -121,3 +121,155 @@ class HttpScanAssistantMultiResponse(BaseModel):
     frame_number: int = Field(default=0)
     regions_results: list[HttpScanResponse] = Field(description="Diagnosis for each region")
     consolidated_assistant_reply: str = Field(description="Assistant dialogue addressing all regions")
+
+
+class WeatherForecastEntry(BaseModel):
+    """One day forecast entry for weather page rendering."""
+
+    day: str
+    condition: str
+    rainChance: int = Field(..., ge=0, le=100)
+    wind: str
+    sprayWindow: str
+    safe: bool
+
+
+class WeatherOutlookResponse(BaseModel):
+    """Weather response used by dashboard and weather pages."""
+
+    rain_probability: int = Field(..., ge=0, le=100)
+    best_spray_window: str
+    advisory: str
+    condition: str
+    temperatureC: int
+    windKmh: int
+    windDirection: str
+    rainInHours: float | None = None
+    safeToSpray: bool
+    forecast: list[WeatherForecastEntry] = Field(default_factory=list)
+
+
+class TreatmentPlanRequest(BaseModel):
+    """Input contract for treatment and ROI analysis."""
+
+    disease: str = Field(..., min_length=1)
+    zone: str | None = None
+    crop_type: str = Field(..., min_length=1)
+    treatment_plan: str = Field(..., min_length=1)
+    user_id: str = Field(..., min_length=1)
+    farm_size_hectares: float = Field(..., gt=0)
+    survival_prob: float = Field(..., ge=0.0, le=1.0)
+    lat: float | None = None
+    lng: float | None = None
+    weatherContext: str | None = None
+    treatment_cost_rm: float | None = Field(default=None, ge=0.0)
+
+
+class TreatmentPlanResponse(BaseModel):
+    """Output contract for treatment recommendation and ROI."""
+
+    recommendation: str
+    estimated_cost_rm: float = Field(..., ge=0.0)
+    expected_gain_rm: float = Field(..., ge=0.0)
+    roi_x: float = Field(..., ge=0.0)
+    organic_alternative: str
+
+
+class InventoryItemResponse(BaseModel):
+    """Inventory item exposed to frontend inventory page."""
+
+    id: str
+    name: str
+    category: str
+    liters: float = Field(..., ge=0.0)
+    unit_cost_rm: float = Field(default=0.0, ge=0.0)
+    last_updated_iso: str | None = None
+
+
+class InventoryListResponse(BaseModel):
+    """List payload for inventory page."""
+
+    items: list[InventoryItemResponse] = Field(default_factory=list)
+    total_items: int = Field(..., ge=0)
+    low_stock_count: int = Field(..., ge=0)
+    last_updated_iso: str | None = None
+
+
+class InventoryUpdateRequest(BaseModel):
+    """Patch payload for inventory quantity updates."""
+
+    user_id: str = Field(..., min_length=1)
+    liters: float = Field(..., ge=0.0)
+
+
+class InventoryUpdateResponse(BaseModel):
+    """Result of inventory update operation."""
+
+    id: str
+    liters: float = Field(..., ge=0.0)
+    updated: bool
+
+
+class DashboardSummaryRequest(BaseModel):
+    """Input contract for dashboard aggregate endpoint."""
+
+    user_id: str = Field(..., min_length=1)
+    crop_type: str = Field(..., min_length=1)
+    treatment_plan: str = Field(..., min_length=1)
+    farm_size_hectares: float = Field(..., gt=0)
+    survival_prob: float = Field(..., ge=0.0, le=1.0)
+    lat: float | None = None
+    lng: float | None = None
+
+
+class DashboardWeatherSnapshot(BaseModel):
+    """Dashboard weather snapshot block."""
+
+    condition: str
+    temperatureC: int
+    windKmh: int
+    windDirection: str
+    rainInHours: float | None = None
+
+
+class DashboardZoneHealthSummary(BaseModel):
+    """Dashboard zone health block."""
+
+    totalAreaHectares: float = Field(..., ge=0.0)
+    healthy: int = Field(..., ge=0, le=100)
+    atRisk: int = Field(..., ge=0, le=100)
+    infected: int = Field(..., ge=0, le=100)
+    zonesNeedingAttention: int = Field(..., ge=0)
+
+
+class DashboardFinancialSummary(BaseModel):
+    """Dashboard financial block."""
+
+    roiPercent: float
+    projectedRoiValueRm: float
+    projectedYieldGainRm: float
+    treatmentCostRm: float
+    lowStockItem: str | None = None
+    lowStockLiters: float | None = None
+
+
+class DashboardSummaryResponse(BaseModel):
+    """Dashboard aggregate response payload."""
+
+    weatherSnapshot: DashboardWeatherSnapshot
+    zoneHealthSummary: DashboardZoneHealthSummary
+    financialSummary: DashboardFinancialSummary
+
+
+class AssistantMessageRequest(BaseModel):
+    """Input contract for text-only assistant interaction."""
+
+    user_prompt: str = Field(..., min_length=1)
+    user_id: str = Field(..., min_length=1)
+    zone: str | None = None
+
+
+class AssistantMessageResponse(BaseModel):
+    """Output contract for text-only assistant interaction."""
+
+    assistant_reply: str

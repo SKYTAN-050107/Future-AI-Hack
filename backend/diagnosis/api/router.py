@@ -15,25 +15,38 @@ import asyncio
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
 
 from models.scan_models import (
+    AssistantMessageRequest,
+    AssistantMessageResponse,
     BoundingBox,
+    DashboardSummaryRequest,
+    DashboardSummaryResponse,
     HttpScanAssistantRequest,
     HttpScanAssistantResponse,
     HttpScanAssistantMultiRequest,
     HttpScanAssistantMultiResponse,
+    InventoryListResponse,
+    InventoryUpdateRequest,
+    InventoryUpdateResponse,
     HttpScanRequest,
     HttpScanResponse,
     ScanFrame,
     ScanResponse,
     ScanResult,
+    TreatmentPlanRequest,
+    TreatmentPlanResponse,
+    WeatherOutlookResponse,
 )
-from orchestration.assistant_pipeline import AssistantPipeline
 from orchestration.pipeline import LiveScanPipeline
+from services.assistant_message_service import AssistantMessageService
+from services.dashboard_service import DashboardService
 from services.firestore_service import FirestoreService
-from services.llm_service import LLMService, build_farmer_fallback_dialogue
+from services.inventory_service import InventoryService
 from services.region_detection_service import RegionDetectionService
+from services.treatment_service import TreatmentService
+from services.weather_service import WeatherService
 
 logger = logging.getLogger(__name__)
 
@@ -65,11 +78,23 @@ def _get_region_detector() -> RegionDetectionService | None:
 _pipeline: LiveScanPipeline | None = None
 _pipeline_init_error: str | None = None
 
-_assistant_pipeline: AssistantPipeline | None = None
-_assistant_pipeline_init_error: str | None = None
-
 _firestore: FirestoreService | None = None
 _firestore_init_error: str | None = None
+
+_weather_service: WeatherService | None = None
+_weather_service_init_error: str | None = None
+
+_treatment_service: TreatmentService | None = None
+_treatment_service_init_error: str | None = None
+
+_inventory_service: InventoryService | None = None
+_inventory_service_init_error: str | None = None
+
+_dashboard_service: DashboardService | None = None
+_dashboard_service_init_error: str | None = None
+
+_assistant_message_service: AssistantMessageService | None = None
+_assistant_message_service_init_error: str | None = None
 
 
 def _get_pipeline() -> LiveScanPipeline | None:
@@ -92,26 +117,6 @@ def _get_pipeline() -> LiveScanPipeline | None:
     return _pipeline
 
 
-def _get_assistant_pipeline() -> AssistantPipeline | None:
-    global _assistant_pipeline
-    global _assistant_pipeline_init_error
-
-    if _assistant_pipeline is not None:
-        return _assistant_pipeline
-
-    if _assistant_pipeline_init_error is not None:
-        return None
-
-    try:
-        _assistant_pipeline = AssistantPipeline()
-    except Exception as exc:
-        _assistant_pipeline_init_error = str(exc)
-        logger.exception("AssistantPipeline init failed: %s", exc)
-        return None
-
-    return _assistant_pipeline
-
-
 def _get_firestore() -> FirestoreService | None:
     global _firestore
     global _firestore_init_error
@@ -130,6 +135,106 @@ def _get_firestore() -> FirestoreService | None:
         return None
 
     return _firestore
+
+
+def _get_weather_service() -> WeatherService | None:
+    global _weather_service
+    global _weather_service_init_error
+
+    if _weather_service is not None:
+        return _weather_service
+
+    if _weather_service_init_error is not None:
+        return None
+
+    try:
+        _weather_service = WeatherService()
+    except Exception as exc:
+        _weather_service_init_error = str(exc)
+        logger.exception("WeatherService init failed: %s", exc)
+        return None
+
+    return _weather_service
+
+
+def _get_treatment_service() -> TreatmentService | None:
+    global _treatment_service
+    global _treatment_service_init_error
+
+    if _treatment_service is not None:
+        return _treatment_service
+
+    if _treatment_service_init_error is not None:
+        return None
+
+    try:
+        _treatment_service = TreatmentService()
+    except Exception as exc:
+        _treatment_service_init_error = str(exc)
+        logger.exception("TreatmentService init failed: %s", exc)
+        return None
+
+    return _treatment_service
+
+
+def _get_inventory_service() -> InventoryService | None:
+    global _inventory_service
+    global _inventory_service_init_error
+
+    if _inventory_service is not None:
+        return _inventory_service
+
+    if _inventory_service_init_error is not None:
+        return None
+
+    try:
+        _inventory_service = InventoryService()
+    except Exception as exc:
+        _inventory_service_init_error = str(exc)
+        logger.exception("InventoryService init failed: %s", exc)
+        return None
+
+    return _inventory_service
+
+
+def _get_dashboard_service() -> DashboardService | None:
+    global _dashboard_service
+    global _dashboard_service_init_error
+
+    if _dashboard_service is not None:
+        return _dashboard_service
+
+    if _dashboard_service_init_error is not None:
+        return None
+
+    try:
+        _dashboard_service = DashboardService()
+    except Exception as exc:
+        _dashboard_service_init_error = str(exc)
+        logger.exception("DashboardService init failed: %s", exc)
+        return None
+
+    return _dashboard_service
+
+
+def _get_assistant_message_service() -> AssistantMessageService | None:
+    global _assistant_message_service
+    global _assistant_message_service_init_error
+
+    if _assistant_message_service is not None:
+        return _assistant_message_service
+
+    if _assistant_message_service_init_error is not None:
+        return None
+
+    try:
+        _assistant_message_service = AssistantMessageService()
+    except Exception as exc:
+        _assistant_message_service_init_error = str(exc)
+        logger.exception("AssistantMessageService init failed: %s", exc)
+        return None
+
+    return _assistant_message_service
 
 
 def _strip_data_url_prefix(value: str) -> str:
@@ -238,30 +343,15 @@ async def _record_abnormal_scan(result: ScanResult, grid_id: str | None) -> None
         logger.error("Firestore write failed: %s", fs_err)
 
 
-def _fallback_raw_result(reason: str) -> dict[str, Any]:
-    return {
-        "cropType": "Unknown",
-        "disease": "Unknown",
-        "severity": "Moderate",
-        "severityScore": 0.0,
-        "treatmentPlan": (
-            "Diagnosis backend is reachable but cloud diagnosis services are unavailable. "
-            f"Reason: {reason}"
-        ),
-        "survivalProb": 0.5,
-        "is_abnormal": False,
-    }
-
-
 async def _run_scan_pipeline(
     cropped_image_b64: str,
     bbox: BoundingBox,
     grid_id: str | None,
-) -> tuple[Any, str | None]:
+) -> dict[str, Any]:
     pipeline = _get_pipeline()
     if pipeline is None:
         reason = _pipeline_init_error or "pipeline unavailable"
-        return _fallback_raw_result(reason), reason
+        raise RuntimeError(reason)
 
     try:
         raw_result = await pipeline.run(
@@ -269,11 +359,10 @@ async def _run_scan_pipeline(
             bbox=bbox.model_dump(),
             grid_id=grid_id,
         )
-        return raw_result, None
+        return raw_result
     except Exception as exc:
         logger.exception("Pipeline run failed: %s", exc)
-        reason = str(exc)
-        return _fallback_raw_result(reason), reason
+        raise RuntimeError(str(exc)) from exc
 
 
 def _to_http_scan_response(
@@ -298,15 +387,31 @@ def _to_http_scan_response(
     )
 
 
-def _build_assistant_fallback_reply(
-    result: ScanResult,
-    reason: str | None = None,
-) -> str:
-    """Build fallback assistant reply using the new language-aware function."""
-    return build_farmer_fallback_dialogue(
-        scan_result=result.model_dump(),
-        user_prompt="I just took this photo. Please explain what was detected.",
-        reason=reason,
+def _assistant_reply_from_scan(result: ScanResult) -> str:
+    """Deterministic assistant reply from real diagnosis result only."""
+    severity_percent = _severity_to_percent(result.severityScore, result.severity)
+    return (
+        f"Detected {result.disease} on {result.cropType}. "
+        f"Severity is {severity_percent}% with spread risk {_spread_risk_from_severity(severity_percent)}. "
+        f"Recommended action: {result.treatmentPlan}."
+    )
+
+
+def _assistant_reply_from_regions(results: list[ScanResult]) -> str:
+    if not results:
+        return "No diagnosable crop region was found in this submission."
+
+    summary_parts = []
+    for item in results:
+        severity_percent = _severity_to_percent(item.severityScore, item.severity)
+        summary_parts.append(
+            f"{item.cropType}: {item.disease} ({severity_percent}% severity)"
+        )
+
+    return (
+        "Detected multiple regions. "
+        + "; ".join(summary_parts)
+        + ". Prioritize treatment for highest-severity regions first."
     )
 
 
@@ -323,7 +428,7 @@ async def scan_once(payload: HttpScanRequest) -> HttpScanResponse:
     )
 
     try:
-        raw_result, _ = await _run_scan_pipeline(
+        raw_result = await _run_scan_pipeline(
             cropped_image_b64=_strip_data_url_prefix(payload.base64_image),
             bbox=bbox,
             grid_id=payload.grid_id,
@@ -381,7 +486,7 @@ async def scan_and_chat(payload: HttpScanAssistantRequest) -> HttpScanAssistantR
     )
 
     try:
-        raw_result, pipeline_error = await _run_scan_pipeline(
+        raw_result = await _run_scan_pipeline(
             cropped_image_b64=_strip_data_url_prefix(payload.base64_image),
             bbox=bbox,
             grid_id=payload.grid_id,
@@ -390,26 +495,7 @@ async def scan_and_chat(payload: HttpScanAssistantRequest) -> HttpScanAssistantR
         await _record_abnormal_scan(result, payload.grid_id)
 
         diagnosis = _to_http_scan_response(result, raw_result, payload.grid_id)
-        assistant_pipeline = _get_assistant_pipeline()
-
-        if assistant_pipeline is None:
-            assistant_reason = _assistant_pipeline_init_error or "assistant pipeline unavailable"
-            assistant_reply = _build_assistant_fallback_reply(result, assistant_reason)
-        else:
-            try:
-                assistant_reply = await assistant_pipeline.run(
-                    scan_result=result.model_dump(),
-                    user_prompt=payload.user_prompt,
-                )
-            except Exception as assistant_exc:
-                logger.exception("Assistant pipeline run failed: %s", assistant_exc)
-                assistant_reply = _build_assistant_fallback_reply(result, str(assistant_exc))
-
-        if pipeline_error:
-            assistant_reply = _build_assistant_fallback_reply(
-                result,
-                "诊断正在降级模式运行，建议先按复拍流程确认后再做最终施药决策。",
-            )
+        assistant_reply = _assistant_reply_from_scan(result)
 
         return HttpScanAssistantResponse(
             **diagnosis.model_dump(),
@@ -438,56 +524,189 @@ async def scan_and_chat_multi(payload: HttpScanAssistantMultiRequest) -> HttpSca
     ]
     raw_results = await asyncio.gather(*tasks, return_exceptions=True)
 
+    first_error = next((item for item in raw_results if isinstance(item, Exception)), None)
+    if first_error is not None:
+        raise HTTPException(status_code=502, detail=f"Region pipeline failed: {first_error}")
+
     # Build scan results for each region
     regions_results: list[HttpScanResponse] = []
-    region_diagnoses: list[dict[str, Any]] = []
+    region_diagnoses: list[ScanResult] = []
 
     for i, raw_result in enumerate(raw_results):
         bbox = payload.regions[i].bbox
-        pipeline_error = None
-
-        if isinstance(raw_result, tuple):
-            raw_result, pipeline_error = raw_result
-        elif isinstance(raw_result, Exception):
-            raw_result = _fallback_raw_result(str(raw_result))
+        if not isinstance(raw_result, dict):
+            raise HTTPException(status_code=500, detail="Pipeline returned invalid region result")
 
         result = _build_scan_result(raw_result, bbox, i)
         regions_results.append(_to_http_scan_response(result, raw_result, payload.grid_id))
-        region_diagnoses.append(result.model_dump())
+        region_diagnoses.append(result)
 
         # Record abnormal scans
         await _record_abnormal_scan(result, payload.grid_id)
 
-    # Generate consolidated assistant dialogue
-    assistant_pipeline = _get_assistant_pipeline()
-
-    if assistant_pipeline is None:
-        assistant_reason = _assistant_pipeline_init_error or "assistant pipeline unavailable"
-        consolidated_reply = build_farmer_fallback_dialogue(
-            region_diagnoses[0] if region_diagnoses else {},
-            payload.user_prompt,
-            assistant_reason,
-        )
-    else:
-        try:
-            llm_svc = LLMService()
-            consolidated_reply = await llm_svc.generate_consolidated_assistant_dialogue(
-                scan_results=region_diagnoses,
-                user_prompt=payload.user_prompt,
-            )
-        except Exception as exc:
-            logger.exception("Consolidated dialogue generation failed: %s", exc)
-            consolidated_reply = build_farmer_fallback_dialogue(
-                region_diagnoses[0] if region_diagnoses else {},
-                payload.user_prompt,
-                str(exc),
-            )
+    consolidated_reply = _assistant_reply_from_regions(region_diagnoses)
 
     return HttpScanAssistantMultiResponse(
         frame_number=0,
         regions_results=regions_results,
         consolidated_assistant_reply=consolidated_reply,
     )
+
+
+@router.post("/api/assistant/message", response_model=AssistantMessageResponse)
+async def assistant_message(payload: AssistantMessageRequest) -> AssistantMessageResponse:
+    """Text-only assistant endpoint backed by real scan history data."""
+    service = _get_assistant_message_service()
+    if service is None:
+        raise HTTPException(
+            status_code=503,
+            detail=_assistant_message_service_init_error or "assistant message service unavailable",
+        )
+
+    try:
+        reply = await service.build_reply(
+            user_prompt=payload.user_prompt,
+            user_id=payload.user_id,
+            zone=payload.zone,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Assistant message failed: %s", exc)
+        raise HTTPException(status_code=502, detail=f"Assistant message failed: {exc}") from exc
+
+    return AssistantMessageResponse(assistant_reply=reply)
+
+
+@router.get("/api/weather", response_model=WeatherOutlookResponse)
+async def weather_outlook(
+    lat: float = Query(..., description="Latitude"),
+    lng: float = Query(..., description="Longitude"),
+    days: int = Query(7, ge=1, le=10),
+) -> WeatherOutlookResponse:
+    """Real weather outlook endpoint for dashboard and weather pages."""
+    service = _get_weather_service()
+    if service is None:
+        raise HTTPException(
+            status_code=503,
+            detail=_weather_service_init_error or "weather service unavailable",
+        )
+
+    try:
+        result = await service.get_outlook(lat=lat, lng=lng, days=days)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Weather endpoint failed: %s", exc)
+        raise HTTPException(status_code=502, detail=f"Weather service failed: {exc}") from exc
+
+    return WeatherOutlookResponse.model_validate(result)
+
+
+@router.post("/api/treatment", response_model=TreatmentPlanResponse)
+async def treatment_plan(payload: TreatmentPlanRequest) -> TreatmentPlanResponse:
+    """Real treatment and ROI endpoint backed by market and inventory data."""
+    service = _get_treatment_service()
+    if service is None:
+        raise HTTPException(
+            status_code=503,
+            detail=_treatment_service_init_error or "treatment service unavailable",
+        )
+
+    try:
+        result = await service.build_plan(
+            disease=payload.disease,
+            crop_type=payload.crop_type,
+            treatment_plan=payload.treatment_plan,
+            user_id=payload.user_id,
+            farm_size_hectares=payload.farm_size_hectares,
+            survival_prob=payload.survival_prob,
+            lat=payload.lat,
+            lng=payload.lng,
+            treatment_cost_rm=payload.treatment_cost_rm,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Treatment endpoint failed: %s", exc)
+        raise HTTPException(status_code=502, detail=f"Treatment service failed: {exc}") from exc
+
+    return TreatmentPlanResponse.model_validate(result)
+
+
+@router.get("/api/inventory", response_model=InventoryListResponse)
+async def inventory_list(user_id: str = Query(..., min_length=1)) -> InventoryListResponse:
+    """List user inventory from Firestore."""
+    service = _get_inventory_service()
+    if service is None:
+        raise HTTPException(
+            status_code=503,
+            detail=_inventory_service_init_error or "inventory service unavailable",
+        )
+
+    try:
+        result = await service.list_items(user_id=user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Inventory list failed: %s", exc)
+        raise HTTPException(status_code=502, detail=f"Inventory service failed: {exc}") from exc
+
+    return InventoryListResponse.model_validate(result)
+
+
+@router.patch("/api/inventory/{item_id}", response_model=InventoryUpdateResponse)
+async def inventory_update(item_id: str, payload: InventoryUpdateRequest) -> InventoryUpdateResponse:
+    """Update user inventory liters for a specific item."""
+    service = _get_inventory_service()
+    if service is None:
+        raise HTTPException(
+            status_code=503,
+            detail=_inventory_service_init_error or "inventory service unavailable",
+        )
+
+    try:
+        result = await service.update_item_liters(
+            user_id=payload.user_id,
+            item_id=item_id,
+            liters=payload.liters,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Inventory update failed: %s", exc)
+        raise HTTPException(status_code=502, detail=f"Inventory service failed: {exc}") from exc
+
+    return InventoryUpdateResponse.model_validate(result)
+
+
+@router.post("/api/dashboard/summary", response_model=DashboardSummaryResponse)
+async def dashboard_summary(payload: DashboardSummaryRequest) -> DashboardSummaryResponse:
+    """Aggregate dashboard metrics from real backend services."""
+    service = _get_dashboard_service()
+    if service is None:
+        raise HTTPException(
+            status_code=503,
+            detail=_dashboard_service_init_error or "dashboard service unavailable",
+        )
+
+    try:
+        result = await service.build_summary(
+            user_id=payload.user_id,
+            crop_type=payload.crop_type,
+            treatment_plan=payload.treatment_plan,
+            farm_size_hectares=payload.farm_size_hectares,
+            survival_prob=payload.survival_prob,
+            lat=payload.lat,
+            lng=payload.lng,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Dashboard summary failed: %s", exc)
+        raise HTTPException(status_code=502, detail=f"Dashboard service failed: {exc}") from exc
+
+    return DashboardSummaryResponse.model_validate(result)
 
 
 @router.websocket("/ws/scan")
@@ -553,19 +772,29 @@ async def live_scan(websocket: WebSocket) -> None:
             ]
             raw_results = await asyncio.gather(*tasks, return_exceptions=True)
 
+            first_error = next((item for item in raw_results if isinstance(item, Exception)), None)
+            if first_error is not None:
+                await websocket.send_json({"error": f"Pipeline run failed: {first_error}"})
+                continue
+
             # ── Build response ────────────────────────────────────────
             results: list[ScanResult] = []
             for i, raw_result in enumerate(raw_results):
                 bbox = frame_regions[i].bbox
 
-                if isinstance(raw_result, tuple):
-                    raw_result = raw_result[0]
+                if not isinstance(raw_result, dict):
+                    await websocket.send_json({"error": "Pipeline returned invalid result payload"})
+                    results = []
+                    break
 
                 result = _build_scan_result(raw_result, bbox, i)
                 results.append(result)
 
                 # ── Firestore write-back for abnormal results ─────────
                 await _record_abnormal_scan(result, frame.grid_id)
+
+            if not results:
+                continue
 
             # ── Send results ──────────────────────────────────────────
             response = ScanResponse(

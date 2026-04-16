@@ -39,6 +39,11 @@ class Settings(BaseSettings):
     # ── Vertex AI Gemini ───────────────────────────────────────────────
     GEMINI_MODEL_NAME: str = "gemini-2.0-flash"
 
+    # ── External Crop Intelligence APIs ───────────────────────────────
+    TOMORROW_IO_API_KEY: str = ""
+    TOMORROW_IO_BASE_URL: str = "https://api.tomorrow.io/v4/weather/forecast"
+    MCP_SERVER_URL: str = ""
+
     # ── Cloud Firestore ────────────────────────────────────────────────
     FIRESTORE_GRID_COLLECTION: str = "grids"
     FIRESTORE_REPORT_COLLECTION: str = "scanReports"
