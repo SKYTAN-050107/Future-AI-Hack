@@ -103,24 +103,24 @@ class TestReasoningAgentFastPath:
 class TestVectorMatchFastGate:
     """Test the fast-match threshold gating logic."""
 
-    def test_high_score_triggers_fast_match(self):
-        """Score >= 0.85 should set fast_match."""
+    def test_low_distance_triggers_fast_match(self):
+        """Distance <= threshold should set fast_match."""
         threshold = 0.85
-        score = 0.92
-        assert score >= threshold
+        score = 0.58
+        assert score <= threshold
 
         fast_match = {
             "id": "abc",
             "score": score,
             "metadata": {"cropType": "Rice", "disease": "Rice Blast"},
         }
-        assert fast_match["score"] >= threshold
+        assert fast_match["score"] <= threshold
 
-    def test_low_score_no_fast_match(self):
-        """Score < 0.85 should NOT set fast_match."""
+    def test_high_distance_no_fast_match(self):
+        """Distance > threshold should NOT set fast_match."""
         threshold = 0.85
-        score = 0.72
-        assert score < threshold
+        score = 0.93
+        assert score > threshold
 
 
 # ══════════════════════════════════════════════════════════════════════

@@ -153,11 +153,13 @@ export default function Scanner() {
     const ws = wsRef.current
     const video = videoRef.current
     if (!ws || ws.readyState !== WebSocket.OPEN || !video || requestInFlightRef.current) {
+      console.log('[WS] sendLiveFrame skipped:', { wsReady: ws?.readyState === WebSocket.OPEN, videoReady: !!video, inFlight: requestInFlightRef.current })
       return
     }
 
     const hasVideoPixels = Number(video.videoWidth || 0) > 0 && Number(video.videoHeight || 0) > 0
     if (!hasVideoPixels) {
+      console.log('[WS] No video pixels yet')
       return
     }
 
@@ -167,6 +169,7 @@ export default function Scanner() {
         ? base64Image.split(',', 2)[1]
         : base64Image
 
+      console.log('[WS] Sending frame', frameCounterRef.current + 1, 'base64 length:', normalizedBase64.length)
       clearResponseTimeout()
       requestInFlightRef.current = true
       frameCounterRef.current += 1
@@ -211,22 +214,26 @@ export default function Scanner() {
 
   const connectLiveScan = () => {
     if (!isMountedRef.current || cameraState !== 'ready') {
+      console.log('[WS] Connect skipped:', { mounted: isMountedRef.current, cameraReady: cameraState === 'ready' })
       return
     }
 
     const current = wsRef.current
     if (current && (current.readyState === WebSocket.OPEN || current.readyState === WebSocket.CONNECTING)) {
+      console.log('[WS] Already connected')
       return
     }
 
     closeLiveSocket()
     stopLiveLoop()
 
+    console.log('[WS] Connecting to', WS_SCAN_URL)
     const ws = new WebSocket(WS_SCAN_URL)
     wsRef.current = ws
     setStatusMessage('Connecting realtime scanner...')
 
     ws.onopen = () => {
+      console.log('[WS] Connected')
       clearResponseTimeout()
       if (!isMountedRef.current) {
         return
@@ -244,38 +251,58 @@ export default function Scanner() {
         return
       }
 
+      console.log('[WS] Received message:', event.data.substring(0, 200))
+
       try {
         const payload = JSON.parse(event.data)
         if (payload?.error) {
+          console.error('[WS] Error from backend:', payload.error)
           setStatusMessage(String(payload.error))
           return
         }
 
+        console.log('[WS] Parsed payload:', { frame_number: payload?.frame_number, results_count: payload?.results?.length })
+
         const nextDetections = Array.isArray(payload?.results)
           ? payload.results
-              .map((item, index) => ({
-                id: `${payload.frame_number || 0}-${index}`,
-                cropType: String(item?.cropType || 'Unknown'),
-                disease: String(item?.disease || 'Unknown'),
-                severity: String(item?.severity || 'Low'),
-                bbox: item?.bbox || { x: 0, y: 0, width: 0, height: 0 },
-              }))
-              .filter((item) => Number(item.bbox?.width || 0) > 0 && Number(item.bbox?.height || 0) > 0)
-              .filter((item) => isMeaningfulDetection(item))
+              .map((item, index) => {
+                const detection = {
+                  id: `${payload.frame_number || 0}-${index}`,
+                  cropType: String(item?.cropType || 'Unknown'),
+                  disease: String(item?.disease || 'Unknown'),
+                  severity: String(item?.severity || 'Low'),
+                  bbox: item?.bbox || { x: 0, y: 0, width: 0, height: 0 },
+                }
+                console.log('[WS] Result', index, ':', { cropType: detection.cropType, disease: detection.disease, bbox: detection.bbox })
+                return detection
+              })
+              .filter((item) => {
+                const hasSize = Number(item.bbox?.width || 0) > 0 && Number(item.bbox?.height || 0) > 0
+                console.log('[WS] Filter size check:', item.id, 'hasSize=', hasSize)
+                return hasSize
+              })
+              .filter((item) => {
+                const isMeaningful = isMeaningfulDetection(item)
+                console.log('[WS] Filter meaningful check:', item.id, 'isMeaningful=', isMeaningful)
+                return isMeaningful
+              })
           : []
 
+        console.log('[WS] Final detections:', nextDetections.length)
         setLiveDetections(nextDetections)
         if (nextDetections.length > 0) {
           setStatusMessage(`Detected ${nextDetections.length} region(s) in live frame.`)
         } else {
           setStatusMessage('Realtime diagnosis active. No crop region found in current frame.')
         }
-      } catch {
+      } catch (e) {
+        console.error('[WS] Parse error:', e)
         setStatusMessage('Invalid realtime response from diagnosis backend.')
       }
     }
 
     ws.onerror = () => {
+      console.error('[WS] Connection error')
       clearResponseTimeout()
       requestInFlightRef.current = false
       if (isMountedRef.current) {
@@ -284,6 +311,7 @@ export default function Scanner() {
     }
 
     ws.onclose = () => {
+      console.log('[WS] Connection closed')
       clearResponseTimeout()
       requestInFlightRef.current = false
       stopLiveLoop()

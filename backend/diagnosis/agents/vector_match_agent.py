@@ -2,8 +2,8 @@
 Vector-Match Agent — Google ADK BaseAgent.
 
 Queries Vertex AI Vector Search for top-K nearest neighbours.
-Applies a confidence threshold to filter weak matches.
-If the top result exceeds the fast-match threshold (default 0.85),
+Applies a distance threshold to filter weak matches.
+If the top result is within the fast-match threshold,
 sets a ``fast_match`` flag for downstream fast handling.
 
 State keys read:
@@ -11,7 +11,7 @@ State keys read:
 
 State keys written:
     candidates  (list[RetrievalCandidate])
-    fast_match  (dict | None) — set when top score ≥ fast-match threshold
+    fast_match  (dict | None) — set when top score ≤ fast-match threshold
 """
 
 from __future__ import annotations
@@ -73,9 +73,11 @@ class VectorMatchAgent(BaseAgent):
                 logger.info("[%s] Candidate #%d: id=%s, score=%.4f, metadata=%s", 
                            self.name, i, cand.id, cand.score, cand.metadata)
 
-            # ── Confidence threshold filter ──────────────────────────────
+            # ── Distance threshold filter ────────────────────────────────
+            # Vertex MatchNeighbor.distance is a distance metric: lower is better.
             threshold = settings.VECTOR_SEARCH_CONFIDENCE_THRESHOLD
-            candidates = [c for c in candidates if c.score >= threshold]
+            candidates = [c for c in candidates if c.score <= threshold]
+            candidates.sort(key=lambda c: c.score)
             state["candidates"] = candidates
             logger.info("[%s] After threshold filtering: %d candidates", self.name, len(candidates))
         except Exception as e:
@@ -90,10 +92,10 @@ class VectorMatchAgent(BaseAgent):
             return
 
         # ── Fast-match gate ──────────────────────────────────────────
-        # If the top result exceeds the fast-match threshold (default 0.85),
+        # If the top result is within the fast-match threshold,
         # write a fast_match dict so ReasoningAgent can skip the LLM call.
         fast_threshold = settings.VECTOR_SEARCH_FAST_MATCH_THRESHOLD
-        if candidates and candidates[0].score >= fast_threshold:
+        if candidates and candidates[0].score <= fast_threshold:
             top = candidates[0]
             state["fast_match"] = {
                 "id": top.id,
@@ -101,7 +103,7 @@ class VectorMatchAgent(BaseAgent):
                 "metadata": top.metadata,
             }
             logger.info(
-                "[%s] ⚡ FAST MATCH: score=%.3f ≥ %.2f — high-confidence vector result",
+                "[%s] ⚡ FAST MATCH: distance=%.3f ≤ %.2f — high-confidence vector result",
                 self.name, top.score, fast_threshold,
             )
         else:
