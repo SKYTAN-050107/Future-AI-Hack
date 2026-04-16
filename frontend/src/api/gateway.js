@@ -1,11 +1,5 @@
-const delay = (ms = 120) => new Promise((resolve) => setTimeout(resolve, ms))
 const DEFAULT_BACKEND_URL = 'http://localhost:8000'
 const BACKEND_URL = String(import.meta.env.VITE_DIAGNOSIS_API_URL || DEFAULT_BACKEND_URL).replace(/\/+$/, '')
-
-async function withMock(payload) {
-  await delay()
-  return { ...payload, __source: 'mock' }
-}
 
 function normalizeBase64Image(value) {
   const input = String(value || '').trim()
@@ -50,58 +44,42 @@ async function requestJson(path, options = {}) {
   return payload
 }
 
+function toFiniteNumber(value) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function buildQueryString(params) {
+  const query = new URLSearchParams()
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value === null || value === undefined || value === '') {
+      return
+    }
+
+    query.set(key, String(value))
+  })
+
+  const encoded = query.toString()
+  return encoded ? `?${encoded}` : ''
+}
+
 export const gateway = {
   health: async () => requestJson('/health', { method: 'GET' }),
 
-  getFleetSummary: async () => withMock({
-    total_batteries: 0,
-    avg_soh: 0,
-    avg_rul: 0,
-    active_alerts: 0,
-  }),
+  getWeatherOutlook: async ({ lat, lng, days = 7 }) => {
+    const safeLat = toFiniteNumber(lat)
+    const safeLng = toFiniteNumber(lng)
+    const safeDays = toFiniteNumber(days)
 
-  getFleetAlerts: async () => withMock({ alerts: [] }),
+    if (safeLat === null || safeLng === null) {
+      throw new Error('lat and lng are required for weather lookup')
+    }
 
-  uploadCsv: async (file) => withMock({
-    uploaded: Boolean(file),
-    filename: file?.name || null,
-    rows: 0,
-  }),
-
-  getBattery: async (id) => withMock({
-    cell_id: id,
-    SOH: [],
-    RUL: [],
-    points: [],
-  }),
-
-  getBatteryRisk: async () => withMock({ breakdown: [] }),
-
-  getBatteryScorecard: async (id) => withMock({
-    cell_id: id,
-    soc_score: 0,
-    soh_score: 0,
-    recommended_policy_tier: '-',
-    maintenance_flag: false,
-  }),
-
-  getInsuranceQuote: async (id) => withMock({
-    cell_id: id,
-    policy_tier: '-',
-    base_insured_amount: '-',
-    recommended_insured_amount: '-',
-    premium_rate_percent: 0,
-    estimated_annual_premium: '-',
-    notes: 'Mock quote data',
-  }),
-
-  getInsurancePackages: async () => withMock({ packages: [] }),
-
-  getWeatherOutlook: async () => withMock({
-    rain_probability: 76,
-    best_spray_window: 'Today 3:00 PM - 5:00 PM',
-    advisory: 'Avoid spraying tomorrow morning due to high rain intensity.',
-  }),
+    return requestJson(`/api/weather${buildQueryString({ lat: safeLat, lng: safeLng, days: safeDays || 7 })}`, {
+      method: 'GET',
+    })
+  },
 
   scanDisease: async (input) => {
     const base64Image = normalizeBase64Image(input?.base64Image)
@@ -136,11 +114,129 @@ export const gateway = {
     })
   },
 
-  getTreatmentPlan: async () => withMock({
-    recommendation: 'Apply tricyclazole at 0.6 kg/ha before evening rain window.',
-    estimated_cost_rm: 110,
-    expected_gain_rm: 640,
-    roi_x: 5.8,
-    organic_alternative: 'Neem extract for low-severity sectors with follow-up scan in 48h.',
-  }),
+  sendAssistantMessage: async (input) => {
+    const userPrompt = String(input?.userPrompt || '').trim()
+    const userId = String(input?.userId || '').trim()
+
+    if (!userPrompt) {
+      throw new Error('userPrompt is required for assistant message')
+    }
+
+    if (!userId) {
+      throw new Error('userId is required for assistant message')
+    }
+
+    return requestJson('/api/assistant/message', {
+      method: 'POST',
+      body: JSON.stringify({
+        user_prompt: userPrompt,
+        user_id: userId,
+        zone: input?.zone || null,
+      }),
+    })
+  },
+
+  getTreatmentPlan: async (input) => {
+    const disease = String(input?.disease || '').trim()
+    const cropType = String(input?.cropType || '').trim()
+    const treatmentPlan = String(input?.treatmentPlan || '').trim()
+    const userId = String(input?.userId || '').trim()
+    const farmSizeHectares = toFiniteNumber(input?.farmSizeHectares)
+    const survivalProb = toFiniteNumber(input?.survivalProb)
+
+    if (!disease || !cropType || !treatmentPlan || !userId) {
+      throw new Error('disease, cropType, treatmentPlan, and userId are required for treatment plan')
+    }
+
+    if (farmSizeHectares === null || farmSizeHectares <= 0) {
+      throw new Error('farmSizeHectares must be greater than 0')
+    }
+
+    if (survivalProb === null || survivalProb < 0 || survivalProb > 1) {
+      throw new Error('survivalProb must be between 0 and 1')
+    }
+
+    return requestJson('/api/treatment', {
+      method: 'POST',
+      body: JSON.stringify({
+        disease,
+        zone: input?.zone || null,
+        crop_type: cropType,
+        treatment_plan: treatmentPlan,
+        user_id: userId,
+        farm_size_hectares: farmSizeHectares,
+        survival_prob: survivalProb,
+        lat: toFiniteNumber(input?.lat),
+        lng: toFiniteNumber(input?.lng),
+        weatherContext: input?.weatherContext || null,
+        treatment_cost_rm: toFiniteNumber(input?.treatmentCostRm),
+      }),
+    })
+  },
+
+  getInventory: async ({ userId }) => {
+    const safeUserId = String(userId || '').trim()
+    if (!safeUserId) {
+      throw new Error('userId is required for inventory lookup')
+    }
+
+    return requestJson(`/api/inventory${buildQueryString({ user_id: safeUserId })}`, {
+      method: 'GET',
+    })
+  },
+
+  updateInventoryItem: async (itemId, { userId, liters }) => {
+    const safeItemId = String(itemId || '').trim()
+    const safeUserId = String(userId || '').trim()
+    const safeLiters = toFiniteNumber(liters)
+
+    if (!safeItemId || !safeUserId) {
+      throw new Error('itemId and userId are required for inventory updates')
+    }
+
+    if (safeLiters === null || safeLiters < 0) {
+      throw new Error('liters must be a non-negative number')
+    }
+
+    return requestJson(`/api/inventory/${encodeURIComponent(safeItemId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        user_id: safeUserId,
+        liters: safeLiters,
+      }),
+    })
+  },
+
+  getDashboardSummary: async (input) => {
+    const userId = String(input?.userId || '').trim()
+    const cropType = String(input?.cropType || '').trim()
+    const treatmentPlan = String(input?.treatmentPlan || '').trim()
+    const farmSizeHectares = toFiniteNumber(input?.farmSizeHectares)
+    const survivalProb = toFiniteNumber(input?.survivalProb)
+
+    if (!userId || !cropType || !treatmentPlan) {
+      throw new Error('userId, cropType, and treatmentPlan are required for dashboard summary')
+    }
+
+    if (farmSizeHectares === null || farmSizeHectares <= 0) {
+      throw new Error('farmSizeHectares must be greater than 0')
+    }
+
+    if (survivalProb === null || survivalProb < 0 || survivalProb > 1) {
+      throw new Error('survivalProb must be between 0 and 1')
+    }
+
+    return requestJson('/api/dashboard/summary', {
+      method: 'POST',
+      body: JSON.stringify({
+        user_id: userId,
+        crop_type: cropType,
+        treatment_plan: treatmentPlan,
+        farm_size_hectares: farmSizeHectares,
+        survival_prob: survivalProb,
+        lat: toFiniteNumber(input?.lat),
+        lng: toFiniteNumber(input?.lng),
+      }),
+    })
+  },
 }

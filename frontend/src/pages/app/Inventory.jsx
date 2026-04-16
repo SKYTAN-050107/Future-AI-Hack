@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   IconBug,
   IconChevronRight,
@@ -7,19 +7,39 @@ import {
   IconSprout,
 } from '../../components/icons/UiIcons'
 import SectionHeader from '../../components/ui/SectionHeader'
+import { getInventory } from '../../api/inventory'
+import { useSessionContext } from '../../hooks/useSessionContext'
 
 const FILTERS = ['All', 'Pesticides', 'Fungicides', 'Fertilizers']
 
-const INVENTORY_ITEMS = [
-  { id: 'amistar-top-325sc', name: 'Amistar Top 325SC', category: 'Fungicides', liters: 6.4 },
-  { id: 'nativo-75wg', name: 'Nativo 75WG', category: 'Fungicides', liters: 1.8 },
-  { id: 'score-250ec', name: 'Score 250EC', category: 'Fungicides', liters: 7.0 },
-  { id: 'regent-03g', name: 'Regent 0.3G', category: 'Pesticides', liters: 7.2 },
-  { id: 'virtako-40wg', name: 'Virtako 40WG', category: 'Pesticides', liters: 4.3 },
-  { id: 'urea-46', name: 'Urea 46', category: 'Fertilizers', liters: 8.9 },
-  { id: 'npk-151515', name: 'NPK 15-15-15', category: 'Fertilizers', liters: 6.1 },
-  { id: 'foliar-znb', name: 'Foliar Booster ZnB', category: 'Fertilizers', liters: 5.4 },
-]
+function normalizeInventoryItem(rawItem) {
+  const liters = Number(rawItem?.liters)
+
+  return {
+    id: String(rawItem?.id || ''),
+    name: String(rawItem?.name || 'Unnamed Item'),
+    category: String(rawItem?.category || 'Uncategorized'),
+    liters: Number.isFinite(liters) ? liters : 0,
+  }
+}
+
+function formatLastUpdated(value) {
+  if (!value) {
+    return 'Unknown'
+  }
+
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) {
+    return 'Unknown'
+  }
+
+  return new Intl.DateTimeFormat('en-MY', {
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(parsed)
+}
 
 function getStockTone(liters) {
   if (liters < 2) {
@@ -46,28 +66,77 @@ function getCategoryIcon(category) {
 }
 
 export default function Inventory() {
+  const { user } = useSessionContext()
   const [activeFilter, setActiveFilter] = useState('All')
+  const [items, setItems] = useState([])
+  const [lastUpdatedLabel, setLastUpdatedLabel] = useState('Unknown')
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let active = true
+    const userId = String(user?.uid || '').trim()
+
+    if (!userId) {
+      setItems([])
+      setLastUpdatedLabel('Unknown')
+      setError('Sign in to load inventory.')
+      return undefined
+    }
+
+    setError('')
+    getInventory({ userId })
+      .then((response) => {
+        if (!active) {
+          return
+        }
+
+        const nextItems = Array.isArray(response?.items)
+          ? response.items.map(normalizeInventoryItem)
+          : []
+        setItems(nextItems)
+        setLastUpdatedLabel(formatLastUpdated(response?.last_updated_iso))
+      })
+      .catch((loadError) => {
+        if (!active) {
+          return
+        }
+
+        setItems([])
+        setLastUpdatedLabel('Unknown')
+        setError(loadError?.message || 'Unable to load inventory')
+      })
+
+    return () => {
+      active = false
+    }
+  }, [user?.uid])
 
   const lowStockCount = useMemo(
-    () => INVENTORY_ITEMS.filter((item) => item.liters < 5).length,
-    [],
+    () => items.filter((item) => item.liters < 5).length,
+    [items],
   )
 
   const visibleItems = useMemo(
     () => (activeFilter === 'All'
-      ? INVENTORY_ITEMS
-      : INVENTORY_ITEMS.filter((item) => item.category === activeFilter)),
-    [activeFilter],
+      ? items
+      : items.filter((item) => item.category === activeFilter)),
+    [activeFilter, items],
   )
 
   return (
     <section className="pg-page pg-inventory-page" aria-label="Chemical inventory">
       <SectionHeader title="Inventory" align="center" />
 
+      {error ? (
+        <article className="pg-card">
+          <p>{error}</p>
+        </article>
+      ) : null}
+
       <div className="pg-inventory-stat-row" aria-label="Inventory quick statistics">
-        <span className="pg-inventory-stat-chip">Total Items: {INVENTORY_ITEMS.length}</span>
+        <span className="pg-inventory-stat-chip">Total Items: {items.length}</span>
         <span className="pg-inventory-stat-chip pg-inventory-stat-chip-alert">Low Stock: {lowStockCount}</span>
-        <span className="pg-inventory-stat-chip">Last Updated: Today</span>
+        <span className="pg-inventory-stat-chip">Last Updated: {lastUpdatedLabel}</span>
       </div>
 
       <div className="pg-inventory-filter-row" role="tablist" aria-label="Filter inventory category">
@@ -86,6 +155,12 @@ export default function Inventory() {
       </div>
 
       <div className="pg-inventory-list" aria-live="polite">
+        {visibleItems.length === 0 ? (
+          <article className="pg-card">
+            <p>{error ? 'Inventory unavailable.' : 'No inventory items found.'}</p>
+          </article>
+        ) : null}
+
         {visibleItems.map((item) => {
           const stockTone = getStockTone(item.liters)
           const ItemIcon = getCategoryIcon(item.category)

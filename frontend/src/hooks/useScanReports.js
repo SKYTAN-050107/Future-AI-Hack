@@ -10,11 +10,16 @@ export function useScanReports() {
       throw new Error('Firebase is not configured')
     }
 
+    const survivalProbValue = Number(report.survivalProb ?? report.survival_prob)
+
     const payload = {
       disease: report.disease || 'Unknown',
       severity: Number(report.severity || 0),
       confidence: Number(report.confidence || 0),
       spreadRisk: report.spreadRisk || report.spread_risk || 'Unknown',
+      cropType: report.cropType || report.crop_type || null,
+      treatmentPlan: report.treatmentPlan || report.treatment_plan || null,
+      survivalProb: Number.isFinite(survivalProbValue) ? survivalProbValue : null,
       status: report.status || 'normal',
       source: report.source || 'camera',
       gridId: report.gridId || null,

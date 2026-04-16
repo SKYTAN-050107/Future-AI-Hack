@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { IconArrowLeft, IconImage, IconList, IconSparkles } from '../../components/icons/UiIcons'
 import { scanAndAskAssistant } from '../../api/scan'
+import { sendAssistantMessage } from '../../api/assistant'
 import { useScanHistory } from '../../hooks/useScanHistory'
 import { useScanReports } from '../../hooks/useScanReports'
+import { useSessionContext } from '../../hooks/useSessionContext'
 
 const STORAGE_KEY = 'pg_chatbot_conversations_v1'
 const PENDING_CAPTURE_KEY = 'pg_pending_scan_capture_v1'
@@ -170,44 +172,10 @@ function formatConversationTime(value) {
   }).format(new Date(value))
 }
 
-function buildAssistantReply(prompt, reports) {
-  const normalized = prompt.toLowerCase()
-  const asksHistory = normalized.includes('history') || normalized.includes('scan') || normalized.includes('report')
-  const asksTreatment = normalized.includes('treat') || normalized.includes('spray') || normalized.includes('cost')
-
-  if (asksHistory) {
-    if (reports.length === 0) {
-      return 'No scan history is available yet. Capture a leaf scan and I will summarize risk and next action.'
-    }
-
-    const latest = reports[0]
-    return `Latest scan: ${latest?.disease || 'Unknown issue'} at ${Number(latest?.severity || 0)}% severity with ${Number(latest?.confidence || 0)}% confidence. I can break down treatment options when you are ready.`
-  }
-
-  if (asksTreatment) {
-    if (reports.length === 0) {
-      return 'I need at least one scan result before recommending a treatment plan. Please run the scanner first.'
-    }
-
-    const latest = reports[0]
-    const severity = Number(latest?.severity || 0)
-    if (severity >= 60) {
-      return 'Risk is high. Prioritize treatment within 24 hours, check wind and rain windows, and verify stock before field application.'
-    }
-
-    if (severity >= 30) {
-      return 'Risk is moderate. Monitor for 24 to 48 hours, prepare spray inventory, and target calm weather for application timing.'
-    }
-
-    return 'Risk is low. Continue monitoring, avoid unnecessary chemical use, and log the next scan for trend tracking.'
-  }
-
-  return 'Request received. I can help with disease summary, scan trend interpretation, and treatment planning with inventory awareness.'
-}
-
 export default function Chatbot() {
   const location = useLocation()
   const navigate = useNavigate()
+  const { user } = useSessionContext()
   const { reports, timelineItems, isLoading, error } = useScanHistory()
   const { saveScanReport } = useScanReports()
   const [conversationHistory, setConversationHistory] = useState(loadStoredConversations)
@@ -350,7 +318,7 @@ export default function Chatbot() {
     ].slice(0, 24))
   }
 
-  const handleSend = (rawText = input) => {
+  const handleSend = async (rawText = input) => {
     const trimmed = rawText.trim()
     if (!trimmed || isThinking) {
       return
@@ -370,15 +338,23 @@ export default function Chatbot() {
     setInput('')
     setIsThinking(true)
 
-    window.setTimeout(() => {
-      const aiResponse = { role: 'ai', text: buildAssistantReply(trimmed, reports) }
-      setMessages((prev) => {
-        const next = [...prev, aiResponse]
-        persistConversation(conversationId, next)
-        return next
+    try {
+      const response = await sendAssistantMessage({
+        userPrompt: trimmed,
+        userId: String(user?.uid || '').trim(),
+        zone: reports[0]?.gridId || reports[0]?.zone || null,
       })
+
+      const assistantText = String(response?.assistant_reply || '').trim() || 'No assistant response received.'
+      appendAssistantMessage(conversationId, assistantText)
+    } catch (messageError) {
+      appendAssistantMessage(
+        conversationId,
+        messageError?.message || 'I could not process your request right now. Please try again.',
+      )
+    } finally {
       setIsThinking(false)
-    }, 900)
+    }
   }
 
   const appendAssistantMessage = (conversationId, text) => {
