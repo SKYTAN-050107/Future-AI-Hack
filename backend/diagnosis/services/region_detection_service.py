@@ -60,6 +60,34 @@ Constraints:
 MAX_RETRIES = 2
 RETRY_DELAY = 1.0
 
+VERTEX_MODEL_PREFIX = "publishers/google/models/"
+DEFAULT_VERTEX_MODEL_CANDIDATES = (
+    "publishers/google/models/gemini-2.5-flash",
+    "publishers/google/models/gemini-2.0-flash-001",
+)
+
+
+def _normalize_vertex_model_name(model_name: str) -> str:
+    normalized = (model_name or "").strip()
+    if not normalized:
+        return DEFAULT_VERTEX_MODEL_CANDIDATES[0]
+    if normalized.startswith(VERTEX_MODEL_PREFIX):
+        return normalized
+    return f"{VERTEX_MODEL_PREFIX}{normalized}"
+
+
+def _build_vertex_model_candidates(model_name: str) -> list[str]:
+    candidates = [_normalize_vertex_model_name(model_name)]
+    for fallback_model in DEFAULT_VERTEX_MODEL_CANDIDATES:
+        if fallback_model not in candidates:
+            candidates.append(fallback_model)
+    return candidates
+
+
+def _is_vertex_model_not_found(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return "publisher model" in message and "not found" in message
+
 
 class RegionDetectionService:
     """Detect multiple crop regions in a single photo using Gemini 2.0 Flash."""
@@ -71,7 +99,33 @@ class RegionDetectionService:
             project=settings.GCP_PROJECT_ID,
             location=settings.GCP_REGION,
         )
-        self._model_name = settings.GEMINI_MODEL_NAME
+        self._model_candidates = _build_vertex_model_candidates(settings.GEMINI_MODEL_NAME)
+        self._model_name = self._model_candidates[0]
+
+    def _generate_content_with_model_fallback(
+        self,
+        *,
+        contents: list[types.Part],
+        config: types.GenerateContentConfig,
+    ):
+        for index, model_name in enumerate(self._model_candidates):
+            try:
+                return self._client.models.generate_content(
+                    model=model_name,
+                    contents=contents,
+                    config=config,
+                )
+            except Exception as exc:
+                has_fallback = index < len(self._model_candidates) - 1
+                if has_fallback and _is_vertex_model_not_found(exc):
+                    next_model = self._model_candidates[index + 1]
+                    logger.warning(
+                        "Vertex model unavailable (%s). Retrying with %s",
+                        model_name,
+                        next_model,
+                    )
+                    continue
+                raise
 
     async def detect_regions(self, base64_image: str) -> list[HttpScanRegion]:
         """Detect multiple crop regions from a single base64-encoded image.
@@ -140,8 +194,7 @@ class RegionDetectionService:
 
         for attempt in range(1, MAX_RETRIES + 1):
             try:
-                response = self._client.models.generate_content(
-                    model=self._model_name,
+                response = self._generate_content_with_model_fallback(
                     contents=[
                         types.Part(
                             inline_data=types.Blob(
