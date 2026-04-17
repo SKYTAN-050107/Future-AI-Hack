@@ -10,6 +10,11 @@ export async function updateInventoryItem(itemId, payload) {
   return response
 }
 
+export async function deleteInventoryItem(itemId, payload) {
+  const response = await gateway.deleteInventoryItem(itemId, payload)
+  return response
+}
+
 export async function createInventoryItem(payload) {
   const response = await gateway.createInventoryItem(payload)
   return response

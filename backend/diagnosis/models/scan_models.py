@@ -207,6 +207,7 @@ class InventoryItemResponse(BaseModel):
 
     id: str
     name: str
+    description: str | None = None
     category: str
     liters: float = Field(..., ge=0.0)
     unit_cost_rm: float = Field(default=0.0, ge=0.0)
@@ -227,6 +228,7 @@ class InventoryUpdateRequest(BaseModel):
 
     user_id: str = Field(..., min_length=1)
     liters: float = Field(..., ge=0.0)
+    description: str | None = None
 
 
 class InventoryUpdateResponse(BaseModel):
@@ -234,6 +236,7 @@ class InventoryUpdateResponse(BaseModel):
 
     id: str
     liters: float = Field(..., ge=0.0)
+    description: str | None = None
     updated: bool
 
 
@@ -266,6 +269,7 @@ class InventoryV1ItemResponse(BaseModel):
 
     id: str
     name: str
+    description: str | None = None
     quantity: float = Field(..., ge=0.0)
     usage: str
     unit: str
@@ -284,6 +288,14 @@ class InventoryStockUpdateResponse(BaseModel):
 
     success: bool = True
     item: InventoryV1ItemResponse
+
+
+class InventoryDeleteResponse(BaseModel):
+    """Result of deleting an inventory item."""
+
+    success: bool = True
+    id: str
+    deleted: bool
 
 
 class DashboardSummaryRequest(BaseModel):

@@ -196,10 +196,12 @@ export const gateway = {
     })
   },
 
-  updateInventoryItem: async (itemId, { userId, liters }) => {
+  updateInventoryItem: async (itemId, { userId, liters, description }) => {
     const safeItemId = String(itemId || '').trim()
     const safeUserId = String(userId || '').trim()
     const safeLiters = toFiniteNumber(liters)
+    const hasDescription = description !== undefined && description !== null
+    const safeDescription = hasDescription ? String(description).trim() : null
 
     if (!safeItemId || !safeUserId) {
       throw new Error('itemId and userId are required for inventory updates')
@@ -209,12 +211,31 @@ export const gateway = {
       throw new Error('liters must be a non-negative number')
     }
 
+    const body = {
+      user_id: safeUserId,
+      liters: safeLiters,
+    }
+
+    if (hasDescription) {
+      body.description = safeDescription
+    }
+
     return requestJson(`/api/inventory/${encodeURIComponent(safeItemId)}`, {
       method: 'PATCH',
-      body: JSON.stringify({
-        user_id: safeUserId,
-        liters: safeLiters,
-      }),
+      body: JSON.stringify(body),
+    })
+  },
+
+  deleteInventoryItem: async (itemId, { userId }) => {
+    const safeItemId = String(itemId || '').trim()
+    const safeUserId = String(userId || '').trim()
+
+    if (!safeItemId || !safeUserId) {
+      throw new Error('itemId and userId are required for inventory removal')
+    }
+
+    return requestJson(`/api/inventory/${encodeURIComponent(safeItemId)}${buildQueryString({ user_id: safeUserId })}`, {
+      method: 'DELETE',
     })
   },
 

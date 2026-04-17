@@ -25,7 +25,13 @@ class InventoryService:
 
         return await asyncio.to_thread(self._list_items_sync, user_id)
 
-    async def update_item_liters(self, user_id: str, item_id: str, liters: float) -> dict:
+    async def update_item_liters(
+        self,
+        user_id: str,
+        item_id: str,
+        liters: float,
+        description: str | None = None,
+    ) -> dict:
         if not user_id:
             raise ValueError("user_id is required")
         if not item_id:
@@ -33,7 +39,13 @@ class InventoryService:
         if liters < 0:
             raise ValueError("liters must be >= 0")
 
-        return await asyncio.to_thread(self._update_item_liters_sync, user_id, item_id, liters)
+        return await asyncio.to_thread(
+            self._update_item_liters_sync,
+            user_id,
+            item_id,
+            liters,
+            description,
+        )
 
     async def create_item_v1(
         self,
@@ -89,6 +101,14 @@ class InventoryService:
             float(quantity_change),
         )
 
+    async def delete_item_v1(self, *, user_id: str, item_id: str) -> dict:
+        if not user_id:
+            raise ValueError("user_id is required")
+        if not item_id:
+            raise ValueError("item_id is required")
+
+        return await asyncio.to_thread(self._delete_item_v1_sync, user_id, item_id)
+
     # ── Synchronous internals (Firestore SDK is sync) ─────────────────
 
     def _list_items_sync(self, user_id: str) -> dict:
@@ -107,6 +127,7 @@ class InventoryService:
             item = {
                 "id": str(item_v1.get("id") or ""),
                 "name": str(item_v1.get("name") or "Unnamed Item"),
+                "description": item_v1.get("description"),
                 "category": str(item_v1.get("usage") or "Uncategorized").title(),
                 "liters": liters,
                 "unit_cost_rm": 0.0,
@@ -229,7 +250,13 @@ class InventoryService:
         )
         return item
 
-    def _update_item_liters_sync(self, user_id: str, item_id: str, liters: float) -> dict:
+    def _update_item_liters_sync(
+        self,
+        user_id: str,
+        item_id: str,
+        liters: float,
+        description: str | None = None,
+    ) -> dict:
         ref = (
             self._db.collection("users")
             .document(user_id)
@@ -241,22 +268,49 @@ class InventoryService:
         if not snapshot.exists:
             raise ValueError(f"Inventory item not found: {item_id}")
 
-        ref.set(
-            {
-                "quantity": liters,
-                "liters": liters,
-                "updated_at": firestore.SERVER_TIMESTAMP,
-                "lastUpdated": firestore.SERVER_TIMESTAMP,
-            },
-            merge=True,
-        )
+        payload = {
+            "quantity": liters,
+            "liters": liters,
+            "updated_at": firestore.SERVER_TIMESTAMP,
+            "lastUpdated": firestore.SERVER_TIMESTAMP,
+        }
+
+        if description is not None:
+            payload["description"] = description.strip()
+
+        ref.set(payload, merge=True)
+
+        updated_snapshot = ref.get()
+        updated_data = updated_snapshot.to_dict() or {}
 
         logger.info("Firestore inventory absolute update: user_id=%s item_id=%s liters=%.3f", user_id, item_id, liters)
 
         return {
             "id": item_id,
-            "liters": float(liters),
+            "liters": self._resolve_liters(updated_data),
+            "description": self._resolve_description(updated_data),
             "updated": True,
+        }
+
+    def _delete_item_v1_sync(self, user_id: str, item_id: str) -> dict:
+        ref = (
+            self._db.collection("users")
+            .document(user_id)
+            .collection("inventory")
+            .document(item_id)
+        )
+
+        snapshot = ref.get()
+        if not snapshot.exists:
+            raise ValueError(f"Inventory item not found: {item_id}")
+
+        ref.delete()
+        logger.info("Firestore inventory deleted: user_id=%s item_id=%s", user_id, item_id)
+
+        return {
+            "success": True,
+            "id": item_id,
+            "deleted": True,
         }
 
     @staticmethod
@@ -274,6 +328,14 @@ class InventoryService:
             except (TypeError, ValueError):
                 continue
         return 0.0
+
+    @staticmethod
+    def _resolve_description(data: dict) -> str | None:
+        value = data.get("description")
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text if text else None
 
     @staticmethod
     def _parse_iso_datetime(value: object) -> datetime | None:
@@ -304,6 +366,7 @@ class InventoryService:
         return {
             "id": item_id,
             "name": str(data.get("name") or item_id),
+            "description": self._resolve_description(data),
             "quantity": self._resolve_quantity(data),
             "usage": str(data.get("usage") or data.get("category") or "general"),
             "unit": str(data.get("unit") or "liters"),

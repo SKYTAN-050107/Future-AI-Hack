@@ -30,6 +30,7 @@ from models.scan_models import (
     HttpScanAssistantMultiResponse,
     InventoryCreateRequest,
     InventoryCreateResponse,
+    InventoryDeleteResponse,
     InventoryListResponse,
     InventoryStockUpdateRequest,
     InventoryStockUpdateResponse,
@@ -809,6 +810,7 @@ async def inventory_update(item_id: str, payload: InventoryUpdateRequest) -> Inv
             user_id=payload.user_id,
             item_id=item_id,
             liters=payload.liters,
+            description=payload.description,
         )
     except ValueError as exc:
         return _error_response(400, str(exc))
@@ -824,6 +826,34 @@ async def inventory_update(item_id: str, payload: InventoryUpdateRequest) -> Inv
     )
 
     return InventoryUpdateResponse.model_validate(result)
+
+
+@router.delete("/api/inventory/{item_id}", response_model=InventoryDeleteResponse)
+@router.delete("/api/v1/inventory/{item_id}", response_model=InventoryDeleteResponse)
+async def inventory_delete(item_id: str, user_id: str = Query(..., min_length=1)) -> InventoryDeleteResponse | JSONResponse:
+    """Delete a user inventory item."""
+    service = _get_inventory_service()
+    if service is None:
+        return _error_response(503, _inventory_service_init_error or "inventory service unavailable")
+
+    try:
+        result = await service.delete_item_v1(
+            user_id=user_id,
+            item_id=item_id,
+        )
+    except ValueError as exc:
+        return _error_response(400, str(exc))
+    except Exception as exc:
+        logger.exception("Inventory delete failed: %s", exc)
+        return _error_response(502, f"Inventory service failed: {exc}")
+
+    logger.info(
+        "Inventory delete response: user_id=%s item_id=%s",
+        user_id,
+        item_id,
+    )
+
+    return InventoryDeleteResponse.model_validate(result)
 
 
 @router.get("/api/zones", response_model=ZoneHealthSummaryResponse)

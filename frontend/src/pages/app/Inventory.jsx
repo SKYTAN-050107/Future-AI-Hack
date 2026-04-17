@@ -7,7 +7,12 @@ import {
   IconSprout,
 } from '../../components/icons/UiIcons'
 import SectionHeader from '../../components/ui/SectionHeader'
-import { createInventoryItem, getInventory } from '../../api/inventory'
+import {
+  createInventoryItem,
+  deleteInventoryItem,
+  getInventory,
+  updateInventoryItem,
+} from '../../api/inventory'
 import { useSessionContext } from '../../hooks/useSessionContext'
 
 const FILTERS = ['All', 'Pesticides', 'Fungicides', 'Fertilizers']
@@ -18,6 +23,7 @@ function normalizeInventoryItem(rawItem) {
   return {
     id: String(rawItem?.id || ''),
     name: String(rawItem?.name || 'Unnamed Item'),
+    description: String(rawItem?.description || '').trim(),
     category: String(rawItem?.category || 'Uncategorized'),
     liters: Number.isFinite(liters) ? liters : 0,
   }
@@ -65,6 +71,17 @@ function getCategoryIcon(category) {
   return IconSprout
 }
 
+function parseInventoryResponse(response) {
+  const nextItems = Array.isArray(response?.items)
+    ? response.items.map(normalizeInventoryItem)
+    : []
+
+  return {
+    nextItems,
+    updatedLabel: formatLastUpdated(response?.last_updated_iso),
+  }
+}
+
 export default function Inventory() {
   const { user } = useSessionContext()
   const [activeFilter, setActiveFilter] = useState('All')
@@ -72,6 +89,37 @@ export default function Inventory() {
   const [lastUpdatedLabel, setLastUpdatedLabel] = useState('Unknown')
   const [error, setError] = useState('')
   const [isCreatingItem, setIsCreatingItem] = useState(false)
+  const [isUpdatingItem, setIsUpdatingItem] = useState(false)
+  const [isRemovingItem, setIsRemovingItem] = useState(false)
+  const [selectedItemId, setSelectedItemId] = useState('')
+  const [isActionMenuOpen, setIsActionMenuOpen] = useState(false)
+
+  const selectedItem = useMemo(
+    () => items.find((item) => item.id === selectedItemId) || null,
+    [items, selectedItemId],
+  )
+
+  const isActionBusy = isCreatingItem || isUpdatingItem || isRemovingItem
+
+  useEffect(() => {
+    if (!selectedItemId) {
+      return
+    }
+
+    const stillExists = items.some((item) => item.id === selectedItemId)
+    if (!stillExists) {
+      setSelectedItemId('')
+    }
+  }, [items, selectedItemId])
+
+  async function refreshInventory(userId) {
+    const listResponse = await getInventory({ userId })
+    console.log('[Inventory API] refreshed list response', listResponse)
+
+    const { nextItems, updatedLabel } = parseInventoryResponse(listResponse)
+    setItems(nextItems)
+    setLastUpdatedLabel(updatedLabel)
+  }
 
   useEffect(() => {
     let active = true
@@ -93,11 +141,9 @@ export default function Inventory() {
 
         console.log('[Inventory API] list response', response)
 
-        const nextItems = Array.isArray(response?.items)
-          ? response.items.map(normalizeInventoryItem)
-          : []
+        const { nextItems, updatedLabel } = parseInventoryResponse(response)
         setItems(nextItems)
-        setLastUpdatedLabel(formatLastUpdated(response?.last_updated_iso))
+        setLastUpdatedLabel(updatedLabel)
       })
       .catch((loadError) => {
         if (!active) {
@@ -149,6 +195,7 @@ export default function Inventory() {
 
     setIsCreatingItem(true)
     setError('')
+    setIsActionMenuOpen(false)
 
     try {
       const createResponse = await createInventoryItem({
@@ -159,20 +206,101 @@ export default function Inventory() {
         unit,
       })
       console.log('[Inventory API] create response', createResponse)
-
-      const listResponse = await getInventory({ userId })
-      console.log('[Inventory API] refreshed list response', listResponse)
-
-      const nextItems = Array.isArray(listResponse?.items)
-        ? listResponse.items.map(normalizeInventoryItem)
-        : []
-
-      setItems(nextItems)
-      setLastUpdatedLabel(formatLastUpdated(listResponse?.last_updated_iso))
+      await refreshInventory(userId)
     } catch (createError) {
       setError(createError?.message || 'Unable to add inventory item')
     } finally {
       setIsCreatingItem(false)
+    }
+  }
+
+  async function handleEditInventory() {
+    const userId = String(user?.uid || '').trim()
+    if (!userId) {
+      setError('Sign in to edit inventory.')
+      return
+    }
+
+    if (!selectedItem) {
+      setError('Select an inventory item to edit.')
+      return
+    }
+
+    const quantityRaw = window.prompt(
+      `New quantity for ${selectedItem.name} (liters)`,
+      String(selectedItem.liters),
+    )
+
+    if (quantityRaw === null) {
+      return
+    }
+
+    const descriptionRaw = window.prompt(
+      `Description for ${selectedItem.name}`,
+      selectedItem.description || '',
+    )
+
+    if (descriptionRaw === null) {
+      return
+    }
+
+    const liters = Number(quantityRaw)
+    if (!Number.isFinite(liters) || liters < 0) {
+      setError('Quantity must be a non-negative number.')
+      return
+    }
+
+    const description = String(descriptionRaw).trim()
+
+    setIsUpdatingItem(true)
+    setError('')
+    setIsActionMenuOpen(false)
+
+    try {
+      const updateResponse = await updateInventoryItem(selectedItem.id, {
+        userId,
+        liters,
+        description,
+      })
+      console.log('[Inventory API] update response', updateResponse)
+      await refreshInventory(userId)
+    } catch (updateError) {
+      setError(updateError?.message || 'Unable to edit inventory item')
+    } finally {
+      setIsUpdatingItem(false)
+    }
+  }
+
+  async function handleRemoveInventory() {
+    const userId = String(user?.uid || '').trim()
+    if (!userId) {
+      setError('Sign in to remove inventory.')
+      return
+    }
+
+    if (!selectedItem) {
+      setError('Select an inventory item to remove.')
+      return
+    }
+
+    const confirmed = window.confirm(`Remove ${selectedItem.name} from inventory?`)
+    if (!confirmed) {
+      return
+    }
+
+    setIsRemovingItem(true)
+    setError('')
+    setIsActionMenuOpen(false)
+
+    try {
+      const deleteResponse = await deleteInventoryItem(selectedItem.id, { userId })
+      console.log('[Inventory API] delete response', deleteResponse)
+      await refreshInventory(userId)
+      setSelectedItemId('')
+    } catch (removeError) {
+      setError(removeError?.message || 'Unable to remove inventory item')
+    } finally {
+      setIsRemovingItem(false)
     }
   }
 
@@ -219,6 +347,12 @@ export default function Inventory() {
         ))}
       </div>
 
+      <p className="pg-inventory-selected-note" aria-live="polite">
+        {selectedItem
+          ? `Selected: ${selectedItem.name}. Use View more to edit or remove it.`
+          : 'Select an item, then tap View more to edit or remove it.'}
+      </p>
+
       <div className="pg-inventory-list" aria-live="polite">
         {visibleItems.length === 0 ? (
           <article className="pg-card">
@@ -235,8 +369,13 @@ export default function Inventory() {
             <button
               key={item.id}
               type="button"
-              className="pg-inventory-item"
+              className={`pg-inventory-item ${selectedItemId === item.id ? 'is-selected' : ''}`}
               aria-label={`${item.name}, ${item.liters.toFixed(1)} liters`}
+              aria-pressed={selectedItemId === item.id}
+              onClick={() => {
+                setSelectedItemId(item.id)
+                setError('')
+              }}
             >
               <span className="pg-inventory-item-icon" aria-hidden="true">
                 <ItemIcon className="pg-icon" />
@@ -249,6 +388,10 @@ export default function Inventory() {
                     {isLowStock ? 'Low Stock' : 'In Stock'}
                   </span>
                 </div>
+
+                {item.description ? (
+                  <p className="pg-inventory-item-description">{item.description}</p>
+                ) : null}
 
                 <div className="pg-inventory-progress" role="img" aria-label={`Stock ${item.liters.toFixed(1)} liters out of 10`}>
                   <span
@@ -269,15 +412,51 @@ export default function Inventory() {
         })}
       </div>
 
-      <button
-        type="button"
-        className="pg-inventory-add-fab"
-        aria-label="Add inventory item"
-        onClick={handleAddInventory}
-        disabled={isCreatingItem}
-      >
-        <IconPlus className="pg-icon" />
-      </button>
+      <div className={`pg-inventory-fab-stack ${isActionMenuOpen ? 'is-open' : ''}`}>
+        <div
+          id="pg-inventory-fab-actions"
+          className="pg-inventory-fab-actions"
+          aria-hidden={!isActionMenuOpen}
+        >
+          <button
+            type="button"
+            className="pg-inventory-fab-action"
+            onClick={handleAddInventory}
+            disabled={isActionBusy}
+          >
+            Add
+          </button>
+          <button
+            type="button"
+            className="pg-inventory-fab-action"
+            onClick={handleEditInventory}
+            disabled={isActionBusy || !selectedItem}
+          >
+            Edit
+          </button>
+          <button
+            type="button"
+            className="pg-inventory-fab-action is-danger"
+            onClick={handleRemoveInventory}
+            disabled={isActionBusy || !selectedItem}
+          >
+            Remove
+          </button>
+        </div>
+
+        <button
+          type="button"
+          className="pg-inventory-add-fab pg-inventory-add-fab-main"
+          aria-label="View more inventory actions"
+          aria-expanded={isActionMenuOpen}
+          aria-controls="pg-inventory-fab-actions"
+          onClick={() => setIsActionMenuOpen((open) => !open)}
+          disabled={isActionBusy}
+        >
+          <span className="pg-inventory-add-fab-label"></span>
+          <IconPlus className={`pg-icon pg-inventory-fab-toggle-icon ${isActionMenuOpen ? 'is-open' : ''}`} />
+        </button>
+      </div>
     </section>
   )
 }
