@@ -1,6 +1,6 @@
 import { useCallback } from 'react'
 import { addDoc, collection, serverTimestamp } from 'firebase/firestore'
-import { db, isFirebaseConfigured } from '../firebase'
+import { auth, db, isFirebaseConfigured } from '../firebase'
 
 const REPORT_COLLECTION = 'scanReports'
 
@@ -10,9 +10,17 @@ export function useScanReports() {
       throw new Error('Firebase is not configured')
     }
 
+    const ownerUid = String(report?.ownerUid || report?.userId || auth?.currentUser?.uid || '').trim()
+    if (!ownerUid) {
+      throw new Error('Sign in is required to save scan reports')
+    }
+
     const survivalProbValue = Number(report.survivalProb ?? report.survival_prob)
 
     const payload = {
+      ownerUid,
+      userId: ownerUid,
+      uid: ownerUid,
       disease: report.disease || 'Unknown',
       severity: Number(report.severity || 0),
       confidence: Number(report.confidence || 0),

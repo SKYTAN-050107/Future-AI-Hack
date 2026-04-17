@@ -3,7 +3,7 @@ Firestore service — records scan results and grid health updates.
 
 Writes to:
 - ``scanReports`` — triggers the ``updateGridStatus`` Cloud Function.
-- ``grids`` — direct health-state writes (triggers ``spatialPropagationAnalysis``).
+- ``users/{uid}/grids`` (fallback ``grids``) — direct health-state writes.
 
 Uses ``asyncio.to_thread`` to run the synchronous Firestore SDK
 without blocking the event loop.
@@ -56,6 +56,7 @@ class FirestoreService:
         treatmentPlan: str,
         survivalProb: float,
         is_abnormal: bool,
+        user_id: str | None = None,
     ) -> str:
         """Write a scan report to Firestore and update grid health.
 
@@ -67,6 +68,9 @@ class FirestoreService:
         """
         doc_data = {
             "gridId": grid_id,
+            "ownerUid": user_id,
+            "userId": user_id,
+            "uid": user_id,
             "cropType": cropType,
             "disease": disease,
             "severityLevel": severity,
@@ -87,6 +91,7 @@ class FirestoreService:
             await asyncio.to_thread(
                 self._update_grid_health,
                 grid_id=grid_id,
+                user_id=user_id,
                 disease=disease,
                 severity=severity,
                 severityScore=severityScore,
@@ -137,13 +142,33 @@ class FirestoreService:
         disease: str,
         severity: str,
         severityScore: float,
+        user_id: str | None = None,
     ) -> None:
         """Update grid document health status to 'Infected'.
 
-        This write triggers the ``spatialPropagationAnalysis`` Cloud Function
-        which automatically flags neighboring grids within 200m as 'At-Risk'.
+        Prefers the user-scoped grid collection when ``user_id`` is provided.
+        Falls back to the legacy root collection for backward compatibility.
         """
-        grid_ref = self._db.collection(self._grid_col).document(grid_id)
+        grid_ref = None
+
+        if user_id:
+            user_grid_collection = (
+                self._db.collection("users")
+                .document(user_id)
+                .collection(self._grid_col)
+            )
+
+            by_grid_id = list(user_grid_collection.where("gridId", "==", grid_id).limit(1).stream())
+            if by_grid_id:
+                grid_ref = by_grid_id[0].reference
+            else:
+                direct_ref = user_grid_collection.document(grid_id)
+                if direct_ref.get().exists:
+                    grid_ref = direct_ref
+
+        if grid_ref is None:
+            grid_ref = self._db.collection(self._grid_col).document(grid_id)
+
         grid_ref.set(
             {
                 "healthStatus": "Infected",
@@ -156,6 +181,8 @@ class FirestoreService:
         )
 
         logger.info(
-            "Firestore grid %s → healthStatus='Infected' (disease=%s)",
-            grid_id, disease,
+            "Firestore grid %s (user_id=%s) → healthStatus='Infected' (disease=%s)",
+            grid_id,
+            user_id,
+            disease,
         )

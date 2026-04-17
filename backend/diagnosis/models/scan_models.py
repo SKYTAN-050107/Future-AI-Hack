@@ -68,6 +68,7 @@ class HttpScanRequest(BaseModel):
 
     source: str = Field(default="camera")
     grid_id: str | None = None
+    user_id: str | None = None
     base64_image: str = Field(..., min_length=16, description="Raw base64 or data URL image")
 
 
@@ -109,6 +110,7 @@ class HttpScanAssistantMultiRequest(BaseModel):
 
     source: str = Field(default="camera")
     grid_id: str | None = None
+    user_id: str | None = None
     regions: list[HttpScanRegion] = Field(..., min_length=1, description="Cropped regions to diagnose")
     user_prompt: str = Field(
         default="I just took this photo. Please analyze all detected crops and tell me what to do.",

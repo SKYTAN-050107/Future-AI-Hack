@@ -6,6 +6,7 @@ const turf = require('@turf/turf')
 admin.initializeApp()
 const db = admin.firestore()
 
+const USERS_COLLECTION = 'users'
 const GRID_COLLECTION = 'grids'
 const REPORT_COLLECTION = 'scanReports'
 const AT_RISK_DISTANCE_KM = 0.2
@@ -42,6 +43,36 @@ function shouldMarkAbnormal(report) {
   )
 }
 
+function getReportOwnerUid(report) {
+  const ownerUid = String(report?.ownerUid || report?.userId || report?.uid || '').trim()
+  return ownerUid || null
+}
+
+function getUserGridCollection(userId) {
+  return db.collection(USERS_COLLECTION).doc(userId).collection(GRID_COLLECTION)
+}
+
+async function findTargetGridDoc(userId, gridKey) {
+  const userGrids = getUserGridCollection(userId)
+
+  const byGridId = await userGrids.where('gridId', '==', gridKey).limit(1).get()
+  if (!byGridId.empty) {
+    return byGridId.docs[0]
+  }
+
+  const byFeatureId = await userGrids.where('mapFeatureId', '==', gridKey).limit(1).get()
+  if (!byFeatureId.empty) {
+    return byFeatureId.docs[0]
+  }
+
+  const byDocId = await userGrids.doc(gridKey).get()
+  if (byDocId.exists) {
+    return byDocId
+  }
+
+  return null
+}
+
 function polygonToFeature(gridDoc) {
   const polygon = deserializeGeometry(gridDoc?.polygon)
 
@@ -64,23 +95,20 @@ exports.updateGridStatus = onDocumentWritten(
     }
 
     const isAbnormal = shouldMarkAbnormal(after)
+    const ownerUid = getReportOwnerUid(after)
+    const reportGridKey = String(after.gridId || after.zone || '').trim()
 
-    if (!isAbnormal || !after.gridId) {
+    if (!isAbnormal || !reportGridKey || !ownerUid) {
       return
     }
 
-    const gridSnapshot = await db
-      .collection(GRID_COLLECTION)
-      .where('gridId', '==', after.gridId)
-      .limit(1)
-      .get()
+    const targetDoc = await findTargetGridDoc(ownerUid, reportGridKey)
 
-    if (gridSnapshot.empty) {
-      logger.warn(`No grid found for gridId=${after.gridId}`)
+    if (!targetDoc) {
+      logger.warn(`No user grid found for ownerUid=${ownerUid} and key=${reportGridKey}`)
       return
     }
 
-    const targetDoc = gridSnapshot.docs[0]
     await targetDoc.ref.set(
       {
         healthState: 'Infected',
@@ -92,11 +120,12 @@ exports.updateGridStatus = onDocumentWritten(
 )
 
 exports.spatialPropagationAnalysis = onDocumentWritten(
-  `${GRID_COLLECTION}/{gridDocId}`,
+  `${USERS_COLLECTION}/{userId}/${GRID_COLLECTION}/{gridDocId}`,
   async (event) => {
     const after = event.data?.after?.data()
+    const userId = String(event.params?.userId || '').trim()
 
-    if (!after || after.healthState !== 'Infected') {
+    if (!after || after.healthState !== 'Infected' || !userId) {
       return
     }
 
@@ -107,7 +136,7 @@ exports.spatialPropagationAnalysis = onDocumentWritten(
     }
 
     const infectedCentroid = turf.centroid(infectedFeature)
-    const allGridsSnapshot = await db.collection(GRID_COLLECTION).get()
+    const allGridsSnapshot = await getUserGridCollection(userId).get()
 
     // Persist an optional buffer zone for map-side visualization and spray guidance.
     const infectedBuffer = turf.buffer(infectedFeature, BUFFER_ZONE_KM, {
@@ -168,7 +197,7 @@ exports.spatialPropagationAnalysis = onDocumentWritten(
     }
 
     logger.info(
-      `spatialPropagationAnalysis processed grid ${event.params.gridDocId}; marked ${updates} neighboring grid(s) as At-Risk`,
+      `spatialPropagationAnalysis processed user=${userId} grid=${event.params.gridDocId}; marked ${updates} neighboring grid(s) as At-Risk`,
     )
   },
 )

@@ -75,7 +75,8 @@ function toFriendlyFirestoreError(error, fallback) {
     return 'Missing or insufficient permissions. Please sign in again and ensure Firestore rules are deployed.'
   }
 
-  return error?.message || fallback
+  const message = error?.message || fallback
+  return error?.code ? `${message} (code: ${error.code})` : message
 }
 
 export function useGrids() {

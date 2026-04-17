@@ -486,6 +486,14 @@ export default function MapPage() {
     [grids],
   )
 
+  const syncStatusLabel = !isFirebaseConfigured
+    ? 'Disabled'
+    : isLoading
+      ? 'Syncing...'
+      : error
+        ? (String(error).toLowerCase().includes('sign in') ? 'Auth required' : 'Error')
+        : 'Ready'
+
   const healthyCount = grids.filter((item) => item.healthState === 'Healthy').length
   const riskCount = grids.filter((item) => item.healthState === 'At-Risk').length
   const infectedCount = grids.filter((item) => item.healthState === 'Infected').length
@@ -553,8 +561,14 @@ export default function MapPage() {
             <p><strong>Infected</strong><span>{infectedCount}</span></p>
             <p><strong>Buffer zones</strong><span>{bufferedCount}</span></p>
             <p><strong>Connection</strong><span>{isOnline ? 'Online' : 'Offline'}</span></p>
-            <p><strong>Sync</strong><span>{isFirebaseConfigured ? (isLoading ? 'Syncing...' : error ? 'Error' : 'Ready') : 'Disabled'}</span></p>
+            <p><strong>Sync</strong><span>{syncStatusLabel}</span></p>
           </div>
+
+          {error ? (
+            <p className="pg-map-status" style={{ marginTop: 8 }}>
+              <strong>Sync detail:</strong> {error}
+            </p>
+          ) : null}
 
           {riskRecommendations.length > 0 ? (
             <article className="pg-card" style={{ marginTop: 12 }}>

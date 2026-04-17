@@ -19,7 +19,7 @@ import { useScanHistory } from '../../hooks/useScanHistory'
 import { useScanReports } from '../../hooks/useScanReports'
 import { useSessionContext } from '../../hooks/useSessionContext'
 
-const STORAGE_KEY = 'pg_chatbot_conversations_v1'
+const STORAGE_KEY_PREFIX = 'pg_chatbot_conversations_v2'
 const PENDING_CAPTURE_KEY = 'pg_pending_scan_capture_v1'
 const USERS_COLLECTION = 'users'
 const CONVERSATION_COLLECTION = 'conversations'
@@ -206,31 +206,45 @@ function areConversationListsEqual(left, right) {
   return true
 }
 
-function loadStoredConversations() {
+function getConversationStorageKey(uid) {
+  const safeUid = String(uid || '').trim() || 'anonymous'
+  return `${STORAGE_KEY_PREFIX}:${safeUid}`
+}
+
+function loadStoredConversations(storageKey) {
   if (typeof window === 'undefined') {
     return []
   }
 
+  if (!storageKey) {
+    return []
+  }
+
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY)
+    const raw = window.localStorage.getItem(storageKey)
     if (!raw) {
       return []
     }
 
     const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? parsed : []
+    return Array.isArray(parsed) ? mergeConversationLists([], parsed) : []
   } catch {
     return []
   }
 }
 
-function saveStoredConversations(conversations) {
+function saveStoredConversations(storageKey, conversations) {
   if (typeof window === 'undefined') {
     return
   }
 
+  if (!storageKey) {
+    return
+  }
+
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(conversations))
+    const safeConversations = mergeConversationLists([], Array.isArray(conversations) ? conversations : [])
+    window.localStorage.setItem(storageKey, JSON.stringify(safeConversations))
   } catch {
     // Ignore write failures in private or constrained storage environments.
   }
@@ -289,7 +303,7 @@ export default function Chatbot() {
   const { user } = useSessionContext()
   const { reports, timelineItems, isLoading, error } = useScanHistory()
   const { saveScanReport } = useScanReports()
-  const [conversationHistory, setConversationHistory] = useState(loadStoredConversations)
+  const [conversationHistory, setConversationHistory] = useState([])
   const [activeConversationId, setActiveConversationId] = useState(createConversationId)
   const [messages, setMessages] = useState([WELCOME_MESSAGE])
   const [input, setInput] = useState('')
@@ -300,6 +314,30 @@ export default function Chatbot() {
   const photoInputRef = useRef(null)
   const autoScanTriggeredRef = useRef(false)
   const migratedConversationUsersRef = useRef(new Set())
+  const conversationStorageKey = getConversationStorageKey(user?.uid)
+
+  const persistConversationToFirestore = useCallback(async (uid, entry) => {
+    if (!uid || !entry || !db || !isFirebaseConfigured) {
+      return
+    }
+
+    try {
+      await setDoc(
+        doc(db, USERS_COLLECTION, uid, CONVERSATION_COLLECTION, entry.id),
+        {
+          id: entry.id,
+          ownerUid: uid,
+          title: entry.title,
+          messages: entry.messages,
+          clientUpdatedAt: entry.updatedAt,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true },
+      )
+    } catch {
+      // Keep local chat UX even if remote conversation sync fails.
+    }
+  }, [])
 
   const migrateLegacyConversationsForUser = useCallback(async (uid) => {
     if (!uid || !db || !isFirebaseConfigured || migratedConversationUsersRef.current.has(uid)) {
@@ -364,8 +402,19 @@ export default function Chatbot() {
   }, [messages, isThinking])
 
   useEffect(() => {
-    saveStoredConversations(conversationHistory)
-  }, [conversationHistory])
+    const storedConversations = loadStoredConversations(conversationStorageKey)
+    const initialConversation = storedConversations[0] || null
+
+    setConversationHistory(storedConversations)
+    setActiveConversationId(initialConversation?.id || createConversationId())
+    setMessages(initialConversation?.messages || [WELCOME_MESSAGE])
+    setInput('')
+    setIsThinking(false)
+  }, [conversationStorageKey])
+
+  useEffect(() => {
+    saveStoredConversations(conversationStorageKey, conversationHistory)
+  }, [conversationHistory, conversationStorageKey])
 
   useEffect(() => {
     const uid = String(user?.uid || '').trim()
@@ -415,46 +464,6 @@ export default function Chatbot() {
   }, [migrateLegacyConversationsForUser, user?.uid])
 
   useEffect(() => {
-    const uid = String(user?.uid || '').trim()
-    if (!uid || !db || !isFirebaseConfigured || conversationHistory.length === 0) {
-      return
-    }
-
-    const safeEntries = conversationHistory
-      .map((entry) => normalizeConversationRecord(entry?.id, entry))
-      .filter(Boolean)
-
-    if (safeEntries.length === 0) {
-      return
-    }
-
-    const persist = async () => {
-      try {
-        await Promise.all(
-          safeEntries.map((entry) =>
-            setDoc(
-              doc(db, USERS_COLLECTION, uid, CONVERSATION_COLLECTION, entry.id),
-              {
-                id: entry.id,
-                ownerUid: uid,
-                title: entry.title,
-                messages: entry.messages,
-                clientUpdatedAt: entry.updatedAt,
-                updatedAt: serverTimestamp(),
-              },
-              { merge: true },
-            ),
-          ),
-        )
-      } catch {
-        // Keep local chat UX even if remote conversation sync fails.
-      }
-    }
-
-    persist()
-  }, [conversationHistory, user?.uid])
-
-  useEffect(() => {
     const params = new URLSearchParams(location.search)
     const fromScan = params.get('fromScan') === '1'
     if (!fromScan || isAutoProcessing || isThinking) {
@@ -495,6 +504,7 @@ export default function Chatbot() {
     scanAndAskAssistant({
       source: pendingCapture.source || 'camera',
       gridId: pendingCapture.gridId || null,
+      userId: String(user?.uid || '').trim() || null,
       base64Image: pendingCapture.base64Image,
       userPrompt: userText,
     })
@@ -502,6 +512,7 @@ export default function Chatbot() {
         try {
           await saveScanReport({
             ...response,
+            ownerUid: String(user?.uid || '').trim() || null,
             source: pendingCapture.source || 'camera',
             status: normalizeScanStatus(response),
           })
@@ -555,6 +566,11 @@ export default function Chatbot() {
       title: firstUserMessage.text.slice(0, 56),
       updatedAt: Date.now(),
       messages: nextMessages,
+    }
+
+    const uid = String(user?.uid || '').trim()
+    if (uid) {
+      void persistConversationToFirestore(uid, nextEntry)
     }
 
     setConversationHistory((prev) => [
@@ -655,6 +671,7 @@ export default function Chatbot() {
       const base64Image = await fileToUploadDataUrl(file)
       const response = await scanAndAskAssistant({
         source: 'upload',
+        userId: String(user?.uid || '').trim() || null,
         base64Image,
         userPrompt,
       })
@@ -662,6 +679,7 @@ export default function Chatbot() {
       try {
         await saveScanReport({
           ...response,
+          ownerUid: String(user?.uid || '').trim() || null,
           source: 'upload',
           status: normalizeScanStatus(response),
         })

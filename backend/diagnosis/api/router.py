@@ -338,7 +338,7 @@ def _build_scan_result(raw_result: Any, bbox: BoundingBox, region_index: int) ->
     )
 
 
-async def _record_abnormal_scan(result: ScanResult, grid_id: str | None) -> None:
+async def _record_abnormal_scan(result: ScanResult, grid_id: str | None, user_id: str | None = None) -> None:
     if not (result.is_abnormal and grid_id):
         return
 
@@ -350,6 +350,7 @@ async def _record_abnormal_scan(result: ScanResult, grid_id: str | None) -> None
     try:
         await firestore.record_scan_result(
             grid_id=grid_id,
+            user_id=user_id,
             cropType=result.cropType,
             disease=result.disease,
             severity=result.severity,
@@ -453,7 +454,7 @@ async def scan_once(payload: HttpScanRequest) -> HttpScanResponse:
             grid_id=payload.grid_id,
         )
         result = _build_scan_result(raw_result, bbox, 0)
-        await _record_abnormal_scan(result, payload.grid_id)
+        await _record_abnormal_scan(result, payload.grid_id, payload.user_id)
         return _to_http_scan_response(result, raw_result, payload.grid_id)
     except Exception as exc:
         logger.exception("HTTP scan failed: %s", exc)
@@ -476,6 +477,7 @@ async def scan_and_chat(payload: HttpScanAssistantRequest) -> HttpScanAssistantR
                 multi_payload = HttpScanAssistantMultiRequest(
                     source=payload.source,
                     grid_id=payload.grid_id,
+                    user_id=payload.user_id,
                     regions=detected_regions,
                     user_prompt=payload.user_prompt,
                 )
@@ -511,7 +513,7 @@ async def scan_and_chat(payload: HttpScanAssistantRequest) -> HttpScanAssistantR
             grid_id=payload.grid_id,
         )
         result = _build_scan_result(raw_result, bbox, 0)
-        await _record_abnormal_scan(result, payload.grid_id)
+        await _record_abnormal_scan(result, payload.grid_id, payload.user_id)
 
         diagnosis = _to_http_scan_response(result, raw_result, payload.grid_id)
         assistant_reply = _assistant_reply_from_scan(result)
@@ -561,7 +563,7 @@ async def scan_and_chat_multi(payload: HttpScanAssistantMultiRequest) -> HttpSca
         region_diagnoses.append(result)
 
         # Record abnormal scans
-        await _record_abnormal_scan(result, payload.grid_id)
+        await _record_abnormal_scan(result, payload.grid_id, payload.user_id)
 
     consolidated_reply = _assistant_reply_from_regions(region_diagnoses)
 

@@ -101,6 +101,7 @@ export const gateway = {
       body: JSON.stringify({
         source: input?.source || 'camera',
         grid_id: input?.gridId || null,
+        user_id: input?.userId || null,
         base64_image: base64Image,
       }),
     })
@@ -117,6 +118,7 @@ export const gateway = {
       body: JSON.stringify({
         source: input?.source || 'camera',
         grid_id: input?.gridId || null,
+        user_id: input?.userId || null,
         base64_image: base64Image,
         user_prompt: input?.userPrompt || 'I just took this photo. Please explain what disease this is and what I should do now.',
       }),
