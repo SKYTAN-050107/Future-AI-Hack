@@ -69,8 +69,11 @@ export default function MapPage() {
   const [actionMessage, setActionMessage] = useState('Draw a polygon to create your first grid section.')
   const [localAreaHectares, setLocalAreaHectares] = useState(0)
   const [pendingFeature, setPendingFeature] = useState(null)
+  const [pendingZoneName, setPendingZoneName] = useState('')
+  const [zoneNameDrafts, setZoneNameDrafts] = useState({})
   const [isSavingPending, setIsSavingPending] = useState(false)
   const [deletingGridId, setDeletingGridId] = useState('')
+  const [renamingGridId, setRenamingGridId] = useState('')
   const [lastSaveState, setLastSaveState] = useState('idle')
   const centroidTargetRef = useRef({ center: DEFAULT_CENTER, hasSaved: false })
 
@@ -82,6 +85,7 @@ export default function MapPage() {
     isFirebaseConfigured,
     saveOrUpdateGridByFeature,
     deleteGrid,
+    updateGridName,
   } = useGrids()
 
   const mapboxToken = import.meta.env.VITE_MAPBOX_TOKEN
@@ -130,6 +134,26 @@ export default function MapPage() {
   useEffect(() => {
     centroidTargetRef.current = centroidTarget
   }, [centroidTarget])
+
+  useEffect(() => {
+    const nextName = String(pendingFeature?.properties?.gridId || '').trim()
+    setPendingZoneName(nextName)
+  }, [pendingFeature])
+
+  useEffect(() => {
+    setZoneNameDrafts((prev) => {
+      const next = {}
+
+      grids.forEach((grid) => {
+        const key = String(grid.id)
+        next[key] = Object.prototype.hasOwnProperty.call(prev, key)
+          ? String(prev[key] || '')
+          : String(grid.gridId || '')
+      })
+
+      return next
+    })
+  }, [grids])
 
   useEffect(() => {
     if (!isMapboxConfigured || !mapContainerRef.current || mapRef.current) {
@@ -301,6 +325,7 @@ export default function MapPage() {
     const onDrawCreate = async (event) => {
       for (const feature of event.features || []) {
         setPendingFeature(feature)
+        setPendingZoneName(String(feature?.properties?.gridId || '').trim())
         try {
           await saveFeature(feature)
         } catch (saveError) {
@@ -313,6 +338,7 @@ export default function MapPage() {
     const onDrawUpdate = async (event) => {
       for (const feature of event.features || []) {
         setPendingFeature(feature)
+        setPendingZoneName(String(feature?.properties?.gridId || '').trim())
         try {
           await saveFeature(feature)
         } catch (saveError) {
@@ -459,11 +485,13 @@ export default function MapPage() {
       return
     }
 
+    const resolvedZoneName = String(pendingZoneName || pendingFeature?.properties?.gridId || '').trim() || createGridId()
+
     setIsSavingPending(true)
     try {
       await saveOrUpdateGridByFeature({
         mapFeatureId: String(pendingFeature.id),
-        gridId: pendingFeature.properties?.gridId || createGridId(),
+        gridId: resolvedZoneName,
         polygon: pendingFeature.geometry,
         areaHectares: turf.area(pendingFeature) / 10000,
         centroid: {
@@ -471,9 +499,10 @@ export default function MapPage() {
           lng: turf.centroid(pendingFeature).geometry.coordinates[0],
         },
       })
-      setActionMessage('Grid confirmed and synced.')
+      setActionMessage(`Zone ${resolvedZoneName} confirmed and synced.`)
       setLastSaveState('saved')
       setPendingFeature(null)
+      setPendingZoneName('')
     } catch (errorMessage) {
       setActionMessage(errorMessage.message || 'Failed to confirm save')
       setLastSaveState('failed')
@@ -512,6 +541,38 @@ export default function MapPage() {
       setLastSaveState('failed')
     } finally {
       setDeletingGridId('')
+    }
+  }
+
+  const handleRenamePersistedGrid = async (grid) => {
+    const gridDocId = String(grid?.id || '').trim()
+    if (!gridDocId) {
+      return
+    }
+
+    const nextName = String(zoneNameDrafts[gridDocId] || '').trim()
+    if (!nextName) {
+      setActionMessage('Zone name cannot be empty.')
+      setLastSaveState('failed')
+      return
+    }
+
+    const currentName = String(grid?.gridId || '').trim()
+    if (nextName === currentName) {
+      setActionMessage('Zone name is unchanged.')
+      return
+    }
+
+    try {
+      setRenamingGridId(gridDocId)
+      await updateGridName(gridDocId, nextName)
+      setActionMessage(`Zone renamed to ${nextName}.`)
+      setLastSaveState('saved')
+    } catch (renameError) {
+      setActionMessage(renameError?.message || 'Failed to rename zone.')
+      setLastSaveState('failed')
+    } finally {
+      setRenamingGridId('')
     }
   }
 
@@ -571,6 +632,16 @@ export default function MapPage() {
             </strong>
           </p>
           <div className="pg-cta-row">
+            <label className="pg-field-label" htmlFor="pg-map-zone-name">Zone name</label>
+            <input
+              id="pg-map-zone-name"
+              className="pg-input"
+              type="text"
+              value={pendingZoneName}
+              placeholder="Enter zone name"
+              maxLength={56}
+              onChange={(event) => setPendingZoneName(event.target.value)}
+            />
             <button
               type="button"
               className="pg-btn pg-btn-primary"
@@ -613,22 +684,49 @@ export default function MapPage() {
                   style={{
                     display: 'flex',
                     justifyContent: 'space-between',
-                    alignItems: 'center',
+                    alignItems: 'flex-start',
                     gap: 8,
                     marginBottom: 8,
                   }}
                 >
-                  <small style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {grid.gridId || grid.id} ({Number(grid.areaHectares || 0).toFixed(2)} ha)
-                  </small>
-                  <button
-                    type="button"
-                    className="pg-btn"
-                    onClick={() => handleDeletePersistedGrid(grid)}
-                    disabled={deletingGridId === grid.id}
-                  >
-                    {deletingGridId === grid.id ? 'Deleting…' : 'Delete'}
-                  </button>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <small style={{ display: 'block', marginBottom: 6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {grid.gridId || grid.id} ({Number(grid.areaHectares || 0).toFixed(2)} ha)
+                    </small>
+                    <input
+                      className="pg-input"
+                      type="text"
+                      value={zoneNameDrafts[String(grid.id)] || ''}
+                      maxLength={56}
+                      onChange={(event) => {
+                        const value = event.target.value
+                        const key = String(grid.id)
+                        setZoneNameDrafts((prev) => ({
+                          ...prev,
+                          [key]: value,
+                        }))
+                      }}
+                    />
+                  </div>
+
+                  <div style={{ display: 'grid', gap: 6 }}>
+                    <button
+                      type="button"
+                      className="pg-btn"
+                      onClick={() => handleRenamePersistedGrid(grid)}
+                      disabled={renamingGridId === grid.id || deletingGridId === grid.id}
+                    >
+                      {renamingGridId === grid.id ? 'Saving…' : 'Save name'}
+                    </button>
+                    <button
+                      type="button"
+                      className="pg-btn"
+                      onClick={() => handleDeletePersistedGrid(grid)}
+                      disabled={deletingGridId === grid.id || renamingGridId === grid.id}
+                    >
+                      {deletingGridId === grid.id ? 'Deleting…' : 'Delete'}
+                    </button>
+                  </div>
                 </div>
               ))}
             </article>

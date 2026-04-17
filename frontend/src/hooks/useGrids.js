@@ -291,6 +291,23 @@ export function useGrids() {
     })
   }, [authUser?.uid])
 
+  const updateGridName = useCallback(async (gridDocId, nextGridName) => {
+    if (!db || !authUser?.uid) {
+      throw new Error('Firebase is not configured')
+    }
+
+    const safeName = String(nextGridName || '').trim()
+    if (!safeName) {
+      throw new Error('Zone name cannot be empty')
+    }
+
+    const target = doc(db, USERS_COLLECTION, authUser.uid, GRID_COLLECTION, gridDocId)
+    await updateDoc(target, {
+      gridId: safeName,
+      lastUpdated: serverTimestamp(),
+    })
+  }, [authUser?.uid])
+
   return useMemo(
     () => ({
       grids,
@@ -300,6 +317,7 @@ export function useGrids() {
       saveOrUpdateGridByFeature,
       deleteGrid,
       updateGridHealthState,
+      updateGridName,
       isFirebaseConfigured,
     }),
     [
@@ -309,6 +327,7 @@ export function useGrids() {
       isLoading,
       saveGrid,
       saveOrUpdateGridByFeature,
+      updateGridName,
       updateGridHealthState,
     ],
   )
