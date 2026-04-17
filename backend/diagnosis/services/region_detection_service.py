@@ -17,6 +17,7 @@ from google.genai import types
 
 from config import get_settings
 from models.scan_models import BoundingBox, HttpScanRegion
+from services.json_utils import extract_json_payload
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,30 @@ def _build_vertex_model_candidates(model_name: str) -> list[str]:
 def _is_vertex_model_not_found(exc: Exception) -> bool:
     message = str(exc).lower()
     return "publisher model" in message and "not found" in message
+
+
+def _normalize_regions_payload(raw_text: str) -> list[dict[str, Any]]:
+    payload = extract_json_payload(raw_text)
+
+    if isinstance(payload, dict):
+        regions = payload.get("regions", [])
+    elif isinstance(payload, list):
+        regions = payload
+    else:
+        raise json.JSONDecodeError(
+            "Gemini region response must be a JSON object or array",
+            raw_text,
+            0,
+        )
+
+    if not isinstance(regions, list):
+        raise json.JSONDecodeError(
+            "Gemini region response must contain a list of regions",
+            raw_text,
+            0,
+        )
+
+    return [region for region in regions if isinstance(region, dict)]
 
 
 class RegionDetectionService:
@@ -216,8 +241,7 @@ class RegionDetectionService:
                     logger.warning("Gemini region detection returned empty response")
                     return []
 
-                result = json.loads(response.text.strip())
-                regions = result.get("regions", [])
+                regions = _normalize_regions_payload(response.text)
                 logger.info("Gemini detected %d regions", len(regions))
                 return regions
 

@@ -19,9 +19,14 @@ from api.router import router
 
 # ── Logging ───────────────────────────────────────────────────────────
 
+for stream in (sys.stdout, sys.stderr):
+    reconfigure = getattr(stream, "reconfigure", None)
+    if callable(reconfigure):
+        reconfigure(encoding="utf-8", errors="backslashreplace")
+
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s │ %(name)-28s │ %(levelname)-5s │ %(message)s",
+    format="%(asctime)s | %(name)-28s | %(levelname)-5s | %(message)s",
     datefmt="%H:%M:%S",
     stream=sys.stdout,
 )

@@ -19,6 +19,7 @@ from google import genai
 from google.genai import types
 
 from config import get_settings
+from services.json_utils import extract_json_payload
 
 logger = logging.getLogger(__name__)
 
@@ -148,6 +149,11 @@ def _safe_float(value: Any, default: float) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _trim_text(value: Any, default: str = "Unknown") -> str:
+    text = str(value or "").strip()
+    return text or default
 
 
 def detect_farmer_language(user_prompt: str) -> str:
@@ -465,7 +471,15 @@ class LLMService:
                 logger.info("LLM validation response received (%d chars)", len(raw_text))
 
                 try:
-                    result = json.loads(raw_text)
+                    result = extract_json_payload(raw_text)
+                    if not isinstance(result, dict):
+                        logger.error(
+                            "LLM returned non-object JSON (%s)",
+                            type(result).__name__,
+                        )
+                        if attempt == MAX_RETRIES:
+                            return fallback
+                        continue
                     return result
                 except json.JSONDecodeError:
                     logger.error("LLM returned invalid JSON: %s", raw_text[:200])
@@ -817,6 +831,63 @@ class LLMService:
 
         return fallback
 
+    async def generate_inventory_reply(
+        self,
+        *,
+        user_prompt: str,
+        inventory_summary: dict[str, Any],
+    ) -> str:
+        """Generate a short inventory status reply from structured stock data."""
+        language = detect_farmer_language(user_prompt)
+        items = inventory_summary.get("items") or []
+        total_items = int(inventory_summary.get("total_items") or len(items))
+        low_stock_count = int(inventory_summary.get("low_stock_count") or 0)
+        payload_text = json.dumps(inventory_summary, indent=2, ensure_ascii=True, default=str)
+        fallback = self._build_inventory_fallback(
+            language=language,
+            inventory_summary=inventory_summary,
+        )
+
+        prompt = (
+            f"User message:\n{user_prompt}\n\n"
+            f"Inventory summary:\n{payload_text}\n\n"
+            "Answer as a farm inventory assistant.\n"
+            "Give the user a concise stock summary.\n"
+            "If stock is low, say which items are low and advise restocking.\n"
+            "Do not mention crop diagnosis or ask for crop/zone.\n"
+        )
+
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                response = self._generate_content_with_model_fallback(
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=(
+                            "You are PadiGuard's inventory assistant. "
+                            "Use only the provided inventory summary. "
+                            "Keep the answer short, practical, and farmer-friendly. "
+                            "Do not mention diagnosis or weather."
+                        ),
+                        temperature=0.25,
+                        max_output_tokens=220,
+                    ),
+                )
+                text = " ".join((response.text or "").strip().split())
+                if text:
+                    return text
+            except Exception as exc:
+                logger.warning(
+                    "Inventory reply attempt %d/%d failed: %s",
+                    attempt,
+                    MAX_RETRIES,
+                    exc,
+                )
+
+            if attempt < MAX_RETRIES:
+                await asyncio.sleep(RETRY_DELAY_SECONDS)
+
+        return fallback
+
     def _build_low_confidence_fallback(
         self,
         *,
@@ -825,8 +896,8 @@ class LLMService:
         scan_results: list[dict[str, Any]] | None,
     ) -> str:
         if language == "ms":
-            crop_type = self._trim_text((scan_result or {}).get("cropType"), default="Tanaman")
-            disease = self._trim_text((scan_result or {}).get("disease"), default="Tidak jelas")
+            crop_type = _trim_text((scan_result or {}).get("cropType"), default="Tanaman")
+            disease = _trim_text((scan_result or {}).get("disease"), default="Tidak jelas")
             if scan_results and len(scan_results) > 1:
                 return (
                     "Apa Yang Kelihatan\n"
@@ -846,8 +917,8 @@ class LLMService:
                 "Ambil semula gambar dekat dalam cahaya baik. Jika simptom merebak, asingkan pokok dan semak semula."
             )
 
-        crop_type = self._trim_text((scan_result or {}).get("cropType"), default="Crop")
-        disease = self._trim_text((scan_result or {}).get("disease"), default="Unclear")
+        crop_type = _trim_text((scan_result or {}).get("cropType"), default="Crop")
+        disease = _trim_text((scan_result or {}).get("disease"), default="Unclear")
         if scan_results and len(scan_results) > 1:
             return (
                 "What This Looks Like\n"
@@ -869,8 +940,12 @@ class LLMService:
 
     def _build_supervisor_fallback(self, *, language: str, user_prompt: str, context: dict[str, Any]) -> str:
         recent_scan = context.get("recent_scan") or {}
+        inventory_summary = context.get("inventory_summary") or {}
         dashboard_summary = context.get("dashboard_summary")
         latest = recent_scan.get("latest_report") or {}
+
+        if inventory_summary:
+            return self._build_inventory_fallback(language=language, inventory_summary=inventory_summary)
 
         if dashboard_summary:
             weather = dashboard_summary.get("weatherSnapshot") or {}
@@ -880,44 +955,44 @@ class LLMService:
             if language == "ms":
                 pieces: list[str] = []
                 pieces.append(
-                    f"Cuaca {self._trim_text(weather.get('condition'), default='tidak jelas')}, angin {self._trim_text(weather.get('windKmh'), default='0')} km/j, hujan dalam {self._trim_text(weather.get('rainInHours'), default='n/a')} jam."
+                    f"Cuaca {_trim_text(weather.get('condition'), default='tidak jelas')}, angin {_trim_text(weather.get('windKmh'), default='0')} km/j, hujan dalam {_trim_text(weather.get('rainInHours'), default='n/a')} jam."
                 )
                 pieces.append(
-                    f"ROI {self._trim_text(financial.get('roiPercent'), default='0')}% dan kos rawatan RM {self._trim_text(financial.get('treatmentCostRm'), default='0')}."
+                    f"ROI {_trim_text(financial.get('roiPercent'), default='0')}% dan kos rawatan RM {_trim_text(financial.get('treatmentCostRm'), default='0')}."
                 )
                 low_stock_item = financial.get("lowStockItem")
                 if low_stock_item:
                     pieces.append(
-                        f"Stok rendah: {self._trim_text(low_stock_item, default='tidak diketahui')} tinggal {self._trim_text(financial.get('lowStockLiters'), default='0')} liter."
+                        f"Stok rendah: {_trim_text(low_stock_item, default='tidak diketahui')} tinggal {_trim_text(financial.get('lowStockLiters'), default='0')} liter."
                     )
                 if zone_health:
                     pieces.append(
-                        f"Zon perlukan perhatian: {self._trim_text(zone_health.get('zonesNeedingAttention'), default='0')}."
+                        f"Zon perlukan perhatian: {_trim_text(zone_health.get('zonesNeedingAttention'), default='0')}."
                     )
                 return " ".join(pieces)
 
             pieces = []
             pieces.append(
-                f"Weather looks {self._trim_text(weather.get('condition'), default='unclear')}, wind is {self._trim_text(weather.get('windKmh'), default='0')} km/h, and rain is expected in {self._trim_text(weather.get('rainInHours'), default='n/a')} hours."
+                f"Weather looks {_trim_text(weather.get('condition'), default='unclear')}, wind is {_trim_text(weather.get('windKmh'), default='0')} km/h, and rain is expected in {_trim_text(weather.get('rainInHours'), default='n/a')} hours."
             )
             pieces.append(
-                f"ROI is {self._trim_text(financial.get('roiPercent'), default='0')}% and treatment cost is RM {self._trim_text(financial.get('treatmentCostRm'), default='0')}."
+                f"ROI is {_trim_text(financial.get('roiPercent'), default='0')}% and treatment cost is RM {_trim_text(financial.get('treatmentCostRm'), default='0')}."
             )
             low_stock_item = financial.get("lowStockItem")
             if low_stock_item:
                 pieces.append(
-                    f"Low stock: {self._trim_text(low_stock_item, default='unknown')} has {self._trim_text(financial.get('lowStockLiters'), default='0')} liters left."
+                    f"Low stock: {_trim_text(low_stock_item, default='unknown')} has {_trim_text(financial.get('lowStockLiters'), default='0')} liters left."
                 )
             if zone_health:
                 pieces.append(
-                    f"Zones needing attention: {self._trim_text(zone_health.get('zonesNeedingAttention'), default='0')}."
+                    f"Zones needing attention: {_trim_text(zone_health.get('zonesNeedingAttention'), default='0')}."
                 )
             return " ".join(pieces)
 
         if latest:
-            disease = self._trim_text(latest.get("disease"), default="Unknown")
-            severity = self._trim_text(latest.get("severity"), default="Unknown")
-            trend = self._trim_text(recent_scan.get("trend"), default="Trend data is limited.")
+            disease = _trim_text(latest.get("disease"), default="Unknown")
+            severity = _trim_text(latest.get("severity"), default="Unknown")
+            trend = _trim_text(recent_scan.get("trend"), default="Trend data is limited.")
             confidence = latest.get("confidence")
             confidence_text = ""
             if confidence is not None:
@@ -932,3 +1007,27 @@ class LLMService:
             return "Sila muat naik gambar yang lebih jelas atau beritahu saya tanaman dan zon yang perlu diperiksa."
 
         return "Please upload a clear photo or tell me which crop and zone you want checked."
+
+    def _build_inventory_fallback(self, *, language: str, inventory_summary: dict[str, Any]) -> str:
+        items = inventory_summary.get("items") or []
+        total_items = int(inventory_summary.get("total_items") or len(items))
+        low_stock_count = int(inventory_summary.get("low_stock_count") or 0)
+
+        if not items:
+            if language == "ms":
+                return "Tiada rekod inventori ditemui untuk akaun anda."
+            return "No inventory records were found for your account."
+
+        top_items: list[str] = []
+        for item in items[:3]:
+            name = _trim_text(item.get("name"), default="Unknown item")
+            liters = _safe_float(item.get("liters"), default=0.0)
+            unit = _trim_text(item.get("unit"), default="liters")
+            top_items.append(f"{name}: {liters:.1f} {unit}")
+
+        if language == "ms":
+            low_stock_note = f" {low_stock_count} item berada pada stok rendah." if low_stock_count else ""
+            return f"Anda mempunyai {total_items} item inventori.{low_stock_note} {', '.join(top_items)}"
+
+        low_stock_note = f" {low_stock_count} item are low on stock." if low_stock_count else ""
+        return f"You have {total_items} inventory item(s).{low_stock_note} {', '.join(top_items)}"

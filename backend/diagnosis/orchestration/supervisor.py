@@ -13,6 +13,7 @@ from orchestration.assistant_pipeline import AssistantPipeline
 from services.crop_service import CropService
 from services.dashboard_service import DashboardService
 from services.firebase_admin_service import get_firestore_client
+from services.inventory_service import InventoryService
 from services.llm_service import LLMService, build_farmer_fallback_dialogue, detect_farmer_language
 
 logger = logging.getLogger(__name__)
@@ -41,6 +42,9 @@ class InteractionSupervisor:
 
         self._crop_service: CropService | None = None
         self._crop_service_error: str | None = None
+
+        self._inventory_service: InventoryService | None = None
+        self._inventory_service_error: str | None = None
 
         self._llm_service: LLMService | None = None
         self._llm_service_error: str | None = None
@@ -119,6 +123,21 @@ class InteractionSupervisor:
 
         return self._crop_service
 
+    def _get_inventory_service(self) -> InventoryService | None:
+        if self._inventory_service is not None:
+            return self._inventory_service
+        if self._inventory_service_error is not None:
+            return None
+
+        try:
+            self._inventory_service = InventoryService()
+        except Exception as exc:
+            self._inventory_service_error = str(exc)
+            logger.warning("InventoryService unavailable for supervisor replies: %s", exc)
+            return None
+
+        return self._inventory_service
+
     def _get_firestore_client(self):
         if self._firestore_client is not None:
             return self._firestore_client
@@ -170,6 +189,15 @@ class InteractionSupervisor:
     def _trim_text(value: Any, default: str = "Unknown") -> str:
         text = str(value or "").strip()
         return text or default
+
+    @staticmethod
+    def _safe_optional_float(value: object) -> float | None:
+        try:
+            if value is None:
+                return None
+            return float(value)
+        except (TypeError, ValueError):
+            return None
 
     def _detect_intents(self, user_prompt: str) -> set[str]:
         text = (user_prompt or "").lower()
@@ -273,23 +301,42 @@ class InteractionSupervisor:
         """Return the response-agent reply for a text-only request."""
         intents = self._detect_intents(user_prompt)
 
-        nodes = [
-            TaskNode(
-                name="recent_scan",
-                runner=lambda _state: self._load_recent_scan_context(user_id=user_id, zone=zone),
-            ),
-            TaskNode(
-                name="crop_profiles",
-                runner=lambda _state: self._load_crop_profiles(user_id=user_id),
-            ),
-        ]
+        nodes: list[TaskNode] = []
 
-        needs_dashboard = bool(intents & {"weather", "economy", "resource"})
+        needs_inventory = bool(intents & {"resource"})
+        needs_recent_scan = bool(intents & {"diagnosis", "spread", "weather", "economy"})
+        needs_crop_profiles = bool(intents & {"weather", "economy"})
+
+        if needs_inventory:
+            nodes.append(
+                TaskNode(
+                    name="inventory_summary",
+                    runner=lambda _state: self._load_inventory_summary(user_id=user_id),
+                ),
+            )
+
+        if needs_recent_scan:
+            nodes.append(
+                TaskNode(
+                    name="recent_scan",
+                    runner=lambda _state: self._load_recent_scan_context(user_id=user_id, zone=zone),
+                ),
+            )
+
+        if needs_crop_profiles:
+            nodes.append(
+                TaskNode(
+                    name="crop_profiles",
+                    runner=lambda _state: self._load_crop_profiles(user_id=user_id),
+                ),
+            )
+
+        needs_dashboard = bool(intents & {"weather", "economy"})
         if needs_dashboard:
             nodes.append(
                 TaskNode(
                     name="dashboard_summary",
-                    depends_on=("recent_scan", "crop_profiles"),
+                    depends_on=tuple(name for name in ("recent_scan", "crop_profiles") if any(node.name == name for node in nodes)),
                     runner=lambda state: self._load_dashboard_summary(
                         user_id=user_id,
                         recent_scan=state.get("recent_scan") or {},
@@ -298,10 +345,24 @@ class InteractionSupervisor:
                 ),
             )
 
+        if not nodes:
+            nodes.extend(
+                [
+                    TaskNode(
+                        name="recent_scan",
+                        runner=lambda _state: self._load_recent_scan_context(user_id=user_id, zone=zone),
+                    ),
+                    TaskNode(
+                        name="crop_profiles",
+                        runner=lambda _state: self._load_crop_profiles(user_id=user_id),
+                    ),
+                ]
+            )
+
         nodes.append(
             TaskNode(
                 name="response",
-                depends_on=("recent_scan", "crop_profiles") + (("dashboard_summary",) if needs_dashboard else ()),
+                depends_on=tuple(node.name for node in nodes),
                 runner=lambda state: self._build_text_response(
                     user_prompt=user_prompt,
                     intents=intents,
@@ -350,6 +411,35 @@ class InteractionSupervisor:
             "count": len(items),
         }
 
+    async def _load_inventory_summary(self, *, user_id: str) -> dict[str, Any]:
+        service = self._get_inventory_service()
+        if service is None:
+            return {
+                "items": [],
+                "total_items": 0,
+                "low_stock_count": 0,
+                "error": "inventory service unavailable",
+            }
+
+        try:
+            payload = await service.list_items(user_id=user_id)
+        except Exception as exc:
+            logger.warning("Inventory lookup failed: %s", exc)
+            return {
+                "items": [],
+                "total_items": 0,
+                "low_stock_count": 0,
+                "error": str(exc),
+            }
+
+        items = payload.get("items") or []
+        return {
+            "items": items[:10],
+            "total_items": int(payload.get("total_items") or len(items)),
+            "low_stock_count": int(payload.get("low_stock_count") or 0),
+            "last_updated_iso": payload.get("last_updated_iso"),
+        }
+
     async def _load_dashboard_summary(
         self,
         *,
@@ -383,8 +473,8 @@ class InteractionSupervisor:
                 treatment_plan=treatment_plan,
                 farm_size_hectares=farm_size,
                 survival_prob=survival_prob,
-                lat=self._safe_float(latest.get("lat"), default=None),
-                lng=self._safe_float(latest.get("lng"), default=None),
+                lat=self._safe_optional_float(latest.get("lat")),
+                lng=self._safe_optional_float(latest.get("lng")),
             )
         except Exception as exc:
             logger.warning("Dashboard summary lookup failed: %s", exc)
@@ -401,10 +491,20 @@ class InteractionSupervisor:
     ) -> str:
         recent_scan = state.get("recent_scan") or {}
         crop_profiles = state.get("crop_profiles") or {}
+        inventory_summary = state.get("inventory_summary") or {}
         dashboard_summary = state.get("dashboard_summary")
 
-        if self._needs_clarification(intents=intents, recent_scan=recent_scan, crop_profiles=crop_profiles, dashboard_summary=dashboard_summary):
+        if self._needs_clarification(intents=intents, recent_scan=recent_scan, crop_profiles=crop_profiles, dashboard_summary=dashboard_summary, inventory_summary=inventory_summary):
             return self._clarifying_question(intents=intents)
+
+        if intents & {"resource"}:
+            llm = self._get_llm_service()
+            if llm is not None:
+                return await llm.generate_inventory_reply(
+                    user_prompt=user_prompt,
+                    inventory_summary=inventory_summary,
+                )
+            return self._inventory_fallback(inventory_summary=inventory_summary)
 
         llm = self._get_llm_service()
         if llm is not None:
@@ -417,6 +517,7 @@ class InteractionSupervisor:
                         "count": crop_profiles.get("count", 0),
                         "items": crop_profiles.get("items", []),
                     },
+                    "inventory_summary": inventory_summary,
                     "dashboard_summary": dashboard_summary,
                 },
             )
@@ -430,11 +531,12 @@ class InteractionSupervisor:
         recent_scan: dict[str, Any],
         crop_profiles: dict[str, Any],
         dashboard_summary: dict[str, Any] | None,
+        inventory_summary: dict[str, Any],
     ) -> bool:
         if not recent_scan.get("has_reports") and intents & {"diagnosis", "spread"}:
             return True
 
-        if intents & {"weather", "economy", "resource"}:
+        if intents & {"weather", "economy"}:
             if dashboard_summary is not None:
                 return False
             if (crop_profiles.get("count") or 0) > 0:
@@ -453,8 +555,12 @@ class InteractionSupervisor:
 
     def _text_fallback(self, *, user_prompt: str, intents: set[str], state: dict[str, Any]) -> str:
         recent_scan = state.get("recent_scan") or {}
+        inventory_summary = state.get("inventory_summary") or {}
         dashboard_summary = state.get("dashboard_summary")
         latest = recent_scan.get("latest_report") or {}
+
+        if intents & {"resource"}:
+            return self._inventory_fallback(inventory_summary=inventory_summary)
 
         if dashboard_summary:
             weather = dashboard_summary.get("weatherSnapshot") or {}
@@ -500,6 +606,23 @@ class InteractionSupervisor:
             return "Please upload a clear photo of the affected crop, and tell me which crop it is."
 
         return "Which crop and zone should I check?"
+
+    def _inventory_fallback(self, *, inventory_summary: dict[str, Any]) -> str:
+        items = inventory_summary.get("items") or []
+        total_items = int(inventory_summary.get("total_items") or len(items))
+        low_stock_count = int(inventory_summary.get("low_stock_count") or 0)
+
+        if not items:
+            return "No inventory records were found for your account."
+
+        top_items = []
+        for item in items[:3]:
+            name = self._trim_text(item.get("name"), default="Unknown item")
+            liters = self._safe_float(item.get("liters"), default=0.0)
+            top_items.append(f"{name}: {liters:.1f} liters")
+
+        low_stock_note = f" {low_stock_count} item(s) are low on stock." if low_stock_count else ""
+        return f"You have {total_items} inventory item(s). {low_stock_note} {', '.join(top_items)}".strip()
 
     @staticmethod
     def _compact_report(report: dict[str, Any] | None) -> dict[str, Any]:
