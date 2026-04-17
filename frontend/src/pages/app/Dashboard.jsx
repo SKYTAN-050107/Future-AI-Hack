@@ -39,6 +39,76 @@ function formatCurrency(value) {
   }).format(safeNumber(value))
 }
 
+function buildZoneHealthSummaryFromGrids(grids) {
+  const safeGrids = Array.isArray(grids) ? grids : []
+  if (safeGrids.length === 0) {
+    return {
+      totalAreaHectares: 0,
+      healthy: 0,
+      atRisk: 0,
+      infected: 0,
+      zonesNeedingAttention: 0,
+    }
+  }
+
+  const totalAreaHectares = safeGrids.reduce((sum, grid) => {
+    const area = Number(grid?.areaHectares)
+    return Number.isFinite(area) && area > 0 ? sum + area : sum
+  }, 0)
+
+  const useAreaWeights = totalAreaHectares > 0
+  let healthyWeight = 0
+  let atRiskWeight = 0
+  let infectedWeight = 0
+  let zonesNeedingAttention = 0
+
+  safeGrids.forEach((grid) => {
+    const area = Number(grid?.areaHectares)
+    const weight = useAreaWeights ? (Number.isFinite(area) && area > 0 ? area : 0) : 1
+    const state = String(grid?.healthState || grid?.healthStatus || 'Healthy').trim().toLowerCase()
+
+    if (state === 'infected') {
+      infectedWeight += weight
+      zonesNeedingAttention += 1
+      return
+    }
+
+    if (state === 'at-risk' || state === 'at_risk' || state === 'risk' || state === 'warning') {
+      atRiskWeight += weight
+      zonesNeedingAttention += 1
+      return
+    }
+
+    healthyWeight += weight
+  })
+
+  const denominator = useAreaWeights
+    ? totalAreaHectares
+    : safeGrids.length
+
+  if (denominator <= 0) {
+    return {
+      totalAreaHectares,
+      healthy: 0,
+      atRisk: 0,
+      infected: 0,
+      zonesNeedingAttention,
+    }
+  }
+
+  const healthy = Math.max(0, Math.min(100, Math.round((healthyWeight / denominator) * 100)))
+  const atRisk = Math.max(0, Math.min(100, Math.round((atRiskWeight / denominator) * 100)))
+  const infected = Math.max(0, 100 - healthy - atRisk)
+
+  return {
+    totalAreaHectares,
+    healthy,
+    atRisk,
+    infected,
+    zonesNeedingAttention,
+  }
+}
+
 export default function Dashboard() {
   const navigate = useNavigate()
   const { user, profile } = useSessionContext()
@@ -57,6 +127,11 @@ export default function Dashboard() {
       const area = Number(grid?.areaHectares)
       return Number.isFinite(area) ? sum + area : sum
     }, 0),
+    [grids],
+  )
+
+  const zoneHealthSummary = useMemo(
+    () => buildZoneHealthSummaryFromGrids(grids),
     [grids],
   )
 
@@ -148,7 +223,6 @@ export default function Dashboard() {
   }
 
   const weatherSnapshot = summary?.weatherSnapshot || {}
-  const zoneHealthSummary = summary?.zoneHealthSummary || {}
   const financialSummary = summary?.financialSummary || {}
 
   const rainInHours = safeNumber(weatherSnapshot.rainInHours, -1)
@@ -201,7 +275,11 @@ export default function Dashboard() {
 
           <p className="pg-zone-area">Total Area Scanned: {safeNumber(zoneHealthSummary.totalAreaHectares).toFixed(1)} ha</p>
 
-          <div className="pg-zone-stack" role="img" aria-label="Healthy 71 percent, At-Risk 19 percent, Infected 10 percent">
+          <div
+            className="pg-zone-stack"
+            role="img"
+            aria-label={`Healthy ${safeNumber(zoneHealthSummary.healthy)} percent, At-Risk ${safeNumber(zoneHealthSummary.atRisk)} percent, Infected ${safeNumber(zoneHealthSummary.infected)} percent`}
+          >
             <span className="is-healthy" style={{ width: `${safeNumber(zoneHealthSummary.healthy)}%` }} />
             <span className="is-at-risk" style={{ width: `${safeNumber(zoneHealthSummary.atRisk)}%` }} />
             <span className="is-infected" style={{ width: `${safeNumber(zoneHealthSummary.infected)}%` }} />
