@@ -2,5 +2,6 @@
 
 from orchestration.assistant_pipeline import AssistantPipeline
 from orchestration.pipeline import LiveScanPipeline
+from orchestration.supervisor import InteractionSupervisor
 
-__all__ = ["LiveScanPipeline", "AssistantPipeline"]
+__all__ = ["LiveScanPipeline", "AssistantPipeline", "InteractionSupervisor"]

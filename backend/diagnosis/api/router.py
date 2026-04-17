@@ -55,6 +55,7 @@ from models.scan_models import (
     WeatherOutlookResponse,
 )
 from orchestration.pipeline import LiveScanPipeline
+from orchestration.supervisor import InteractionSupervisor
 from services.assistant_message_service import AssistantMessageService
 from services.dashboard_service import DashboardService
 from services.crop_service import CropService
@@ -114,6 +115,9 @@ _dashboard_service_init_error: str | None = None
 
 _assistant_message_service: AssistantMessageService | None = None
 _assistant_message_service_init_error: str | None = None
+
+_supervisor: InteractionSupervisor | None = None
+_supervisor_init_error: str | None = None
 
 
 def _get_pipeline() -> LiveScanPipeline | None:
@@ -274,6 +278,26 @@ def _get_assistant_message_service() -> AssistantMessageService | None:
         return None
 
     return _assistant_message_service
+
+
+def _get_supervisor() -> InteractionSupervisor | None:
+    global _supervisor
+    global _supervisor_init_error
+
+    if _supervisor is not None:
+        return _supervisor
+
+    if _supervisor_init_error is not None:
+        return None
+
+    try:
+        _supervisor = InteractionSupervisor()
+    except Exception as exc:
+        _supervisor_init_error = str(exc)
+        logger.exception("InteractionSupervisor init failed: %s", exc)
+        return None
+
+    return _supervisor
 
 
 def _strip_data_url_prefix(value: str) -> str:
@@ -466,6 +490,24 @@ def _assistant_reply_from_regions(results: list[ScanResult]) -> str:
     )
 
 
+def _build_scan_reply_context(result: ScanResult, diagnosis: HttpScanResponse) -> dict[str, Any]:
+    return {
+        "cropType": result.cropType,
+        "disease": result.disease,
+        "severity": result.severity,
+        "severityScore": result.severityScore,
+        "treatmentPlan": result.treatmentPlan,
+        "survivalProb": result.survivalProb,
+        "is_abnormal": result.is_abnormal,
+        "bbox": result.bbox.model_dump(),
+        "confidence": diagnosis.confidence,
+        "spread_risk": diagnosis.spread_risk,
+        "zone": diagnosis.zone,
+        "crop_type": diagnosis.crop_type,
+        "severity_percent": diagnosis.severity,
+    }
+
+
 @router.post("/api/scan", response_model=HttpScanResponse)
 async def scan_once(payload: HttpScanRequest) -> HttpScanResponse:
     """Single-frame diagnosis endpoint for frontend camera captures."""
@@ -549,6 +591,17 @@ async def scan_and_chat(payload: HttpScanAssistantRequest) -> HttpScanAssistantR
         diagnosis = _to_http_scan_response(result, raw_result, payload.grid_id)
         assistant_reply = _assistant_reply_from_scan(result)
 
+        supervisor = _get_supervisor()
+        if supervisor is not None:
+            try:
+                assistant_reply = await supervisor.build_photo_reply(
+                    user_prompt=payload.user_prompt,
+                    scan_result=_build_scan_reply_context(result, diagnosis),
+                    confidence=diagnosis.confidence,
+                )
+            except Exception as exc:
+                logger.warning("Supervisor photo reply failed, using fallback: %s", exc)
+
         return HttpScanAssistantResponse(
             **diagnosis.model_dump(),
             assistant_reply=assistant_reply,
@@ -598,6 +651,21 @@ async def scan_and_chat_multi(payload: HttpScanAssistantMultiRequest) -> HttpSca
 
     consolidated_reply = _assistant_reply_from_regions(region_diagnoses)
 
+    supervisor = _get_supervisor()
+    if supervisor is not None:
+        try:
+            reply_contexts = [
+                _build_scan_reply_context(region_diagnoses[i], regions_results[i])
+                for i in range(len(region_diagnoses))
+            ]
+            consolidated_reply = await supervisor.build_photo_reply(
+                user_prompt=payload.user_prompt,
+                scan_results=reply_contexts,
+                confidence=min(result.confidence for result in regions_results) if regions_results else None,
+            )
+        except Exception as exc:
+            logger.warning("Supervisor multi-region reply failed, using fallback: %s", exc)
+
     return HttpScanAssistantMultiResponse(
         frame_number=0,
         regions_results=regions_results,
@@ -608,6 +676,20 @@ async def scan_and_chat_multi(payload: HttpScanAssistantMultiRequest) -> HttpSca
 @router.post("/api/assistant/message", response_model=AssistantMessageResponse)
 async def assistant_message(payload: AssistantMessageRequest) -> AssistantMessageResponse:
     """Text-only assistant endpoint backed by real scan history data."""
+    supervisor = _get_supervisor()
+    if supervisor is not None:
+        try:
+            reply = await supervisor.build_text_reply(
+                user_prompt=payload.user_prompt,
+                user_id=payload.user_id,
+                zone=payload.zone,
+            )
+            return AssistantMessageResponse(assistant_reply=reply)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            logger.warning("Supervisor text reply failed, falling back to legacy assistant message service: %s", exc)
+
     service = _get_assistant_message_service()
     if service is None:
         raise HTTPException(

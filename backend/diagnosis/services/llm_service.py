@@ -78,6 +78,18 @@ MALAY_REPLY_HEADERS = (
     "Masa Semakan Semula",
 )
 
+LOW_CONFIDENCE_ENGLISH_REPLY_HEADERS = (
+    "What This Looks Like",
+    "Why Confidence Is Low",
+    "Next Step",
+)
+
+LOW_CONFIDENCE_MALAY_REPLY_HEADERS = (
+    "Apa Yang Kelihatan",
+    "Kenapa Keyakinan Rendah",
+    "Langkah Seterusnya",
+)
+
 _MALAY_HINT_WORDS = {
     "apa",
     "adakah",
@@ -166,6 +178,10 @@ def _get_reply_headers(language: str) -> tuple[str, str, str, str]:
     return MALAY_REPLY_HEADERS if language == "ms" else ENGLISH_REPLY_HEADERS
 
 
+def _get_low_confidence_reply_headers(language: str) -> tuple[str, str, str]:
+    return LOW_CONFIDENCE_MALAY_REPLY_HEADERS if language == "ms" else LOW_CONFIDENCE_ENGLISH_REPLY_HEADERS
+
+
 def _build_assistant_system_prompt(language: str) -> str:
     section_1, section_2, section_3, section_4 = _get_reply_headers(language)
 
@@ -189,6 +205,61 @@ def _build_assistant_system_prompt(language: str) -> str:
         f"    3) {section_3}\n"
         f"    4) {section_4}"
     )
+
+
+def _build_low_confidence_system_prompt(language: str) -> str:
+    section_1, section_2, section_3 = _get_low_confidence_reply_headers(language)
+
+    if language == "ms":
+        language_rules = (
+            "- You MUST answer in Malay (Bahasa Melayu) only.\n"
+            "- Use only Malay sentences. Do not mix in English or Chinese, except unavoidable crop, disease, or product names from diagnosis data.\n"
+        )
+    else:
+        language_rules = (
+            "- You MUST answer in English only.\n"
+            "- Use only English sentences. Do not mix in Malay or Chinese, except unavoidable crop, disease, or product names from diagnosis data.\n"
+        )
+
+    return (
+        f"{ASSISTANT_SYSTEM_PROMPT_BASE}\n"
+        f"{language_rules}"
+        "- The photo confidence is low, so you MUST be cautious and explicit about uncertainty.\n"
+        "- Do NOT present the diagnosis as certain.\n"
+        "- You MUST include these section headers exactly:\n"
+        f"    1) {section_1}\n"
+        f"    2) {section_2}\n"
+        f"    3) {section_3}"
+    )
+
+
+SUPERVISOR_SYSTEM_PROMPT_BASE = """\
+You are PadiGuard AI Response Agent.
+
+You receive structured task outputs from specialist agents.
+Use only the structured context.
+Answer the farmer with short, direct, practical sentences.
+If the data is missing, ask one clear follow-up question and stop.
+Do not mention internal agent names or JSON.
+If spraying is unsafe, say that first.
+If treatment is not worth it, say that first.
+If spread risk is high, say to isolate or monitor nearby plants.
+"""
+
+
+def _build_supervisor_system_prompt(language: str) -> str:
+    if language == "ms":
+        language_rules = (
+            "- You MUST answer in Malay (Bahasa Melayu) only.\n"
+            "- Use only Malay sentences. Do not mix in English or Chinese, except unavoidable crop, disease, or product names from diagnosis data.\n"
+        )
+    else:
+        language_rules = (
+            "- You MUST answer in English only.\n"
+            "- Use only English sentences. Do not mix in Malay or Chinese, except unavoidable crop, disease, or product names from diagnosis data.\n"
+        )
+
+    return f"{SUPERVISOR_SYSTEM_PROMPT_BASE}\n{language_rules}"
 
 
 def _format_reason_suffix(language: str, reason: str | None) -> str:
@@ -645,3 +716,219 @@ class LLMService:
                 await asyncio.sleep(RETRY_DELAY_SECONDS)
 
         return fallback
+
+    async def generate_low_confidence_photo_reply(
+        self,
+        *,
+        user_prompt: str,
+        scan_result: dict[str, Any] | None = None,
+        scan_results: list[dict[str, Any]] | None = None,
+    ) -> str:
+        """Generate a cautious response for an uncertain photo scan."""
+        language = detect_farmer_language(user_prompt)
+        structured_payload = scan_results if scan_results is not None else [scan_result or {}]
+        payload_text = json.dumps(structured_payload, indent=2, ensure_ascii=True, default=str)
+        fallback = self._build_low_confidence_fallback(
+            language=language,
+            scan_result=scan_result or (scan_results[0] if scan_results else {}),
+            scan_results=scan_results,
+        )
+
+        prompt = (
+            f"User message:\n{user_prompt}\n\n"
+            f"Structured scan context:\n{payload_text}\n\n"
+            "The scan confidence is low.\n"
+            "Do not present the diagnosis as certain.\n"
+            "Give the farmer a short reply with a direct warning, a simple reason, and one next step.\n"
+        )
+
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                response = self._generate_content_with_model_fallback(
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=_build_low_confidence_system_prompt(language),
+                        temperature=0.25,
+                        max_output_tokens=240,
+                    ),
+                )
+                text = (response.text or "").strip()
+                if text:
+                    return text
+            except Exception as exc:
+                logger.warning(
+                    "Low confidence photo reply attempt %d/%d failed: %s",
+                    attempt,
+                    MAX_RETRIES,
+                    exc,
+                )
+
+            if attempt < MAX_RETRIES:
+                await asyncio.sleep(RETRY_DELAY_SECONDS)
+
+        return fallback
+
+    async def generate_supervisor_reply(
+        self,
+        *,
+        user_prompt: str,
+        context: dict[str, Any],
+    ) -> str:
+        """Generate a farmer-friendly response from structured task outputs."""
+        language = detect_farmer_language(user_prompt)
+        context_text = json.dumps(context, indent=2, ensure_ascii=True, default=str)
+        fallback = self._build_supervisor_fallback(
+            language=language,
+            user_prompt=user_prompt,
+            context=context,
+        )
+
+        prompt = (
+            f"User message:\n{user_prompt}\n\n"
+            f"Structured task outputs:\n{context_text}\n\n"
+            "Use only the structured task outputs.\n"
+            "Answer the farmer directly and keep it short.\n"
+            "If the data is incomplete, ask one clear follow-up question and stop.\n"
+        )
+
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                response = self._generate_content_with_model_fallback(
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=_build_supervisor_system_prompt(language),
+                        temperature=0.25,
+                        max_output_tokens=280,
+                    ),
+                )
+                text = " ".join((response.text or "").strip().split())
+                if text:
+                    return text
+            except Exception as exc:
+                logger.warning(
+                    "Supervisor reply attempt %d/%d failed: %s",
+                    attempt,
+                    MAX_RETRIES,
+                    exc,
+                )
+
+            if attempt < MAX_RETRIES:
+                await asyncio.sleep(RETRY_DELAY_SECONDS)
+
+        return fallback
+
+    def _build_low_confidence_fallback(
+        self,
+        *,
+        language: str,
+        scan_result: dict[str, Any] | None,
+        scan_results: list[dict[str, Any]] | None,
+    ) -> str:
+        if language == "ms":
+            crop_type = self._trim_text((scan_result or {}).get("cropType"), default="Tanaman")
+            disease = self._trim_text((scan_result or {}).get("disease"), default="Tidak jelas")
+            if scan_results and len(scan_results) > 1:
+                return (
+                    "Apa Yang Kelihatan\n"
+                    f"Beberapa kawasan menunjukkan {crop_type}: {disease}.\n\n"
+                    "Kenapa Keyakinan Rendah\n"
+                    "Gambar ini belum cukup jelas untuk pengesahan yang selamat.\n\n"
+                    "Langkah Seterusnya\n"
+                    "Ambil semula gambar dekat dalam cahaya baik. Jika simptom merebak, asingkan pokok dan semak semula."
+                )
+
+            return (
+                "Apa Yang Kelihatan\n"
+                f"{crop_type}: {disease}.\n\n"
+                "Kenapa Keyakinan Rendah\n"
+                "Gambar ini belum cukup jelas untuk pengesahan yang selamat.\n\n"
+                "Langkah Seterusnya\n"
+                "Ambil semula gambar dekat dalam cahaya baik. Jika simptom merebak, asingkan pokok dan semak semula."
+            )
+
+        crop_type = self._trim_text((scan_result or {}).get("cropType"), default="Crop")
+        disease = self._trim_text((scan_result or {}).get("disease"), default="Unclear")
+        if scan_results and len(scan_results) > 1:
+            return (
+                "What This Looks Like\n"
+                f"Several areas suggest {crop_type}: {disease}.\n\n"
+                "Why Confidence Is Low\n"
+                "The photo is not clear enough for a safe diagnosis.\n\n"
+                "Next Step\n"
+                "Retake a close photo in good light. If the issue is spreading, isolate the plant and recheck soon."
+            )
+
+        return (
+            "What This Looks Like\n"
+            f"Possible issue: {disease} on {crop_type}.\n\n"
+            "Why Confidence Is Low\n"
+            "The photo is not clear enough for a safe diagnosis.\n\n"
+            "Next Step\n"
+            "Retake a close photo in good light. If the issue is spreading, isolate the plant and recheck soon."
+        )
+
+    def _build_supervisor_fallback(self, *, language: str, user_prompt: str, context: dict[str, Any]) -> str:
+        recent_scan = context.get("recent_scan") or {}
+        dashboard_summary = context.get("dashboard_summary")
+        latest = recent_scan.get("latest_report") or {}
+
+        if dashboard_summary:
+            weather = dashboard_summary.get("weatherSnapshot") or {}
+            financial = dashboard_summary.get("financialSummary") or {}
+            zone_health = dashboard_summary.get("zoneHealthSummary") or {}
+
+            if language == "ms":
+                pieces: list[str] = []
+                pieces.append(
+                    f"Cuaca {self._trim_text(weather.get('condition'), default='tidak jelas')}, angin {self._trim_text(weather.get('windKmh'), default='0')} km/j, hujan dalam {self._trim_text(weather.get('rainInHours'), default='n/a')} jam."
+                )
+                pieces.append(
+                    f"ROI {self._trim_text(financial.get('roiPercent'), default='0')}% dan kos rawatan RM {self._trim_text(financial.get('treatmentCostRm'), default='0')}."
+                )
+                low_stock_item = financial.get("lowStockItem")
+                if low_stock_item:
+                    pieces.append(
+                        f"Stok rendah: {self._trim_text(low_stock_item, default='tidak diketahui')} tinggal {self._trim_text(financial.get('lowStockLiters'), default='0')} liter."
+                    )
+                if zone_health:
+                    pieces.append(
+                        f"Zon perlukan perhatian: {self._trim_text(zone_health.get('zonesNeedingAttention'), default='0')}."
+                    )
+                return " ".join(pieces)
+
+            pieces = []
+            pieces.append(
+                f"Weather looks {self._trim_text(weather.get('condition'), default='unclear')}, wind is {self._trim_text(weather.get('windKmh'), default='0')} km/h, and rain is expected in {self._trim_text(weather.get('rainInHours'), default='n/a')} hours."
+            )
+            pieces.append(
+                f"ROI is {self._trim_text(financial.get('roiPercent'), default='0')}% and treatment cost is RM {self._trim_text(financial.get('treatmentCostRm'), default='0')}."
+            )
+            low_stock_item = financial.get("lowStockItem")
+            if low_stock_item:
+                pieces.append(
+                    f"Low stock: {self._trim_text(low_stock_item, default='unknown')} has {self._trim_text(financial.get('lowStockLiters'), default='0')} liters left."
+                )
+            if zone_health:
+                pieces.append(
+                    f"Zones needing attention: {self._trim_text(zone_health.get('zonesNeedingAttention'), default='0')}."
+                )
+            return " ".join(pieces)
+
+        if latest:
+            disease = self._trim_text(latest.get("disease"), default="Unknown")
+            severity = self._trim_text(latest.get("severity"), default="Unknown")
+            trend = self._trim_text(recent_scan.get("trend"), default="Trend data is limited.")
+            confidence = latest.get("confidence")
+            confidence_text = ""
+            if confidence is not None:
+                confidence_text = f" Confidence {self._normalize_confidence(confidence) or 0}%."
+
+            if language == "ms":
+                return f"Ujian terakhir menunjukkan {disease} pada tahap {severity}.{confidence_text} {trend}"
+
+            return f"Latest scan shows {disease} at {severity} severity.{confidence_text} {trend}"
+
+        if language == "ms":
+            return "Sila muat naik gambar yang lebih jelas atau beritahu saya tanaman dan zon yang perlu diperiksa."
+
+        return "Please upload a clear photo or tell me which crop and zone you want checked."
