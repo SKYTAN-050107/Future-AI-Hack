@@ -4,6 +4,7 @@ import { IconCloud, IconSun } from '../../components/icons/UiIcons'
 import SectionHeader from '../../components/ui/SectionHeader'
 import { sendAssistantMessage } from '../../api/assistant'
 import { getDashboardSummary } from '../../api/dashboard'
+import { getWeatherOutlook } from '../../api/weather'
 import { useSessionContext } from '../../hooks/useSessionContext'
 import { useGrids } from '../../hooks/useGrids'
 import { useScanHistory } from '../../hooks/useScanHistory'
@@ -117,6 +118,9 @@ export default function Dashboard() {
   const { latestReport } = useScanHistory()
   const [summary, setSummary] = useState(null)
   const [loadError, setLoadError] = useState('')
+  const [weatherData, setWeatherData] = useState(null)
+  const [weatherError, setWeatherError] = useState('')
+  const [isWeatherLoading, setIsWeatherLoading] = useState(false)
   const [selectedZoneName, setSelectedZoneName] = useState('')
   const [zoneQuickReview, setZoneQuickReview] = useState('')
   const [zoneQuickReviewError, setZoneQuickReviewError] = useState('')
@@ -126,6 +130,10 @@ export default function Dashboard() {
     () => grids.find((grid) => Number.isFinite(grid?.centroid?.lat) && Number.isFinite(grid?.centroid?.lng)),
     [grids],
   )
+
+  const lat = Number(firstGridWithCentroid?.centroid?.lat)
+  const lng = Number(firstGridWithCentroid?.centroid?.lng)
+  const hasCoords = Number.isFinite(lat) && Number.isFinite(lng)
 
   const totalAreaHectares = useMemo(
     () => grids.reduce((sum, grid) => {
@@ -234,6 +242,54 @@ export default function Dashboard() {
   }, [requestBuild.error, requestBuild.payload])
 
   useEffect(() => {
+    let active = true
+    const userId = String(user?.uid || '').trim()
+
+    if (!userId) {
+      setWeatherData(null)
+      setWeatherError('Sign in to load weather outlook.')
+      setIsWeatherLoading(false)
+      return undefined
+    }
+
+    if (!hasCoords) {
+      setWeatherData(null)
+      setWeatherError('Set at least one farm grid with centroid to load weather outlook.')
+      setIsWeatherLoading(false)
+      return undefined
+    }
+
+    setIsWeatherLoading(true)
+    setWeatherError('')
+
+    getWeatherOutlook({ lat, lng, days: 1 })
+      .then((response) => {
+        if (!active) {
+          return
+        }
+
+        setWeatherData(response)
+      })
+      .catch((error) => {
+        if (!active) {
+          return
+        }
+
+        setWeatherData(null)
+        setWeatherError(error?.message || 'Unable to load weather outlook')
+      })
+      .finally(() => {
+        if (active) {
+          setIsWeatherLoading(false)
+        }
+      })
+
+    return () => {
+      active = false
+    }
+  }, [hasCoords, lat, lng, user?.uid])
+
+  useEffect(() => {
     if (zoneOptions.length === 0) {
       setSelectedZoneName('')
       return
@@ -286,6 +342,21 @@ export default function Dashboard() {
     }
   }, [selectedZoneName, user?.uid])
 
+  const weatherSnapshot = weatherData || {}
+  const financialSummary = summary?.financialSummary || {}
+
+  const hourlyForecast6h = useMemo(() => {
+    const firstDay = Array.isArray(weatherSnapshot?.forecast)
+      ? weatherSnapshot.forecast[0]
+      : null
+
+    const hourly = Array.isArray(firstDay?.hourly)
+      ? firstDay.hourly
+      : []
+
+    return hourly.slice(0, 6)
+  }, [weatherSnapshot])
+
   if (!summary && !loadError) {
     return (
       <section className="pg-page pg-dashboard-page" aria-label="Financial and climate command center">
@@ -297,11 +368,10 @@ export default function Dashboard() {
     )
   }
 
-  const weatherSnapshot = summary?.weatherSnapshot || {}
-  const financialSummary = summary?.financialSummary || {}
-
   const rainInHours = safeNumber(weatherSnapshot.rainInHours, -1)
-  const safeToSpray = rainInHours < 0 || rainInHours >= 4
+  const safeToSpray = typeof weatherSnapshot?.safeToSpray === 'boolean'
+    ? weatherSnapshot.safeToSpray
+    : rainInHours < 0 || rainInHours >= 4
   const WeatherIcon = safeToSpray ? IconSun : IconCloud
 
   return (
@@ -332,6 +402,43 @@ export default function Dashboard() {
           <p className="pg-weather-wind">
             Wind {safeNumber(weatherSnapshot.windKmh)} km/h {weatherSnapshot.windDirection || '-'}
           </p>
+
+          <div style={{ marginTop: 8 }}>
+            <small style={{ opacity: 0.85, display: 'block', marginBottom: 6 }}>Next 6h</small>
+            {isWeatherLoading ? (
+              <small>Loading 6-hour forecast...</small>
+            ) : weatherError ? (
+              <small>{weatherError}</small>
+            ) : hourlyForecast6h.length === 0 ? (
+              <small>No hourly forecast available.</small>
+            ) : (
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                  gap: 6,
+                }}
+              >
+                {hourlyForecast6h.map((slot, index) => (
+                  <div
+                    key={`${slot.time || 'slot'}-${index}`}
+                    style={{
+                      border: '1px solid rgba(255,255,255,0.2)',
+                      borderRadius: 10,
+                      padding: '6px 8px',
+                      fontSize: 11,
+                      lineHeight: 1.2,
+                    }}
+                  >
+                    <strong style={{ display: 'block' }}>{slot.time || '--'}</strong>
+                    <span>{safeNumber(slot.temperature_c)} deg C</span>
+                    <br />
+                    <span>Rain {safeNumber(slot.rain_chance)}%</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
 
           <span className={`pg-weather-badge ${safeToSpray ? 'is-clear' : 'is-delay'}`}>
             {safeToSpray ? 'CLEAR' : 'DELAY'}
