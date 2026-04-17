@@ -6,6 +6,7 @@ import asyncio
 import logging
 
 from config import get_settings
+from services.crop_service import CropService
 from services.firebase_admin_service import get_firestore_client
 from services.inventory_service import InventoryService
 from services.treatment_service import TreatmentService
@@ -22,6 +23,7 @@ class DashboardService:
         self._db = get_firestore_client()
         self._grid_collection = settings.FIRESTORE_GRID_COLLECTION
         self._inventory_svc = InventoryService()
+        self._crop_svc = CropService()
         self._weather_svc = WeatherService()
         self._treatment_svc = TreatmentService()
 
@@ -29,10 +31,10 @@ class DashboardService:
         self,
         *,
         user_id: str,
-        crop_type: str,
-        treatment_plan: str,
-        farm_size_hectares: float,
-        survival_prob: float,
+        crop_type: str | None,
+        treatment_plan: str | None,
+        farm_size_hectares: float | None,
+        survival_prob: float | None,
         lat: float | None,
         lng: float | None,
     ) -> dict:
@@ -47,29 +49,19 @@ class DashboardService:
 
         weather = await self._weather_svc.get_outlook(lat=lat, lng=lng, days=7)
         zone_health = await asyncio.to_thread(self._compute_zone_health_sync, user_id)
-
-        treatment = await self._treatment_svc.build_plan(
-            crop_id=None,
+        financial_summary = await self._build_financial_summary(
             user_id=user_id,
-            disease="Crop disease risk",
             crop_type=crop_type,
             treatment_plan=treatment_plan,
             farm_size_hectares=farm_size_hectares,
             survival_prob=survival_prob,
-            lat=lat,
-            lng=lng,
-            treatment_cost_rm=None,
-            selling_channel="middleman",
-            market_condition="normal",
-            manual_price_override=None,
-            yield_kg=None,
-            actual_sold_kg=None,
-            labor_cost_rm=None,
-            other_costs_rm=None,
         )
 
         inventory = await self._inventory_svc.list_items(user_id=user_id)
         low_stock = next((item for item in inventory["items"] if item["liters"] < 5.0), None)
+
+        financial_summary["lowStockItem"] = (low_stock or {}).get("name")
+        financial_summary["lowStockLiters"] = (low_stock or {}).get("liters")
 
         return {
             "weatherSnapshot": {
@@ -80,15 +72,142 @@ class DashboardService:
                 "rainInHours": weather["rainInHours"],
             },
             "zoneHealthSummary": zone_health,
-            "financialSummary": {
-                "roiPercent": round((float(treatment["roi_x"]) - 1.0) * 100.0, 2),
-                "projectedRoiValueRm": round(float(treatment["expected_gain_rm"]) - float(treatment["estimated_cost_rm"]), 2),
-                "projectedYieldGainRm": float(treatment["expected_gain_rm"]),
-                "treatmentCostRm": float(treatment["estimated_cost_rm"]),
-                "lowStockItem": (low_stock or {}).get("name"),
-                "lowStockLiters": (low_stock or {}).get("liters"),
-            },
+            "financialSummary": financial_summary,
         }
+
+    async def _build_financial_summary(
+        self,
+        *,
+        user_id: str,
+        crop_type: str | None,
+        treatment_plan: str | None,
+        farm_size_hectares: float | None,
+        survival_prob: float | None,
+    ) -> dict:
+        crops_payload = await self._crop_svc.list_crops(user_id=user_id)
+        crop_items = crops_payload.get("items") or []
+
+        if crop_items:
+            crop_plans = await self._build_crop_financial_plans(user_id=user_id, crop_items=crop_items)
+            if crop_plans:
+                total_expected_gain = sum(self._safe_float(plan.get("expected_gain_rm"), default=0.0) for plan in crop_plans)
+                total_treatment_cost = sum(self._safe_float(plan.get("estimated_cost_rm"), default=0.0) for plan in crop_plans)
+                total_expected_roi_value = total_expected_gain - total_treatment_cost
+
+                roi_percent = 0.0
+                if total_treatment_cost > 0:
+                    roi_percent = (total_expected_roi_value / total_treatment_cost) * 100.0
+
+                return {
+                    "roiPercent": round(roi_percent, 2),
+                    "projectedRoiValueRm": round(total_expected_roi_value, 2),
+                    "projectedYieldGainRm": round(total_expected_gain, 2),
+                    "treatmentCostRm": round(total_treatment_cost, 2),
+                }
+
+        legacy_crop_type = str(crop_type or "").strip()
+        legacy_treatment_plan = str(treatment_plan or "").strip()
+        legacy_farm_size = self._safe_float(farm_size_hectares, default=0.0)
+        legacy_survival_prob = self._safe_float(survival_prob, default=1.0)
+
+        if (
+            not legacy_crop_type
+            or not legacy_treatment_plan
+            or legacy_farm_size <= 0
+            or legacy_survival_prob < 0
+            or legacy_survival_prob > 1
+        ):
+            raise ValueError(
+                "Dashboard summary requires at least one crop profile, or valid crop_type, treatment_plan, "
+                "farm_size_hectares, and survival_prob fallback values."
+            )
+
+        treatment = await self._treatment_svc.build_plan(
+            crop_id=None,
+            user_id=user_id,
+            disease="Crop disease risk",
+            crop_type=legacy_crop_type,
+            treatment_plan=legacy_treatment_plan,
+            farm_size_hectares=legacy_farm_size,
+            survival_prob=legacy_survival_prob,
+            lat=None,
+            lng=None,
+            treatment_cost_rm=None,
+            selling_channel="middleman",
+            market_condition="normal",
+            manual_price_override=None,
+            yield_kg=None,
+            actual_sold_kg=None,
+            labor_cost_rm=None,
+            other_costs_rm=None,
+        )
+
+        legacy_roi_x = treatment.get("roi_x")
+        legacy_roi_percent = 0.0
+        if legacy_roi_x is not None:
+            legacy_roi_percent = (float(legacy_roi_x) - 1.0) * 100.0
+
+        return {
+            "roiPercent": round(legacy_roi_percent, 2),
+            "projectedRoiValueRm": round(
+                float(treatment["expected_gain_rm"]) - float(treatment["estimated_cost_rm"]),
+                2,
+            ),
+            "projectedYieldGainRm": float(treatment["expected_gain_rm"]),
+            "treatmentCostRm": float(treatment["estimated_cost_rm"]),
+        }
+
+    async def _build_crop_financial_plans(self, *, user_id: str, crop_items: list[dict]) -> list[dict]:
+        crop_ids: list[str] = []
+        tasks = []
+
+        for crop in crop_items:
+            crop_id = str(crop.get("id") or "").strip()
+            if not crop_id:
+                continue
+
+            crop_ids.append(crop_id)
+            tasks.append(
+                self._treatment_svc.build_plan(
+                    crop_id=crop_id,
+                    user_id=user_id,
+                    disease="Crop disease risk",
+                    crop_type=None,
+                    treatment_plan="recommended treatment",
+                    farm_size_hectares=None,
+                    survival_prob=1.0,
+                    lat=None,
+                    lng=None,
+                    treatment_cost_rm=None,
+                    selling_channel="middleman",
+                    market_condition="normal",
+                    manual_price_override=None,
+                    yield_kg=None,
+                    actual_sold_kg=None,
+                    labor_cost_rm=None,
+                    other_costs_rm=None,
+                )
+            )
+
+        if not tasks:
+            return []
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        plans: list[dict] = []
+        for index, result in enumerate(results):
+            if isinstance(result, Exception):
+                logger.warning(
+                    "Skipping crop in dashboard financial aggregation: user_id=%s crop_id=%s error=%s",
+                    user_id,
+                    crop_ids[index],
+                    result,
+                )
+                continue
+
+            plans.append(result)
+
+        return plans
 
     async def get_zone_summary_counts(self, user_id: str | None = None) -> dict:
         """Return zone counters grouped into healthy, warning, unhealthy."""

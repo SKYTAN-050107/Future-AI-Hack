@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import logging
 import re
 import uuid
 
@@ -12,6 +13,8 @@ from config import get_settings
 from services.crop_service import CropService
 from services.inventory_service import InventoryService
 from services.weather_service import WeatherService
+
+logger = logging.getLogger(__name__)
 
 _YIELD_ESTIMATES_KG_PER_HA = {
     "rice": 4000.0,
@@ -37,6 +40,17 @@ _MARKET_FACTORS = {
 }
 
 _MIN_FARM_PRICE_RM_PER_KG = 0.3
+
+_FALLBACK_RETAIL_PRICE_RM_PER_KG = {
+    "rice": 2.6,
+    "padi": 2.6,
+    "oil palm": 0.7,
+    "rubber": 6.8,
+    "cocoa": 9.0,
+    "tomato": 4.2,
+}
+
+_DEFAULT_RETAIL_PRICE_RM_PER_KG = 2.5
 
 
 class TreatmentService:
@@ -197,8 +211,16 @@ class TreatmentService:
 
         weather_suffix = ""
         if lat is not None and lng is not None:
-            weather = await self._weather_svc.get_outlook(lat=lat, lng=lng, days=1)
-            weather_suffix = f" Best spray window: {weather['best_spray_window']}."
+            try:
+                weather = await self._weather_svc.get_outlook(lat=lat, lng=lng, days=1)
+                weather_suffix = f" Best spray window: {weather['best_spray_window']}."
+            except Exception as exc:
+                logger.warning(
+                    "Weather lookup failed during treatment ROI build (crop_id=%s user_id=%s): %s",
+                    crop_id,
+                    user_id,
+                    exc,
+                )
 
         disease_label = str(disease or "crop disease risk").strip() or "crop disease risk"
         recommendation = (
@@ -281,8 +303,16 @@ class TreatmentService:
 
         weather_suffix = ""
         if lat is not None and lng is not None:
-            weather = await self._weather_svc.get_outlook(lat=lat, lng=lng, days=1)
-            weather_suffix = f" Best spray window: {weather['best_spray_window']}."
+            try:
+                weather = await self._weather_svc.get_outlook(lat=lat, lng=lng, days=1)
+                weather_suffix = f" Best spray window: {weather['best_spray_window']}."
+            except Exception as exc:
+                logger.warning(
+                    "Weather lookup failed during legacy treatment ROI build (user_id=%s crop_type=%s): %s",
+                    user_id,
+                    crop_type,
+                    exc,
+                )
 
         recommendation = (
             f"Apply {treatment_plan} for {disease} management and complete field coverage in one cycle."
@@ -342,13 +372,32 @@ class TreatmentService:
         try:
             live_price = await self._fetch_market_price(crop_name)
             return live_price, now_iso
-        except Exception:
+        except Exception as exc:
             cached_price = crop.get("last_price_rm_per_kg")
             cached_date = crop.get("price_date")
-            if cached_price is None:
-                raise
+            if cached_price is not None:
+                return max(0.0, float(cached_price)), str(cached_date or now_iso)
 
-            return max(0.0, float(cached_price)), str(cached_date or now_iso)
+            fallback_price = self._fallback_retail_price(crop_name)
+            logger.warning(
+                "Market price lookup failed for crop=%s; using fallback retail price %.2f RM/kg (%s)",
+                crop_name,
+                fallback_price,
+                exc,
+            )
+            return fallback_price, now_iso
+
+    @staticmethod
+    def _fallback_retail_price(crop_name: str) -> float:
+        normalized = str(crop_name or "").strip().lower()
+        if normalized in _FALLBACK_RETAIL_PRICE_RM_PER_KG:
+            return float(_FALLBACK_RETAIL_PRICE_RM_PER_KG[normalized])
+
+        for keyword, price in _FALLBACK_RETAIL_PRICE_RM_PER_KG.items():
+            if keyword in normalized:
+                return float(price)
+
+        return _DEFAULT_RETAIL_PRICE_RM_PER_KG
 
     @staticmethod
     def _apply_channel_market_factors(

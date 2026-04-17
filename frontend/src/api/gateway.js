@@ -381,22 +381,17 @@ export const gateway = {
 
   getDashboardSummary: async (input) => {
     const userId = String(input?.userId || '').trim()
-    const cropType = String(input?.cropType || '').trim()
-    const treatmentPlan = String(input?.treatmentPlan || '').trim()
-    const farmSizeHectares = toFiniteNumber(input?.farmSizeHectares)
-    const survivalProb = toFiniteNumber(input?.survivalProb)
+    const cropType = String(input?.cropType || 'Mixed crop').trim() || 'Mixed crop'
+    const treatmentPlan = String(input?.treatmentPlan || 'recommended treatment').trim() || 'recommended treatment'
+    const farmSizeInput = toFiniteNumber(input?.farmSizeHectares)
+    const survivalInput = toFiniteNumber(input?.survivalProb)
 
-    if (!userId || !cropType || !treatmentPlan) {
-      throw new Error('userId, cropType, and treatmentPlan are required for dashboard summary')
+    if (!userId) {
+      throw new Error('userId is required for dashboard summary')
     }
 
-    if (farmSizeHectares === null || farmSizeHectares <= 0) {
-      throw new Error('farmSizeHectares must be greater than 0')
-    }
-
-    if (survivalProb === null || survivalProb < 0 || survivalProb > 1) {
-      throw new Error('survivalProb must be between 0 and 1')
-    }
+    const farmSizeHectares = farmSizeInput !== null && farmSizeInput > 0 ? farmSizeInput : 1
+    const survivalProb = survivalInput !== null && survivalInput >= 0 && survivalInput <= 1 ? survivalInput : 1
 
     return requestJson('/api/dashboard/summary', {
       method: 'POST',

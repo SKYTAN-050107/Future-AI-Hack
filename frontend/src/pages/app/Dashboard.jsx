@@ -174,28 +174,21 @@ export default function Dashboard() {
       return { payload: null, error: 'Sign in to load dashboard summary.' }
     }
 
-    if (!latestReport) {
-      return { payload: null, error: 'No scan report available yet for summary insights.' }
-    }
-
-    const cropType = String(latestReport?.cropType || latestReport?.crop_type || profile?.onboarding?.variety || '').trim()
-    const treatmentPlan = String(latestReport?.treatmentPlan || latestReport?.treatment_plan || '').trim()
+    const cropType = String(
+      latestReport?.cropType
+      || latestReport?.crop_type
+      || profile?.onboarding?.variety
+      || 'Mixed crop',
+    ).trim() || 'Mixed crop'
+    const treatmentPlan = String(
+      latestReport?.treatmentPlan
+      || latestReport?.treatment_plan
+      || 'recommended treatment',
+    ).trim() || 'recommended treatment'
     const survivalProb = deriveSurvivalProbability(latestReport)
-
-    if (!cropType) {
-      return { payload: null, error: 'Latest scan is missing crop type data for dashboard projection.' }
-    }
-
-    if (!treatmentPlan) {
-      return { payload: null, error: 'Latest scan is missing treatment plan data for dashboard projection.' }
-    }
 
     if (!Number.isFinite(totalAreaHectares) || totalAreaHectares <= 0) {
       return { payload: null, error: 'Farm area is required. Draw at least one grid to load dashboard summary.' }
-    }
-
-    if (survivalProb === null) {
-      return { payload: null, error: 'Latest scan severity is required for dashboard projection.' }
     }
 
     return {
@@ -204,7 +197,7 @@ export default function Dashboard() {
         cropType,
         treatmentPlan,
         farmSizeHectares: totalAreaHectares,
-        survivalProb,
+        survivalProb: survivalProb ?? 1,
         lat: firstGridWithCentroid?.centroid?.lat,
         lng: firstGridWithCentroid?.centroid?.lng,
       },
@@ -569,18 +562,20 @@ export default function Dashboard() {
           </header>
 
           <div className="pg-finance-hero">
-            <p className="pg-finance-kicker">Projected ROI</p>
+            <p className="pg-finance-kicker">Total Expected ROI</p>
             <h2>{formatCurrency(financialSummary.projectedRoiValueRm)}</h2>
-            <p className="pg-finance-percent">+{safeNumber(financialSummary.roiPercent)}% this cycle</p>
+            <p className="pg-finance-percent">
+              {`${safeNumber(financialSummary.roiPercent) >= 0 ? '+' : ''}${safeNumber(financialSummary.roiPercent).toFixed(2)}% account-wide`}
+            </p>
           </div>
 
           <div className="pg-finance-breakdown" aria-label="Cost versus benefit">
             <div>
-              <span>Potential Yield Gain</span>
+              <span>Total Expected Revenue</span>
               <strong>{formatCurrency(financialSummary.projectedYieldGainRm)}</strong>
             </div>
             <div>
-              <span>Treatment Cost</span>
+              <span>Total Treatment Cost</span>
               <strong>{formatCurrency(financialSummary.treatmentCostRm)}</strong>
             </div>
           </div>
