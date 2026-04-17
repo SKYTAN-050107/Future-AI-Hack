@@ -13,8 +13,30 @@ service cloud.firestore {
       return signedIn() && request.resource.data.ownerUid == request.auth.uid;
     }
 
+    function isLegacyConversationOwner(data) {
+      return signedIn() && (
+        data.ownerUid == request.auth.uid ||
+        data.userId == request.auth.uid ||
+        data.uid == request.auth.uid
+      );
+    }
+
     match /users/{userId} {
       allow read, write: if signedIn() && request.auth.uid == userId;
+    }
+
+    match /users/{userId}/grids/{gridId} {
+      allow read, write: if signedIn() && request.auth.uid == userId;
+    }
+
+    match /users/{userId}/conversations/{conversationId} {
+      allow read, write: if signedIn() && request.auth.uid == userId;
+    }
+
+    match /conversations/{conversationId} {
+      allow create: if isLegacyConversationOwner(request.resource.data);
+      allow read, delete: if isLegacyConversationOwner(resource.data);
+      allow update: if isLegacyConversationOwner(resource.data) && isLegacyConversationOwner(request.resource.data);
     }
 
     match /grids/{gridId} {

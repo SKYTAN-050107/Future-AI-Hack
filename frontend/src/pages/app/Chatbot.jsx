@@ -1,14 +1,28 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
+import {
+  collection,
+  deleteDoc,
+  doc,
+  getDocs,
+  onSnapshot,
+  query,
+  serverTimestamp,
+  setDoc,
+  where,
+} from 'firebase/firestore'
 import { IconArrowLeft, IconImage, IconList, IconSparkles } from '../../components/icons/UiIcons'
 import { scanAndAskAssistant } from '../../api/scan'
 import { sendAssistantMessage } from '../../api/assistant'
+import { db, isFirebaseConfigured } from '../../firebase'
 import { useScanHistory } from '../../hooks/useScanHistory'
 import { useScanReports } from '../../hooks/useScanReports'
 import { useSessionContext } from '../../hooks/useSessionContext'
 
 const STORAGE_KEY = 'pg_chatbot_conversations_v1'
 const PENDING_CAPTURE_KEY = 'pg_pending_scan_capture_v1'
+const USERS_COLLECTION = 'users'
+const CONVERSATION_COLLECTION = 'conversations'
 
 const WELCOME_MESSAGE = {
   role: 'ai',
@@ -93,6 +107,103 @@ async function fileToUploadDataUrl(file) {
 
 function createConversationId() {
   return `chat-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+}
+
+function toMillis(value) {
+  if (!value) {
+    return 0
+  }
+
+  if (typeof value?.toMillis === 'function') {
+    return value.toMillis()
+  }
+
+  if (value instanceof Date) {
+    return value.getTime()
+  }
+
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function normalizeMessage(raw) {
+  const role = raw?.role === 'user' ? 'user' : 'ai'
+  const text = String(raw?.text || '').trim()
+  if (!text) {
+    return null
+  }
+
+  return { role, text }
+}
+
+function normalizeConversationRecord(id, raw) {
+  const messages = Array.isArray(raw?.messages)
+    ? raw.messages.map(normalizeMessage).filter(Boolean)
+    : []
+
+  if (messages.length === 0) {
+    return null
+  }
+
+  const firstUserMessage = messages.find((message) => message.role === 'user')
+  return {
+    id: String(id),
+    title: String(raw?.title || firstUserMessage?.text?.slice(0, 56) || 'Conversation'),
+    updatedAt: toMillis(raw?.clientUpdatedAt || raw?.updatedAt || raw?.createdAt) || Date.now(),
+    messages,
+  }
+}
+
+function mergeConversationLists(primary, secondary) {
+  const byId = new Map()
+  const combinedEntries = [...(primary || []), ...(secondary || [])]
+
+  combinedEntries.forEach((entry) => {
+    const normalized = normalizeConversationRecord(entry?.id, entry)
+    if (!normalized) {
+      return
+    }
+
+    const existing = byId.get(normalized.id)
+    if (!existing || normalized.updatedAt >= existing.updatedAt) {
+      byId.set(normalized.id, normalized)
+    }
+  })
+
+  return [...byId.values()]
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .slice(0, 24)
+}
+
+function areConversationListsEqual(left, right) {
+  if (left.length !== right.length) {
+    return false
+  }
+
+  for (let i = 0; i < left.length; i += 1) {
+    const a = left[i]
+    const b = right[i]
+
+    if (!a || !b) {
+      return false
+    }
+
+    if (a.id !== b.id || a.title !== b.title || a.updatedAt !== b.updatedAt) {
+      return false
+    }
+
+    if (!Array.isArray(a.messages) || !Array.isArray(b.messages) || a.messages.length !== b.messages.length) {
+      return false
+    }
+
+    for (let j = 0; j < a.messages.length; j += 1) {
+      if (a.messages[j]?.role !== b.messages[j]?.role || a.messages[j]?.text !== b.messages[j]?.text) {
+        return false
+      }
+    }
+  }
+
+  return true
 }
 
 function loadStoredConversations() {
@@ -188,6 +299,53 @@ export default function Chatbot() {
   const threadRef = useRef(null)
   const photoInputRef = useRef(null)
   const autoScanTriggeredRef = useRef(false)
+  const migratedConversationUsersRef = useRef(new Set())
+
+  const migrateLegacyConversationsForUser = useCallback(async (uid) => {
+    if (!uid || !db || !isFirebaseConfigured || migratedConversationUsersRef.current.has(uid)) {
+      return
+    }
+
+    const legacyRootCollection = collection(db, CONVERSATION_COLLECTION)
+    const docsById = new Map()
+    const ownerFields = ['ownerUid', 'userId', 'uid']
+
+    for (const fieldName of ownerFields) {
+      const snapshot = await getDocs(query(legacyRootCollection, where(fieldName, '==', uid)))
+      snapshot.docs.forEach((item) => {
+        docsById.set(item.id, item)
+      })
+    }
+
+    if (docsById.size === 0) {
+      migratedConversationUsersRef.current.add(uid)
+      return
+    }
+
+    await Promise.all(
+      [...docsById.values()].map(async (legacyDoc) => {
+        const normalized = normalizeConversationRecord(legacyDoc.id, legacyDoc.data() || {})
+        if (normalized) {
+          await setDoc(
+            doc(db, USERS_COLLECTION, uid, CONVERSATION_COLLECTION, normalized.id),
+            {
+              id: normalized.id,
+              ownerUid: uid,
+              title: normalized.title,
+              messages: normalized.messages,
+              clientUpdatedAt: normalized.updatedAt,
+              updatedAt: serverTimestamp(),
+            },
+            { merge: true },
+          )
+        }
+
+        await deleteDoc(legacyDoc.ref)
+      }),
+    )
+
+    migratedConversationUsersRef.current.add(uid)
+  }, [])
 
   const firstSeverity = Number(reports[0]?.severity || 0)
   const lastSeverity = Number(reports[reports.length - 1]?.severity || 0)
@@ -208,6 +366,93 @@ export default function Chatbot() {
   useEffect(() => {
     saveStoredConversations(conversationHistory)
   }, [conversationHistory])
+
+  useEffect(() => {
+    const uid = String(user?.uid || '').trim()
+    if (!uid || !db || !isFirebaseConfigured) {
+      return undefined
+    }
+
+    let unsubscribe = () => {}
+    let cancelled = false
+
+    const connectConversationStream = async () => {
+      try {
+        await migrateLegacyConversationsForUser(uid)
+      } catch (migrationError) {
+        console.warn('Legacy conversation migration skipped:', migrationError)
+      }
+
+      if (cancelled) {
+        return
+      }
+
+      const conversationsRef = collection(db, USERS_COLLECTION, uid, CONVERSATION_COLLECTION)
+      unsubscribe = onSnapshot(
+        conversationsRef,
+        (snapshot) => {
+          const remoteEntries = snapshot.docs
+            .map((item) => normalizeConversationRecord(item.id, item.data() || {}))
+            .filter(Boolean)
+
+          setConversationHistory((prev) => {
+            const merged = mergeConversationLists(prev, remoteEntries)
+            return areConversationListsEqual(prev, merged) ? prev : merged
+          })
+        },
+        () => {
+          // Keep local chat UX even if remote conversation sync fails.
+        },
+      )
+    }
+
+    connectConversationStream()
+
+    return () => {
+      cancelled = true
+      unsubscribe()
+    }
+  }, [migrateLegacyConversationsForUser, user?.uid])
+
+  useEffect(() => {
+    const uid = String(user?.uid || '').trim()
+    if (!uid || !db || !isFirebaseConfigured || conversationHistory.length === 0) {
+      return
+    }
+
+    const safeEntries = conversationHistory
+      .map((entry) => normalizeConversationRecord(entry?.id, entry))
+      .filter(Boolean)
+
+    if (safeEntries.length === 0) {
+      return
+    }
+
+    const persist = async () => {
+      try {
+        await Promise.all(
+          safeEntries.map((entry) =>
+            setDoc(
+              doc(db, USERS_COLLECTION, uid, CONVERSATION_COLLECTION, entry.id),
+              {
+                id: entry.id,
+                ownerUid: uid,
+                title: entry.title,
+                messages: entry.messages,
+                clientUpdatedAt: entry.updatedAt,
+                updatedAt: serverTimestamp(),
+              },
+              { merge: true },
+            ),
+          ),
+        )
+      } catch {
+        // Keep local chat UX even if remote conversation sync fails.
+      }
+    }
+
+    persist()
+  }, [conversationHistory, user?.uid])
 
   useEffect(() => {
     const params = new URLSearchParams(location.search)

@@ -86,12 +86,18 @@ class DashboardService:
         """Return zone counters grouped into healthy, warning, unhealthy."""
         return await asyncio.to_thread(self._get_zone_summary_counts_sync, user_id)
 
-    def _get_zone_summary_counts_sync(self, user_id: str | None) -> dict:
-        query = self._db.collection(self._grid_collection)
-        if user_id:
-            query = query.where("ownerUid", "==", user_id)
+    def _user_grids_collection(self, user_id: str):
+        return (
+            self._db.collection("users")
+            .document(user_id)
+            .collection(self._grid_collection)
+        )
 
-        docs = query.stream()
+    def _get_zone_summary_counts_sync(self, user_id: str | None) -> dict:
+        if user_id:
+            docs = self._user_grids_collection(user_id).stream()
+        else:
+            docs = self._db.collection_group(self._grid_collection).stream()
 
         summary = {
             "total_zones": 0,
@@ -120,11 +126,7 @@ class DashboardService:
         return summary
 
     def _compute_zone_health_sync(self, user_id: str) -> dict:
-        docs = (
-            self._db.collection(self._grid_collection)
-            .where("ownerUid", "==", user_id)
-            .stream()
-        )
+        docs = self._user_grids_collection(user_id).stream()
 
         grids = [doc.to_dict() or {} for doc in docs]
         if not grids:
@@ -166,12 +168,7 @@ class DashboardService:
         }
 
     def _infer_coordinates_sync(self, user_id: str) -> tuple[float, float] | None:
-        docs = (
-            self._db.collection(self._grid_collection)
-            .where("ownerUid", "==", user_id)
-            .limit(1)
-            .stream()
-        )
+        docs = self._user_grids_collection(user_id).limit(1).stream()
 
         for doc in docs:
             data = doc.to_dict() or {}

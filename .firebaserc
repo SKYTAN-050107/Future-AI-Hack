@@ -1,5 +1,8 @@
 {
   "projects": {
-    "default": "ragsystem-492216"
-  }
+    "default": "ragsystem-492216",
+    "utmhack": "ragsystem-492216"
+  },
+  "targets": {},
+  "etags": {}
 }
