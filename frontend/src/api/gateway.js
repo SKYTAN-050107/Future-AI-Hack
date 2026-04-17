@@ -161,7 +161,7 @@ export const gateway = {
 
     return requestJson('/api/assistant/message', {
       method: 'POST',
-      timeoutMs: 30000,
+      timeoutMs: 45000,
       body: JSON.stringify({
         user_prompt: userPrompt,
         user_id: userId,

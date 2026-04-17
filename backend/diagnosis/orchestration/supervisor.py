@@ -136,9 +136,13 @@ class InteractionSupervisor:
         user_prompt: str,
         draft_reply: str,
         context: dict[str, Any],
+        validate: bool = True,
     ) -> str:
         reply = str(draft_reply or "").strip()
         if not reply:
+            return reply
+
+        if not validate:
             return reply
 
         validator = self._get_response_validation_agent()
@@ -521,6 +525,7 @@ class InteractionSupervisor:
                 user_prompt=user_prompt,
                 draft_reply=draft_reply,
                 context=validation_context_base,
+                validate=False,
             )
 
         if needs_recent_scan:

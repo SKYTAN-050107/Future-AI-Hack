@@ -2,6 +2,42 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { IconClock, IconSparkles } from '../../components/icons/UiIcons'
 
+const PENDING_CAPTURE_KEY = 'pg_pending_scan_capture_v1'
+
+function captureFrameAsDataUrl(videoElement, options = {}) {
+  const maxWidth = Number(options.maxWidth || 960)
+  const quality = Number(options.quality || 0.85)
+  const rawWidth = videoElement.videoWidth || 1280
+  const rawHeight = videoElement.videoHeight || 720
+  const scale = rawWidth > maxWidth ? maxWidth / rawWidth : 1
+  const width = Math.round(rawWidth * scale)
+  const height = Math.round(rawHeight * scale)
+
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+
+  const context = canvas.getContext('2d')
+  if (!context) {
+    throw new Error('Unable to capture frame from camera')
+  }
+
+  context.drawImage(videoElement, 0, 0, width, height)
+  return canvas.toDataURL('image/jpeg', quality)
+}
+
+function savePendingCapture(payload) {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  try {
+    window.sessionStorage.setItem(PENDING_CAPTURE_KEY, JSON.stringify(payload))
+  } catch {
+    // Ignore storage failures and let chatbot run without auto-processing.
+  }
+}
+
 function formatCaptureTime(date) {
   return new Intl.DateTimeFormat('en-MY', {
     hour: 'numeric',
@@ -89,6 +125,11 @@ export default function Scanner() {
       return
     }
 
+    if (!videoRef.current) {
+      setStatusMessage('Camera stream is not ready. Please try again.')
+      return
+    }
+
     setIsCaptureFlashVisible(true)
     window.setTimeout(() => {
       setIsCaptureFlashVisible(false)
@@ -96,7 +137,21 @@ export default function Scanner() {
 
     const capturedAt = new Date()
     setLastCaptureTime(formatCaptureTime(capturedAt))
-    setStatusMessage('Frame captured. Sending to swarm diagnosis pipeline...')
+    setStatusMessage('Frame captured. Opening PadiGuard AI Assistant...')
+
+    try {
+      const base64Image = captureFrameAsDataUrl(videoRef.current)
+      savePendingCapture({
+        source: 'camera',
+        base64Image,
+        capturedAt: capturedAt.toISOString(),
+        userPrompt: 'I just took this photo. Please analyze it and tell me what to do next.',
+      })
+
+      navigate('/app/chatbot?fromScan=1')
+    } catch (error) {
+      setStatusMessage(error?.message || 'Capture failed. Please try again.')
+    }
   }
 
   return (
