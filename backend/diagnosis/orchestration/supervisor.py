@@ -15,6 +15,7 @@ from services.dashboard_service import DashboardService
 from services.firebase_admin_service import get_firestore_client
 from services.inventory_service import InventoryService
 from services.llm_service import LLMService, build_farmer_fallback_dialogue, detect_farmer_language
+from services.weather_service import WeatherService
 
 logger = logging.getLogger(__name__)
 
@@ -23,17 +24,16 @@ _DEFAULT_LOW_CONFIDENCE_THRESHOLD = 0.65
 
 @dataclass(slots=True)
 class TaskNode:
-    """One node in a small task graph."""
-
     name: str
     runner: Callable[[dict[str, Any]], Awaitable[Any]] = field(repr=False)
     depends_on: tuple[str, ...] = ()
 
 
 class InteractionSupervisor:
-    """Coordinate diagnosis, dashboard, and reply tasks without touching agents."""
-
     def __init__(self) -> None:
+        self._llm_service: LLMService | None = None
+        self._llm_service_error: str | None = None
+
         self._assistant_pipeline: AssistantPipeline | None = None
         self._assistant_pipeline_error: str | None = None
 
@@ -43,25 +43,18 @@ class InteractionSupervisor:
         self._crop_service: CropService | None = None
         self._crop_service_error: str | None = None
 
+        self._weather_service: WeatherService | None = None
+        self._weather_service_error: str | None = None
+
         self._inventory_service: InventoryService | None = None
         self._inventory_service_error: str | None = None
 
-        self._llm_service: LLMService | None = None
-        self._llm_service_error: str | None = None
-
-        self._firestore_client = None
+        self._firestore_client: Any | None = None
         self._firestore_error: str | None = None
 
     def _get_low_confidence_threshold(self) -> float:
-        try:
-            settings = get_settings()
-            threshold = float(getattr(settings, "VECTOR_SEARCH_CONFIDENCE_THRESHOLD", _DEFAULT_LOW_CONFIDENCE_THRESHOLD))
-        except Exception:
-            threshold = _DEFAULT_LOW_CONFIDENCE_THRESHOLD
-
-        if threshold <= 1.0:
-            return threshold
-        return threshold / 100.0
+        settings = get_settings()
+        return float(getattr(settings, "VECTOR_SEARCH_CONFIDENCE_THRESHOLD", _DEFAULT_LOW_CONFIDENCE_THRESHOLD))
 
     def _get_llm_service(self) -> LLMService | None:
         if self._llm_service is not None:
@@ -88,7 +81,7 @@ class InteractionSupervisor:
             self._assistant_pipeline = AssistantPipeline()
         except Exception as exc:
             self._assistant_pipeline_error = str(exc)
-            logger.warning("AssistantPipeline unavailable: %s", exc)
+            logger.warning("AssistantPipeline unavailable for supervisor replies: %s", exc)
             return None
 
         return self._assistant_pipeline
@@ -122,6 +115,21 @@ class InteractionSupervisor:
             return None
 
         return self._crop_service
+
+    def _get_weather_service(self) -> WeatherService | None:
+        if self._weather_service is not None:
+            return self._weather_service
+        if self._weather_service_error is not None:
+            return None
+
+        try:
+            self._weather_service = WeatherService()
+        except Exception as exc:
+            self._weather_service_error = str(exc)
+            logger.warning("WeatherService unavailable for supervisor replies: %s", exc)
+            return None
+
+        return self._weather_service
 
     def _get_inventory_service(self) -> InventoryService | None:
         if self._inventory_service is not None:
@@ -175,23 +183,27 @@ class InteractionSupervisor:
         if not scan_results:
             return False
 
-        normalized_values = [
-            candidate
-            for candidate in (self._normalize_confidence(item.get("confidence")) for item in scan_results)
-            if candidate is not None
-        ]
-        if not normalized_values:
+        scores = [self._normalize_confidence(item.get("confidence")) for item in scan_results if isinstance(item, dict)]
+        normalized_scores = [score for score in scores if score is not None]
+        if not normalized_scores:
             return False
 
-        return min(normalized_values) < threshold_percent
+        return min(normalized_scores) < threshold_percent
 
     @staticmethod
-    def _trim_text(value: Any, default: str = "Unknown") -> str:
+    def _trim_text(value: Any, default: str = "") -> str:
         text = str(value or "").strip()
         return text or default
 
     @staticmethod
-    def _safe_optional_float(value: object) -> float | None:
+    def _safe_float(value: Any, default: float = 0.0) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _safe_optional_float(value: Any) -> float | None:
         try:
             if value is None:
                 return None
@@ -199,48 +211,66 @@ class InteractionSupervisor:
         except (TypeError, ValueError):
             return None
 
-    def _detect_intents(self, user_prompt: str) -> set[str]:
+    @staticmethod
+    def _detect_intents(user_prompt: str) -> set[str]:
         text = (user_prompt or "").lower()
         intents: set[str] = set()
 
-        if re.search(r"\b(photo|image|picture|upload|leaf|spot|symptom|disease|pest|blight|rust|blast|mildew)\b", text):
-            intents.add("diagnosis")
-        if re.search(r"\b(spray|spraying|weather|rain|wind|temperature|forecast|safe to spray)\b", text):
-            intents.add("weather")
-        if re.search(r"\b(cost|roi|worth|worth it|profit|benefit|expense|expensive|budget)\b", text):
-            intents.add("economy")
-        if re.search(r"\b(stock|inventory|available|supply|enough|material|chemical|pesticide|fungicide|fertilizer)\b", text):
+        if any(keyword in text for keyword in ("inventory", "stock", "supply", "supplies", "fertilizer", "fertiliser", "chemical", "chemicals", "pesticide", "pesticides", "seed", "seeds")):
             intents.add("resource")
-        if re.search(r"\b(spread|isolate|quarantine|contagious|nearby|neighbor|other area|other areas)\b", text):
+        if any(phrase in text for phrase in ("location", "my location", "saved location", "farm location", "bound location", "where am i", "where is my farm")):
+            intents.add("location")
+        if any(keyword in text for keyword in ("weather", "rain", "forecast", "temperature", "wind", "humidity", "climate")):
+            intents.add("weather")
+        if any(keyword in text for keyword in ("economy", "roi", "profit", "cost", "yield", "revenue", "financial")):
+            intents.add("economy")
+        if any(keyword in text for keyword in ("diagnosis", "disease", "infect", "infection", "spot", "spots", "wilt", "leaf", "leaves", "pest", "pests", "symptom", "symptoms", "photo", "picture", "image")):
+            intents.add("diagnosis")
+        if any(keyword in text for keyword in ("spread", "spreading", "cluster", "clusters")):
             intents.add("spread")
 
         return intents
 
+    @staticmethod
+    def _references_existing_scan_context(user_prompt: str) -> bool:
+        text = (user_prompt or "").lower()
+        return bool(
+            re.search(
+                r"\b(latest|recent|previous|prior|scan|report|history|photo|image|upload|uploaded|picture)\b",
+                text,
+            )
+        )
+
     async def _run_task_graph(self, nodes: list[TaskNode]) -> dict[str, Any]:
-        pending = {node.name: node for node in nodes}
         state: dict[str, Any] = {}
+        pending = list(nodes)
+        completed: set[str] = set()
 
         while pending:
-            ready = [
-                node
-                for node in pending.values()
-                if set(node.depends_on).issubset(state.keys())
-            ]
-            if not ready:
-                raise RuntimeError("Task graph has unsatisfied dependencies")
+            progressed = False
+            for index, node in enumerate(list(pending)):
+                if any(dep not in completed for dep in node.depends_on):
+                    continue
 
-            results = await asyncio.gather(
-                *(node.runner(state) for node in ready),
-                return_exceptions=True,
-            )
+                state[node.name] = await node.runner(state.copy())
+                completed.add(node.name)
+                pending.pop(index)
+                progressed = True
+                break
 
-            for node, result in zip(ready, results):
-                if isinstance(result, Exception):
-                    logger.warning("Task node failed: %s -> %s", node.name, result)
-                    state[node.name] = {"error": str(result)}
-                else:
-                    state[node.name] = result
-                pending.pop(node.name, None)
+            if not progressed:
+                pending_names = [node.name for node in pending]
+                missing_dependencies = sorted(
+                    {
+                        dependency
+                        for node in pending
+                        for dependency in node.depends_on
+                        if dependency not in completed
+                    }
+                )
+                raise RuntimeError(
+                    f"Task graph stalled; pending={pending_names}; missing_dependencies={missing_dependencies}"
+                )
 
         return state
 
@@ -248,17 +278,16 @@ class InteractionSupervisor:
         self,
         *,
         user_prompt: str,
+        confidence: Any,
         scan_result: dict[str, Any] | None = None,
         scan_results: list[dict[str, Any]] | None = None,
-        confidence: Any = None,
     ) -> str:
-        """Return the response-agent reply for a photo upload."""
-        llm = self._get_llm_service()
         current_scan = scan_result or (scan_results[0] if scan_results else {})
         low_confidence = self._is_low_confidence(confidence, scan_results)
 
         if scan_results and len(scan_results) > 1:
             if low_confidence:
+                llm = self._get_llm_service()
                 if llm is not None:
                     return await llm.generate_low_confidence_photo_reply(
                         user_prompt=user_prompt,
@@ -266,12 +295,14 @@ class InteractionSupervisor:
                     )
                 return self._low_confidence_fallback(user_prompt=user_prompt, scan_result=current_scan)
 
+            llm = self._get_llm_service()
             if llm is not None:
                 return await llm.generate_consolidated_assistant_dialogue(scan_results, user_prompt)
 
             return self._low_confidence_fallback(user_prompt=user_prompt, scan_result=current_scan)
 
         if low_confidence:
+            llm = self._get_llm_service()
             if llm is not None:
                 return await llm.generate_low_confidence_photo_reply(
                     user_prompt=user_prompt,
@@ -286,6 +317,7 @@ class InteractionSupervisor:
             except Exception as exc:
                 logger.warning("AssistantPipeline reply failed, falling back to Gemini: %s", exc)
 
+        llm = self._get_llm_service()
         if llm is not None:
             return await llm.generate_assistant_dialogue(current_scan, user_prompt)
 
@@ -297,6 +329,9 @@ class InteractionSupervisor:
         user_prompt: str,
         user_id: str,
         zone: str | None = None,
+        location: str | None = None,
+        lat: float | None = None,
+        lng: float | None = None,
     ) -> str:
         """Return the response-agent reply for a text-only request."""
         intents = self._detect_intents(user_prompt)
@@ -312,7 +347,7 @@ class InteractionSupervisor:
                 TaskNode(
                     name="inventory_summary",
                     runner=lambda _state: self._load_inventory_summary(user_id=user_id),
-                ),
+                )
             )
 
         if needs_recent_scan:
@@ -320,7 +355,7 @@ class InteractionSupervisor:
                 TaskNode(
                     name="recent_scan",
                     runner=lambda _state: self._load_recent_scan_context(user_id=user_id, zone=zone),
-                ),
+                )
             )
 
         if needs_crop_profiles:
@@ -328,7 +363,15 @@ class InteractionSupervisor:
                 TaskNode(
                     name="crop_profiles",
                     runner=lambda _state: self._load_crop_profiles(user_id=user_id),
-                ),
+                )
+            )
+
+        if intents & {"weather", "location"}:
+            nodes.append(
+                TaskNode(
+                    name="weather_snapshot",
+                    runner=lambda _state: self._load_weather_snapshot(lat=lat, lng=lng),
+                )
             )
 
         needs_dashboard = bool(intents & {"weather", "economy"})
@@ -336,13 +379,17 @@ class InteractionSupervisor:
             nodes.append(
                 TaskNode(
                     name="dashboard_summary",
-                    depends_on=tuple(name for name in ("recent_scan", "crop_profiles") if any(node.name == name for node in nodes)),
+                    depends_on=tuple(
+                        name for name in ("recent_scan", "crop_profiles") if any(node.name == name for node in nodes)
+                    ),
                     runner=lambda state: self._load_dashboard_summary(
                         user_id=user_id,
                         recent_scan=state.get("recent_scan") or {},
                         crop_profiles=state.get("crop_profiles") or {},
+                        lat=lat,
+                        lng=lng,
                     ),
-                ),
+                )
             )
 
         if not nodes:
@@ -367,8 +414,11 @@ class InteractionSupervisor:
                     user_prompt=user_prompt,
                     intents=intents,
                     state=state,
+                    location=location,
+                    lat=lat,
+                    lng=lng,
                 ),
-            ),
+            )
         )
 
         state = await self._run_task_graph(nodes)
@@ -376,20 +426,25 @@ class InteractionSupervisor:
         if response:
             return response
 
-        return self._text_fallback(user_prompt=user_prompt, intents=intents, state=state)
+        return self._text_fallback(
+            user_prompt=user_prompt,
+            intents=intents,
+            state=state,
+            location=location,
+            lat=lat,
+            lng=lng,
+        )
 
     async def _load_recent_scan_context(self, *, user_id: str, zone: str | None) -> dict[str, Any]:
         reports = await asyncio.to_thread(self._load_reports_sync, user_id, zone)
-
         latest = reports[0] if reports else None
-        trend_line = self._trend_line(reports)
 
         return {
             "has_reports": bool(reports),
             "report_count": len(reports),
             "latest_report": self._compact_report(latest),
             "recent_reports": [self._compact_report(item) for item in reports[:5]],
-            "trend": trend_line,
+            "trend": self._trend_line(reports),
             "zone": zone,
             "needs_follow_up": not bool(reports),
         }
@@ -440,12 +495,25 @@ class InteractionSupervisor:
             "last_updated_iso": payload.get("last_updated_iso"),
         }
 
+    async def _load_weather_snapshot(self, *, lat: float | None, lng: float | None) -> dict[str, Any] | None:
+        service = self._get_weather_service()
+        if service is None or lat is None or lng is None:
+            return None
+
+        try:
+            return await service.get_outlook(lat=lat, lng=lng, days=7)
+        except Exception as exc:
+            logger.warning("Weather lookup failed for supervisor replies: %s", exc)
+            return None
+
     async def _load_dashboard_summary(
         self,
         *,
         user_id: str,
         recent_scan: dict[str, Any],
         crop_profiles: dict[str, Any],
+        lat: float | None = None,
+        lng: float | None = None,
     ) -> dict[str, Any] | None:
         service = self._get_dashboard_service()
         if service is None:
@@ -458,9 +526,7 @@ class InteractionSupervisor:
         survival_prob = self._safe_float(latest.get("survivalProb"), default=1.0)
 
         farm_size = 1.0
-        if crop_items:
-            farm_size = 1.0
-        else:
+        if not crop_items:
             farm_size = self._safe_float(latest.get("farm_size_hectares"), default=1.0)
 
         if not crop_items and (not crop_type or not treatment_plan):
@@ -473,8 +539,8 @@ class InteractionSupervisor:
                 treatment_plan=treatment_plan,
                 farm_size_hectares=farm_size,
                 survival_prob=survival_prob,
-                lat=self._safe_optional_float(latest.get("lat")),
-                lng=self._safe_optional_float(latest.get("lng")),
+                lat=self._safe_optional_float(lat) if lat is not None else self._safe_optional_float(latest.get("lat")),
+                lng=self._safe_optional_float(lng) if lng is not None else self._safe_optional_float(latest.get("lng")),
             )
         except Exception as exc:
             logger.warning("Dashboard summary lookup failed: %s", exc)
@@ -488,13 +554,32 @@ class InteractionSupervisor:
         user_prompt: str,
         intents: set[str],
         state: dict[str, Any],
+        location: str | None = None,
+        lat: float | None = None,
+        lng: float | None = None,
     ) -> str:
         recent_scan = state.get("recent_scan") or {}
         crop_profiles = state.get("crop_profiles") or {}
+        weather_snapshot = state.get("weather_snapshot") or {}
         inventory_summary = state.get("inventory_summary") or {}
         dashboard_summary = state.get("dashboard_summary")
 
-        if self._needs_clarification(intents=intents, recent_scan=recent_scan, crop_profiles=crop_profiles, dashboard_summary=dashboard_summary, inventory_summary=inventory_summary):
+        if intents & {"diagnosis"} and not self._references_existing_scan_context(user_prompt):
+            return self._clarifying_question(intents=intents)
+
+        if intents == {"location"}:
+            return self._saved_location_reply(user_prompt=user_prompt, location=location, lat=lat, lng=lng)
+
+        if intents & {"weather"} and not weather_snapshot and dashboard_summary is None:
+            return self._weather_unavailable_reply(user_prompt=user_prompt, location=location)
+
+        if self._needs_clarification(
+            intents=intents,
+            recent_scan=recent_scan,
+            crop_profiles=crop_profiles,
+            dashboard_summary=dashboard_summary,
+            inventory_summary=inventory_summary,
+        ):
             return self._clarifying_question(intents=intents)
 
         if intents & {"resource"}:
@@ -512,6 +597,10 @@ class InteractionSupervisor:
                 user_prompt=user_prompt,
                 context={
                     "intents": sorted(intents),
+                    "location": location,
+                    "lat": lat,
+                    "lng": lng,
+                    "weather_snapshot": weather_snapshot,
                     "recent_scan": recent_scan,
                     "crop_profiles": {
                         "count": crop_profiles.get("count", 0),
@@ -553,59 +642,149 @@ class InteractionSupervisor:
 
         return "Please upload a clearer photo of the affected crop, and tell me which crop it is."
 
-    def _text_fallback(self, *, user_prompt: str, intents: set[str], state: dict[str, Any]) -> str:
+    def _text_fallback(
+        self,
+        *,
+        user_prompt: str,
+        intents: set[str],
+        state: dict[str, Any],
+        location: str | None = None,
+        lat: float | None = None,
+        lng: float | None = None,
+    ) -> str:
         recent_scan = state.get("recent_scan") or {}
+        weather_snapshot = state.get("weather_snapshot") or {}
         inventory_summary = state.get("inventory_summary") or {}
         dashboard_summary = state.get("dashboard_summary")
-        latest = recent_scan.get("latest_report") or {}
+        crop_profiles = state.get("crop_profiles") or {}
 
         if intents & {"resource"}:
             return self._inventory_fallback(inventory_summary=inventory_summary)
 
+        if intents == {"location"}:
+            return self._saved_location_reply(user_prompt=user_prompt, location=location, lat=lat, lng=lng)
+
+        if intents & {"weather"} and not weather_snapshot and dashboard_summary is None:
+            return self._weather_unavailable_reply(user_prompt=user_prompt, location=location)
+
+        if weather_snapshot:
+            return self._weather_snapshot_reply(
+                user_prompt=user_prompt,
+                weather_snapshot=weather_snapshot,
+                location=location,
+            )
+
         if dashboard_summary:
             weather = dashboard_summary.get("weatherSnapshot") or {}
-            financial = dashboard_summary.get("financialSummary") or {}
             zone_health = dashboard_summary.get("zoneHealthSummary") or {}
+            financial = dashboard_summary.get("financialSummary") or {}
+
             parts: list[str] = []
-
-            if intents & {"weather", "economy", "resource"}:
+            if weather:
+                condition = self._trim_text(weather.get("condition"), default="Unknown")
+                temperature_c = self._safe_float(weather.get("temperatureC"), default=0.0)
+                rain_in_hours = self._safe_float(weather.get("rainInHours"), default=0.0)
                 parts.append(
-                    f"Weather: {self._trim_text(weather.get('condition'), default='Unknown')}. "
-                    f"Wind {self._trim_text(weather.get('windKmh'), default='0')} km/h. "
-                    f"Rain in hours: {self._trim_text(weather.get('rainInHours'), default='n/a')}."
+                    f"Weather: {condition}, {temperature_c:.0f}C, rain in {rain_in_hours:.0f} hours."
                 )
-                parts.append(
-                    f"ROI: {self._trim_text(financial.get('roiPercent'), default='0')}% and treatment cost RM {self._trim_text(financial.get('treatmentCostRm'), default='0')}."
-                )
-                low_stock_item = financial.get("lowStockItem")
-                if low_stock_item:
-                    parts.append(
-                        f"Low stock: {self._trim_text(low_stock_item, default='unknown')} has {self._trim_text(financial.get('lowStockLiters'), default='0')} liters left."
-                    )
-
             if zone_health:
-                parts.append(
-                    f"Zones needing attention: {self._trim_text(zone_health.get('zonesNeedingAttention'), default='0')}."
-                )
-
+                parts.append(f"Zone health: {self._trim_text(zone_health.get('status') or zone_health.get('summary'), default='No zone summary available')}.")
+            if financial:
+                roi_percent = self._safe_float(financial.get("roiPercent"), default=0.0)
+                parts.append(f"Expected ROI: {roi_percent:.1f}%.")
             if parts:
                 return " ".join(parts)
 
-        if latest:
+        if recent_scan.get("has_reports"):
+            latest = recent_scan.get("latest_report") or {}
+            crop_type = self._trim_text(latest.get("cropType") or latest.get("crop_type"), default="Unknown")
             disease = self._trim_text(latest.get("disease"), default="Unknown")
-            severity = self._trim_text(latest.get("severity"), default="Unknown")
-            confidence = latest.get("confidence")
-            trend = self._trim_text(recent_scan.get("trend"), default="Trend data is limited.")
-            if confidence is None:
-                confidence_text = ""
-            else:
-                confidence_text = f" Confidence {self._normalize_confidence(confidence) or 0}%."
-            return f"Latest scan shows {disease} at {severity} severity.{confidence_text} {trend}"
+            severity_score = self._safe_float(latest.get("severityScore"), default=self._safe_float(latest.get("severity"), default=0.0))
+            treatment_plan = self._trim_text(latest.get("treatmentPlan") or latest.get("treatment_plan"), default="Review the latest scan.")
+            trend = self._trim_text(recent_scan.get("trend"), default="")
 
-        if intents & {"diagnosis", "spread"}:
-            return "Please upload a clear photo of the affected crop, and tell me which crop it is."
+            response = f"Latest scan for {crop_type}: {disease} at {severity_score:.0f}% severity. {treatment_plan}"
+            if trend:
+                response = f"{response} {trend}"
+            return response
 
-        return "Which crop and zone should I check?"
+        if (crop_profiles.get("count") or 0) > 0:
+            return f"I found {int(crop_profiles.get('count') or 0)} crop profile(s), but I need a clearer data signal before making a recommendation."
+
+        return build_farmer_fallback_dialogue({}, user_prompt)
+
+    def _weather_unavailable_reply(self, *, user_prompt: str, location: str | None) -> str:
+        language = detect_farmer_language(user_prompt)
+        location_text = self._trim_text(location, default="")
+
+        if language == "ms":
+            if location_text:
+                return f"Saya tahu lokasi ladang anda ialah {location_text}, tetapi cuaca belum dapat diambil sekarang."
+            return "Saya belum dapat mengambil cuaca sekarang. Sila semak lokasi ladang dalam Settings."
+
+        if location_text:
+            return f"I know your farm location is {location_text}, but I could not fetch weather right now."
+
+        return "I could not fetch weather right now. Please check your saved farm location in Settings."
+
+    def _saved_location_reply(
+        self,
+        *,
+        user_prompt: str,
+        location: str | None,
+        lat: float | None,
+        lng: float | None,
+    ) -> str:
+        language = detect_farmer_language(user_prompt)
+        location_text = self._trim_text(location, default="")
+
+        if location_text:
+            if lat is not None and lng is not None:
+                coordinates = f"{lat:.4f}, {lng:.4f}"
+                if language == "ms":
+                    return f"Lokasi ladang yang disimpan ialah {location_text} ({coordinates})."
+                return f"Your saved farm location is {location_text} ({coordinates})."
+
+            if language == "ms":
+                return f"Lokasi ladang yang disimpan ialah {location_text}."
+            return f"Your saved farm location is {location_text}."
+
+        if language == "ms":
+            return "Lokasi ladang belum disimpan. Sila kemas kini di Settings."
+
+        return "Your farm location is not saved yet. Please update it in Settings."
+
+    def _weather_snapshot_reply(
+        self,
+        *,
+        user_prompt: str,
+        weather_snapshot: dict[str, Any],
+        location: str | None,
+    ) -> str:
+        language = detect_farmer_language(user_prompt)
+        location_text = self._trim_text(location, default="")
+        condition = self._trim_text(weather_snapshot.get("condition"), default="Unknown")
+        temperature_c = self._safe_float(weather_snapshot.get("temperatureC"), default=0.0)
+        wind_kmh = self._safe_float(weather_snapshot.get("windKmh"), default=0.0)
+        rain_in_hours = weather_snapshot.get("rainInHours")
+        rain_text = "none expected soon" if rain_in_hours is None else f"rain in about {self._safe_float(rain_in_hours, default=0.0):.0f} hours"
+        recommendation = self._trim_text(weather_snapshot.get("recommendation") or weather_snapshot.get("advisory"), default="")
+        safe_to_spray = weather_snapshot.get("safeToSpray")
+
+        if language == "ms":
+            prefix = f"Untuk {location_text}, " if location_text else ""
+            spray_text = "sesuai untuk semburan" if safe_to_spray else "belum selamat untuk semburan"
+            return (
+                f"{prefix}cuaca {condition}, {temperature_c:.0f}C, angin {wind_kmh:.0f} km/j, dan {rain_text}. "
+                f"Ini {spray_text}. {recommendation}".strip()
+            )
+
+        prefix = f"For {location_text}, " if location_text else ""
+        spray_text = "safe to spray" if safe_to_spray else "not safe to spray yet"
+        return (
+            f"{prefix}weather is {condition}, {temperature_c:.0f}C, wind is {wind_kmh:.0f} km/h, and {rain_text}. "
+            f"It is {spray_text}. {recommendation}".strip()
+        )
 
     def _inventory_fallback(self, *, inventory_summary: dict[str, Any]) -> str:
         items = inventory_summary.get("items") or []
@@ -613,69 +792,78 @@ class InteractionSupervisor:
         low_stock_count = int(inventory_summary.get("low_stock_count") or 0)
 
         if not items:
-            return "No inventory records were found for your account."
+            return "No inventory items were found for this account."
 
-        top_items = []
-        for item in items[:3]:
-            name = self._trim_text(item.get("name"), default="Unknown item")
-            liters = self._safe_float(item.get("liters"), default=0.0)
-            top_items.append(f"{name}: {liters:.1f} liters")
+        item_summaries: list[str] = []
+        for item in items[:5]:
+            if not isinstance(item, dict):
+                continue
+            name = self._trim_text(
+                item.get("name") or item.get("itemName") or item.get("productName") or item.get("item"),
+                default="Item",
+            )
+            quantity_value = item.get("quantity")
+            if quantity_value is None:
+                quantity_value = item.get("liters")
+            quantity = self._safe_optional_float(quantity_value)
+            unit = self._trim_text(item.get("unit") or item.get("uom"), default="")
+            if quantity is None:
+                item_summaries.append(name)
+            elif unit:
+                item_summaries.append(f"{name} ({quantity:g} {unit})")
+            else:
+                item_summaries.append(f"{name} ({quantity:g})")
 
-        low_stock_note = f" {low_stock_count} item(s) are low on stock." if low_stock_count else ""
-        return f"You have {total_items} inventory item(s). {low_stock_note} {', '.join(top_items)}".strip()
+        summary = f"Inventory summary: {total_items} item(s), {low_stock_count} low stock."
+        if item_summaries:
+            summary = f"{summary} Top items: {', '.join(item_summaries)}."
+        if low_stock_count > 0:
+            summary = f"{summary} Restock low items soon."
+        return summary
 
     @staticmethod
-    def _compact_report(report: dict[str, Any] | None) -> dict[str, Any]:
-        if not report:
+    def _compact_report(item: dict[str, Any] | None) -> dict[str, Any]:
+        if not item:
             return {}
 
         return {
-            "cropType": report.get("cropType") or report.get("crop_type") or "Unknown",
-            "disease": report.get("disease") or "Unknown",
-            "severity": report.get("severity") or report.get("severityLevel") or report.get("severity_level") or "Unknown",
-            "severityScore": report.get("severityScore") or report.get("severity_score") or 0,
-            "confidence": report.get("confidence"),
-            "treatmentPlan": report.get("treatmentPlan") or report.get("treatment_plan") or "None",
-            "survivalProb": report.get("survivalProb") or report.get("survival_prob"),
-            "zone": report.get("zone") or report.get("gridId") or report.get("grid_id"),
+            "gridId": item.get("gridId"),
+            "zone": item.get("zone") or item.get("gridId"),
+            "cropType": item.get("cropType") or item.get("crop_type"),
+            "disease": item.get("disease"),
+            "severity": item.get("severity") or item.get("severityLevel"),
+            "severityScore": item.get("severityScore"),
+            "treatmentPlan": item.get("treatmentPlan") or item.get("treatment_plan"),
+            "survivalProb": item.get("survivalProb"),
+            "confidence": item.get("confidence"),
+            "lat": item.get("lat"),
+            "lng": item.get("lng"),
+            "timestamp": item.get("timestamp") or item.get("createdAt") or item.get("lastUpdated"),
         }
 
-    def _low_confidence_fallback(self, *, user_prompt: str, scan_result: dict[str, Any] | None) -> str:
-        language = detect_farmer_language(user_prompt)
-        crop_type = self._trim_text((scan_result or {}).get("cropType"), default="Unknown")
-        disease = self._trim_text((scan_result or {}).get("disease"), default="Unknown")
-
-        if language == "ms":
-            return (
-                "Apa Yang Kelihatan\n"
-                f"{crop_type}: {disease}.\n\n"
-                "Kenapa Keyakinan Rendah\n"
-                "Gambar ini belum cukup jelas untuk pengesahan yang selamat.\n\n"
-                "Langkah Seterusnya\n"
-                "Ambil semula gambar dekat dalam cahaya baik. Jika simptom merebak, asingkan pokok dan semak semula."
-            )
-
-        return (
-            "What This Looks Like\n"
-            f"Possible issue: {disease} on {crop_type}.\n\n"
-            "Why Confidence Is Low\n"
-            "The photo is not clear enough for a safe diagnosis.\n\n"
-            "Next Step\n"
-            "Retake a close photo in good light. If the issue is spreading, isolate the plant and recheck soon."
-        )
+    def _low_confidence_fallback(
+        self,
+        *,
+        user_prompt: str,
+        scan_result: dict[str, Any] | None = None,
+        scan_results: list[dict[str, Any]] | None = None,
+    ) -> str:
+        current_scan = scan_result or (scan_results[0] if scan_results else {})
+        return build_farmer_fallback_dialogue(current_scan, user_prompt, reason="confidence low")
 
     def _load_reports_sync(self, user_id: str, zone: str | None) -> list[dict[str, Any]]:
+        settings = get_settings()
         db = self._get_firestore_client()
         if db is None:
             return []
 
+        reports: list[dict[str, Any]] = []
         try:
-            docs = db.collection(get_settings().FIRESTORE_REPORT_COLLECTION).stream()
+            docs = db.collection(settings.FIRESTORE_REPORT_COLLECTION).stream()
         except Exception as exc:
-            logger.warning("Unable to stream scan reports: %s", exc)
+            logger.warning("Failed to load scan reports for supervisor replies: %s", exc)
             return []
 
-        reports: list[dict[str, Any]] = []
         for doc in docs:
             data = doc.to_dict() or {}
             owner_uid = str(data.get("ownerUid") or data.get("userId") or data.get("uid") or "").strip()
@@ -694,29 +882,33 @@ class InteractionSupervisor:
 
     @staticmethod
     def _report_sort_key(item: dict[str, Any]) -> float:
-        for key in ("timestamp", "createdAt", "created_at", "lastUpdated"):
+        for key in ("timestamp", "createdAt", "lastUpdated", "updatedAt"):
             value = item.get(key)
             if hasattr(value, "timestamp"):
-                return float(value.timestamp())
+                try:
+                    return float(value.timestamp())
+                except Exception:
+                    pass
+            if isinstance(value, (int, float)):
+                return float(value)
         return 0.0
 
     def _trend_line(self, reports: list[dict[str, Any]]) -> str:
         if len(reports) < 2:
             return "Trend baseline is limited because only one report is available."
 
-        first = self._safe_float(reports[0].get("severity"), default=0.0)
-        last = self._safe_float(reports[-1].get("severity"), default=0.0)
-        delta = first - last
+        latest_score = self._safe_float(
+            reports[0].get("severityScore"),
+            default=self._safe_float(reports[0].get("severity"), default=0.0),
+        )
+        oldest_score = self._safe_float(
+            reports[-1].get("severityScore"),
+            default=self._safe_float(reports[-1].get("severity"), default=0.0),
+        )
+        delta = latest_score - oldest_score
 
         if delta > 5:
             return "Severity trend has increased; prioritize treatment in the next 24 hours."
         if delta < -5:
             return "Severity trend is improving; continue monitoring and follow-up scans."
         return "Severity trend is stable; monitor closely and keep treatment discipline."
-
-    @staticmethod
-    def _safe_float(value: object, default: float | None = 0.0) -> float:
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return float(default or 0.0)

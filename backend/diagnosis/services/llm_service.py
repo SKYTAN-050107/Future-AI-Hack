@@ -250,6 +250,8 @@ Do not mention internal agent names or JSON.
 If spraying is unsafe, say that first.
 If treatment is not worth it, say that first.
 If spread risk is high, say to isolate or monitor nearby plants.
+If weatherSnapshot is present, answer weather or spray timing questions from it.
+If location is present, use the saved farm location and do not assume device geolocation.
 """
 
 
@@ -941,8 +943,42 @@ class LLMService:
     def _build_supervisor_fallback(self, *, language: str, user_prompt: str, context: dict[str, Any]) -> str:
         recent_scan = context.get("recent_scan") or {}
         inventory_summary = context.get("inventory_summary") or {}
+        weather_snapshot = context.get("weather_snapshot") or {}
         dashboard_summary = context.get("dashboard_summary")
+        location = str(context.get("location") or "").strip()
         latest = recent_scan.get("latest_report") or {}
+
+        location_prompt = bool(
+            re.search(r"\b(location|my location|saved location|farm location|bound location|where am i|where is my farm)\b", user_prompt.lower())
+        )
+
+        if location_prompt:
+            if language == "ms":
+                return f"Lokasi ladang yang disimpan ialah {location}." if location else "Lokasi ladang belum disimpan. Sila kemas kini di Settings."
+
+            return f"Your saved farm location is {location}." if location else "Your farm location is not saved yet. Please update it in Settings."
+
+        if weather_snapshot:
+            condition = _trim_text(weather_snapshot.get("condition"), default="unknown")
+            temperature_c = _safe_float(weather_snapshot.get("temperatureC"), default=0.0)
+            wind_kmh = _safe_float(weather_snapshot.get("windKmh"), default=0.0)
+            rain_in_hours = weather_snapshot.get("rainInHours")
+            rain_text = "no rain expected soon" if rain_in_hours is None else f"rain in about {_safe_float(rain_in_hours, default=0.0):.0f} hours"
+            recommendation = _trim_text(weather_snapshot.get("recommendation") or weather_snapshot.get("advisory"), default="")
+            spray_text = "safe to spray" if weather_snapshot.get("safeToSpray") else "not safe to spray yet"
+
+            if language == "ms":
+                prefix = f"Untuk {location}, " if location else ""
+                return (
+                    f"{prefix}cuaca {condition}, {temperature_c:.0f}C, angin {wind_kmh:.0f} km/j, dan {rain_text}. "
+                    f"Ini {spray_text}. {recommendation}".strip()
+                )
+
+            prefix = f"For {location}, " if location else ""
+            return (
+                f"{prefix}weather is {condition}, {temperature_c:.0f}C, wind is {wind_kmh:.0f} km/h, and {rain_text}. "
+                f"It is {spray_text}. {recommendation}".strip()
+            )
 
         if inventory_summary:
             return self._build_inventory_fallback(language=language, inventory_summary=inventory_summary)

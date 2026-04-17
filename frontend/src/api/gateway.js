@@ -128,6 +128,9 @@ export const gateway = {
   sendAssistantMessage: async (input) => {
     const userPrompt = String(input?.userPrompt || '').trim()
     const userId = String(input?.userId || '').trim()
+    const location = String(input?.location || '').trim()
+    const lat = toFiniteNumber(input?.lat)
+    const lng = toFiniteNumber(input?.lng)
 
     if (!userPrompt) {
       throw new Error('userPrompt is required for assistant message')
@@ -143,6 +146,9 @@ export const gateway = {
         user_prompt: userPrompt,
         user_id: userId,
         zone: input?.zone || null,
+        location: location || null,
+        lat,
+        lng,
       }),
     })
   },

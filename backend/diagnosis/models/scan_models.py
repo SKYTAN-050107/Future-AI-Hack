@@ -471,6 +471,9 @@ class AssistantMessageRequest(BaseModel):
     user_prompt: str = Field(..., min_length=1)
     user_id: str = Field(..., min_length=1)
     zone: str | None = None
+    location: str | None = None
+    lat: float | None = None
+    lng: float | None = None
 
 
 class AssistantMessageResponse(BaseModel):

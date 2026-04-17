@@ -683,6 +683,9 @@ async def assistant_message(payload: AssistantMessageRequest) -> AssistantMessag
                 user_prompt=payload.user_prompt,
                 user_id=payload.user_id,
                 zone=payload.zone,
+                location=payload.location,
+                lat=payload.lat,
+                lng=payload.lng,
             )
             return AssistantMessageResponse(assistant_reply=reply)
         except ValueError as exc:

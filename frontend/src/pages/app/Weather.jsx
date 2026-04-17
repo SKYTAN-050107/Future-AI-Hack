@@ -4,6 +4,7 @@ import SectionHeader from '../../components/ui/SectionHeader'
 import { getWeatherOutlook, getMeteorologistAdvisory } from '../../api/weather'
 import { useSessionContext } from '../../hooks/useSessionContext'
 import { useGrids } from '../../hooks/useGrids'
+import { useFarmLocationCoordinates } from '../../hooks/useFarmLocationCoordinates'
 
 /* ── Helpers ──────────────────────────────────────────────── */
 
@@ -133,7 +134,7 @@ function DayCard({ entry }) {
 /* ── Main Weather Page ────────────────────────────────────── */
 
 export default function Weather() {
-  const { user } = useSessionContext()
+  const { user, profile } = useSessionContext()
   const { grids } = useGrids()
 
   // Weather data state
@@ -151,8 +152,15 @@ export default function Weather() {
     [grids],
   )
 
-  const lat = Number(firstGridWithCentroid?.centroid?.lat)
-  const lng = Number(firstGridWithCentroid?.centroid?.lng)
+  const farmLocation = String(profile?.onboarding?.location || '').trim()
+  const { coordinates, locationResolutionError } = useFarmLocationCoordinates({
+    locationText: farmLocation,
+    gridLat: firstGridWithCentroid?.centroid?.lat,
+    gridLng: firstGridWithCentroid?.centroid?.lng,
+  })
+
+  const lat = Number(coordinates?.lat)
+  const lng = Number(coordinates?.lng)
   const hasCoords = Number.isFinite(lat) && Number.isFinite(lng)
 
   // Fetch weather data
@@ -169,7 +177,13 @@ export default function Weather() {
     if (!hasCoords) {
       setSevenDayForecast([])
       setWeatherData(null)
-      setError('Set at least one farm grid with centroid to load weather outlook.')
+      if (locationResolutionError) {
+        setError(locationResolutionError)
+      } else if (!farmLocation) {
+        setError('Set your farm location in Settings or add a farm grid centroid to load weather outlook.')
+      } else {
+        setError('')
+      }
       return undefined
     }
 
@@ -194,7 +208,7 @@ export default function Weather() {
       })
 
     return () => { active = false }
-  }, [lat, lng, hasCoords, user?.uid])
+  }, [farmLocation, hasCoords, lat, lng, locationResolutionError, user?.uid])
 
   // Fetch AI advisory
   const fetchAdvisory = useCallback(() => {

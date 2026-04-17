@@ -18,6 +18,7 @@ import { db, isFirebaseConfigured } from '../../firebase'
 import { useScanHistory } from '../../hooks/useScanHistory'
 import { useScanReports } from '../../hooks/useScanReports'
 import { useSessionContext } from '../../hooks/useSessionContext'
+import { useFarmLocationCoordinates } from '../../hooks/useFarmLocationCoordinates'
 
 const STORAGE_KEY_PREFIX = 'pg_chatbot_conversations_v2'
 const PENDING_CAPTURE_KEY = 'pg_pending_scan_capture_v1'
@@ -300,7 +301,7 @@ function formatConversationTime(value) {
 export default function Chatbot() {
   const location = useLocation()
   const navigate = useNavigate()
-  const { user } = useSessionContext()
+  const { user, profile } = useSessionContext()
   const { reports, timelineItems, isLoading, error } = useScanHistory()
   const { saveScanReport } = useScanReports()
   const [conversationHistory, setConversationHistory] = useState([])
@@ -315,6 +316,10 @@ export default function Chatbot() {
   const autoScanTriggeredRef = useRef(false)
   const migratedConversationUsersRef = useRef(new Set())
   const conversationStorageKey = getConversationStorageKey(user?.uid)
+  const farmLocation = String(profile?.onboarding?.location || '').trim()
+  const { coordinates } = useFarmLocationCoordinates({
+    locationText: farmLocation,
+  })
 
   const persistConversationToFirestore = useCallback(async (uid, entry) => {
     if (!uid || !entry || !db || !isFirebaseConfigured) {
@@ -600,10 +605,15 @@ export default function Chatbot() {
     setIsThinking(true)
 
     try {
+      const resolvedLat = Number(coordinates?.lat)
+      const resolvedLng = Number(coordinates?.lng)
       const response = await sendAssistantMessage({
         userPrompt: trimmed,
         userId: String(user?.uid || '').trim(),
         zone: reports[0]?.gridId || reports[0]?.zone || null,
+        location: farmLocation,
+        lat: Number.isFinite(resolvedLat) ? resolvedLat : null,
+        lng: Number.isFinite(resolvedLng) ? resolvedLng : null,
       })
 
       const assistantText = String(response?.assistant_reply || '').trim() || 'No assistant response received.'

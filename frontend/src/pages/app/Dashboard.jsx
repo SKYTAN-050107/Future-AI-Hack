@@ -9,6 +9,7 @@ import { getWeatherOutlook } from '../../api/weather'
 import { useSessionContext } from '../../hooks/useSessionContext'
 import { useGrids } from '../../hooks/useGrids'
 import { useScanHistory } from '../../hooks/useScanHistory'
+import { useFarmLocationCoordinates } from '../../hooks/useFarmLocationCoordinates'
 
 function safeNumber(value, fallback = 0) {
   if (value === null || value === undefined || value === '') {
@@ -134,8 +135,15 @@ export default function Dashboard() {
     [grids],
   )
 
-  const lat = Number(firstGridWithCentroid?.centroid?.lat)
-  const lng = Number(firstGridWithCentroid?.centroid?.lng)
+  const farmLocation = String(profile?.onboarding?.location || '').trim()
+  const { coordinates, locationResolutionError } = useFarmLocationCoordinates({
+    locationText: farmLocation,
+    gridLat: firstGridWithCentroid?.centroid?.lat,
+    gridLng: firstGridWithCentroid?.centroid?.lng,
+  })
+
+  const lat = Number(coordinates?.lat)
+  const lng = Number(coordinates?.lng)
   const hasCoords = Number.isFinite(lat) && Number.isFinite(lng)
 
   const totalAreaHectares = useMemo(
@@ -186,9 +194,20 @@ export default function Dashboard() {
       || 'recommended treatment',
     ).trim() || 'recommended treatment'
     const survivalProb = deriveSurvivalProbability(latestReport)
+    const farmSizeHectares = Number.isFinite(totalAreaHectares) && totalAreaHectares > 0
+      ? totalAreaHectares
+      : 1
 
-    if (!Number.isFinite(totalAreaHectares) || totalAreaHectares <= 0) {
-      return { payload: null, error: 'Farm area is required. Draw at least one grid to load dashboard summary.' }
+    if (!hasCoords) {
+      if (locationResolutionError) {
+        return { payload: null, error: locationResolutionError }
+      }
+
+      if (farmLocation) {
+        return { payload: null, error: 'Resolving your saved farm location...' }
+      }
+
+      return { payload: null, error: 'Set your farm location in Settings or draw a farm grid to load dashboard summary.' }
     }
 
     return {
@@ -196,14 +215,14 @@ export default function Dashboard() {
         userId,
         cropType,
         treatmentPlan,
-        farmSizeHectares: totalAreaHectares,
+        farmSizeHectares,
         survivalProb: survivalProb ?? 1,
-        lat: firstGridWithCentroid?.centroid?.lat,
-        lng: firstGridWithCentroid?.centroid?.lng,
+        lat,
+        lng,
       },
       error: '',
     }
-  }, [firstGridWithCentroid?.centroid?.lat, firstGridWithCentroid?.centroid?.lng, latestReport, profile?.onboarding?.variety, totalAreaHectares, user?.uid])
+  }, [farmLocation, hasCoords, lat, lng, latestReport, locationResolutionError, profile?.onboarding?.variety, totalAreaHectares, user?.uid])
 
   useEffect(() => {
     let active = true
@@ -221,13 +240,13 @@ export default function Dashboard() {
         if (!active) {
           return
         }
-        console.log('[Dashboard API] summary response', response)
         setSummary(response)
       })
       .catch((error) => {
         if (!active) {
           return
         }
+
         setSummary(null)
         setLoadError(error?.message || 'Unable to load dashboard summary')
       })
@@ -250,7 +269,13 @@ export default function Dashboard() {
 
     if (!hasCoords) {
       setWeatherData(null)
-      setWeatherError('Set at least one farm grid with centroid to load weather outlook.')
+      if (locationResolutionError) {
+        setWeatherError(locationResolutionError)
+      } else if (!farmLocation) {
+        setWeatherError('Set your farm location in Settings or add a farm grid centroid to load weather outlook.')
+      } else {
+        setWeatherError('')
+      }
       setIsWeatherLoading(false)
       return undefined
     }
@@ -283,7 +308,7 @@ export default function Dashboard() {
     return () => {
       active = false
     }
-  }, [hasCoords, lat, lng, user?.uid])
+  }, [farmLocation, hasCoords, lat, lng, locationResolutionError, user?.uid])
 
   useEffect(() => {
     if (zoneOptions.length === 0) {
@@ -350,6 +375,9 @@ export default function Dashboard() {
       userPrompt: '[ZONE_REVIEW] Provide one very short quick review for this zone in one sentence.',
       userId,
       zone: selectedZoneName,
+      location: farmLocation,
+      lat,
+      lng,
     })
       .then((response) => {
         if (!active) {
