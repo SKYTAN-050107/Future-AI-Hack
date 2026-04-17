@@ -246,7 +246,7 @@ export default function Profile() {
         <p style={{ marginTop: 0 }}>You can update your farm address anytime.</p>
         <div className="pg-cta-row">
           <button type="button" className="pg-btn pg-btn-ghost" onClick={() => {
-            navigate('/onboarding', { state: { fromProfile: true } })
+            navigate('/onboarding', { state: { fromProfile: true, initialStep: 1, editMode: 'location' } })
           }}>
             Edit farm address
           </button>

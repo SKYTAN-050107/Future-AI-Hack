@@ -9,7 +9,12 @@ export default function Onboarding() {
   const navigate = useNavigate()
   const { completeOnboarding, profile } = useSessionContext()
   const fromProfile = Boolean(routerLocation.state?.fromProfile)
-  const [step, setStep] = useState(0)
+  const initialStepRaw = Number(routerLocation.state?.initialStep)
+  const initialStep = Number.isFinite(initialStepRaw)
+    ? Math.max(0, Math.min(2, initialStepRaw))
+    : (fromProfile ? 1 : 0)
+  const editMode = String(routerLocation.state?.editMode || (fromProfile ? 'location' : '')).trim()
+  const [step, setStep] = useState(initialStep)
   const [farmName, setFarmName] = useState('')
   const [location, setLocation] = useState('')
   const [variety, setVariety] = useState('')
@@ -25,29 +30,7 @@ export default function Onboarding() {
     (step === 1 && location.trim().length > 5) ||
     (step === 2 && variety.trim().length > 1)
 
-  useEffect(() => {
-    const onboarding = profile?.onboarding
-    if (!onboarding || hydratedFromProfileRef.current) {
-      return
-    }
-
-    setFarmName(String(onboarding.farmName || '').trim())
-    setLocation(String(onboarding.locationLabel || onboarding.location || '').trim())
-    setVariety(String(onboarding.variety || '').trim())
-    setLanguage(String(onboarding.language || 'BM').trim() || 'BM')
-    hydratedFromProfileRef.current = true
-  }, [profile?.onboarding])
-
-  const onNext = async () => {
-    if (!canProceed) {
-      return
-    }
-
-    if (step < 2) {
-      setStep((value) => value + 1)
-      return
-    }
-
+  const saveOnboarding = async () => {
     setIsSaving(true)
     setFeedback('')
 
@@ -86,6 +69,37 @@ export default function Onboarding() {
     } finally {
       setIsSaving(false)
     }
+  }
+
+  useEffect(() => {
+    const onboarding = profile?.onboarding
+    if (!onboarding || hydratedFromProfileRef.current) {
+      return
+    }
+
+    setFarmName(String(onboarding.farmName || '').trim())
+    setLocation(String(onboarding.locationLabel || onboarding.location || '').trim())
+    setVariety(String(onboarding.variety || '').trim())
+    setLanguage(String(onboarding.language || 'BM').trim() || 'BM')
+    hydratedFromProfileRef.current = true
+  }, [profile?.onboarding])
+
+  const onNext = async () => {
+    if (!canProceed) {
+      return
+    }
+
+    if (fromProfile && editMode === 'location' && step === 1) {
+      await saveOnboarding()
+      return
+    }
+
+    if (step < 2) {
+      setStep((value) => value + 1)
+      return
+    }
+
+    await saveOnboarding()
   }
 
   return (
@@ -167,7 +181,13 @@ export default function Onboarding() {
             </button>
           ) : null}
           <button type="button" className="pg-btn pg-btn-primary" onClick={onNext} disabled={!canProceed || isSaving}>
-            {isSaving ? 'Saving…' : step === 2 ? 'Save and continue' : 'Next'}
+            {isSaving
+              ? 'Saving…'
+              : fromProfile && editMode === 'location' && step === 1
+                ? 'Save address'
+                : step === 2
+                  ? 'Save and continue'
+                  : 'Next'}
           </button>
         </div>
       </section>
