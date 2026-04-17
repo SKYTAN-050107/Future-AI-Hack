@@ -9,6 +9,7 @@ import re
 from typing import Any, Awaitable, Callable
 
 from config import get_settings
+from agents.agriculture_advice_agent import AgricultureAdviceAgent
 from orchestration.assistant_pipeline import AssistantPipeline
 from agents.response_validation_agent import ResponseValidationAgent
 from services.crop_service import CropService
@@ -37,6 +38,9 @@ class InteractionSupervisor:
 
         self._assistant_pipeline: AssistantPipeline | None = None
         self._assistant_pipeline_error: str | None = None
+
+        self._agriculture_advice_agent: AgricultureAdviceAgent | None = None
+        self._agriculture_advice_agent_error: str | None = None
 
         self._response_validation_agent: ResponseValidationAgent | None = None
         self._response_validation_agent_error: str | None = None
@@ -89,6 +93,24 @@ class InteractionSupervisor:
             return None
 
         return self._assistant_pipeline
+
+    def _get_agriculture_advice_agent(self) -> AgricultureAdviceAgent | None:
+        if self._agriculture_advice_agent is not None:
+            return self._agriculture_advice_agent
+        if self._agriculture_advice_agent_error is not None:
+            return None
+
+        try:
+            self._agriculture_advice_agent = AgricultureAdviceAgent(
+                name="AgricultureAdviceAgent",
+                description="Answer agriculture-only fallback questions when no specialist agent matches.",
+            )
+        except Exception as exc:
+            self._agriculture_advice_agent_error = str(exc)
+            logger.warning("AgricultureAdviceAgent unavailable for supervisor replies: %s", exc)
+            return None
+
+        return self._agriculture_advice_agent
 
     def _get_response_validation_agent(self) -> ResponseValidationAgent | None:
         if self._response_validation_agent is not None:
@@ -476,6 +498,29 @@ class InteractionSupervisor:
                 user_prompt=user_prompt,
                 draft_reply=draft_reply,
                 context={**validation_context_base, "inventory_summary": inventory_summary},
+            )
+
+        if not (intents & {"resource", "weather", "location", "economy", "diagnosis", "spread"}):
+            agriculture_agent = self._get_agriculture_advice_agent()
+            if agriculture_agent is not None:
+                draft_reply = await agriculture_agent.generate_reply(
+                    user_prompt=user_prompt,
+                    context=validation_context_base,
+                )
+            else:
+                llm = self._get_llm_service()
+                if llm is not None:
+                    draft_reply = await llm.generate_agriculture_reply(
+                        user_prompt=user_prompt,
+                        context=validation_context_base,
+                    )
+                else:
+                    draft_reply = "This assistant only answers agriculture-related questions. Please ask about crops, planting, soil, irrigation, pests, fertilizer, harvesting, or farm management."
+
+            return await self._finalize_response(
+                user_prompt=user_prompt,
+                draft_reply=draft_reply,
+                context=validation_context_base,
             )
 
         if needs_recent_scan:

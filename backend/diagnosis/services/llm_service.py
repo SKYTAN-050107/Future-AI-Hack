@@ -143,6 +143,55 @@ _SEVERITY_TO_MALAY = {
     "low": "Rendah",
 }
 
+_AGRICULTURE_HINT_WORDS = {
+    "agri",
+    "agriculture",
+    "crop",
+    "crops",
+    "field",
+    "farm",
+    "farmland",
+    "farming",
+    "fertilizer",
+    "fertiliser",
+    "greenhouse",
+    "graft",
+    "grafting",
+    "garden",
+    "gardening",
+    "harvest",
+    "harvesting",
+    "horticulture",
+    "irrigation",
+    "manure",
+    "mulch",
+    "nursery",
+    "orchard",
+    "paddy",
+    "padi",
+    "pest",
+    "pests",
+    "plant",
+    "planting",
+    "plants",
+    "prune",
+    "pruning",
+    "seed",
+    "seedling",
+    "seedlings",
+    "soil",
+    "spray",
+    "spraying",
+    "sow",
+    "sowing",
+    "transplant",
+    "tree",
+    "trees",
+    "yield",
+    "weed",
+    "weeds",
+}
+
 
 def _safe_float(value: Any, default: float) -> float:
     try:
@@ -154,6 +203,29 @@ def _safe_float(value: Any, default: float) -> float:
 def _trim_text(value: Any, default: str = "Unknown") -> str:
     text = str(value or "").strip()
     return text or default
+
+
+def _looks_agriculture_prompt(user_prompt: str) -> bool:
+    text = (user_prompt or "").lower()
+    if any(phrase in text for phrase in ("farm management", "crop management", "planting", "orchard", "soil", "fertilizer", "fertiliser", "irrigation", "pest control", "weed control", "harvest", "pruning")):
+        return True
+
+    tokens = re.findall(r"[a-z']+", text)
+    return any(token in _AGRICULTURE_HINT_WORDS for token in tokens)
+
+
+def _agriculture_refusal(language: str) -> str:
+    if language == "ms":
+        return "Pembantu ini hanya menjawab soalan berkaitan pertanian. Sila tanya tentang tanaman, penanaman, tanah, pengairan, perosak, baja, tuaian, atau pengurusan ladang."
+
+    return "This assistant only answers agriculture-related questions. Please ask about crops, planting, soil, irrigation, pests, fertilizer, harvesting, or farm management."
+
+
+def _agriculture_fallback(language: str) -> str:
+    if language == "ms":
+        return "Sila beritahu tanaman, lokasi, dan tahap pertumbuhan supaya saya boleh beri cadangan yang lebih tepat."
+
+    return "Please share the crop, location, and growth stage so I can give a more specific recommendation."
 
 
 def detect_farmer_language(user_prompt: str) -> str:
@@ -298,6 +370,20 @@ Rules:
 - If the context cannot support a direct answer, ask one concise follow-up question instead of inventing facts.
 - If the user asked for a specific date and forecast dates are available, include one explicit forecast date.
 - Finish the reply completely; do not stop mid-sentence.
+"""
+
+AGRICULTURE_ADVICE_SYSTEM_PROMPT_BASE = """\
+You are PadiGuard Agriculture Advice Agent.
+
+You answer only agriculture, horticulture, crop, farm, orchard, and garden questions.
+If the user's message is not about agriculture or farm management, refuse politely and briefly.
+
+Rules:
+- Use the same language as the user prompt.
+- Be practical and concise.
+- Do not mention internal agents, JSON, validation, or recent scans.
+- Do not invent weather, inventory, or diagnosis data that is not provided.
+- If the question is agriculture-related but missing key details, ask one concise follow-up question.
 """
 
 
@@ -1375,6 +1461,68 @@ class LLMService:
                 await asyncio.sleep(RETRY_DELAY_SECONDS)
 
         return reply_text
+
+    async def generate_agriculture_reply(
+        self,
+        *,
+        user_prompt: str,
+        context: dict[str, Any] | None = None,
+    ) -> str:
+        """Generate an agriculture-only fallback reply or a refusal for unrelated prompts."""
+        language = detect_farmer_language(user_prompt)
+        if not _looks_agriculture_prompt(user_prompt):
+            return _agriculture_refusal(language)
+
+        compact_context = self._compact_supervisor_context(context or {})
+        context_text = json.dumps(compact_context, indent=2, ensure_ascii=True, default=str)
+        fallback = _agriculture_fallback(language)
+
+        prompt = (
+            f"User message:\n{user_prompt}\n\n"
+            f"Optional farm context:\n{context_text}\n\n"
+            "Answer only if the request is about agriculture, horticulture, crops, plants, orchards, gardens, or farm management. "
+            "If it is not agriculture-related, refuse politely and briefly. "
+            "If it is agriculture-related but details are missing, ask one concise follow-up question."
+        )
+
+        if language == "ms":
+            language_rules = (
+                "- You MUST answer in Malay (Bahasa Melayu) only.\n"
+                "- Use only Malay sentences. Do not mix in English or Chinese, except unavoidable crop, disease, or product names from diagnosis data.\n"
+            )
+        else:
+            language_rules = (
+                "- You MUST answer in English only.\n"
+                "- Use only English sentences. Do not mix in Malay or Chinese, except unavoidable crop, disease, or product names from diagnosis data.\n"
+            )
+
+        system_instruction = f"{AGRICULTURE_ADVICE_SYSTEM_PROMPT_BASE}\n{language_rules}"
+
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                response = self._generate_content_with_model_fallback(
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_instruction,
+                        temperature=0.25,
+                        max_output_tokens=360,
+                    ),
+                )
+                text = " ".join((response.text or "").strip().split())
+                if text:
+                    return text
+            except Exception as exc:
+                logger.warning(
+                    "Agriculture reply attempt %d/%d failed: %s",
+                    attempt,
+                    MAX_RETRIES,
+                    exc,
+                )
+
+            if attempt < MAX_RETRIES:
+                await asyncio.sleep(RETRY_DELAY_SECONDS)
+
+        return fallback
 
     def _build_low_confidence_fallback(
         self,
