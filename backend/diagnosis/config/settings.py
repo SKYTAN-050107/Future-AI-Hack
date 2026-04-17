@@ -52,6 +52,7 @@ class Settings(BaseSettings):
     FIRESTORE_GRID_COLLECTION: str = "grids"
     FIRESTORE_REPORT_COLLECTION: str = "scanReports"
     FIRESTORE_CANDIDATE_COLLECTION: str = "candidateMetadata"
+    FIRESTORE_CROP_COLLECTION: str = "crops"
 
     # ── Pipeline Defaults ──────────────────────────────────────────────
     DEFAULT_TOP_K: int = 5

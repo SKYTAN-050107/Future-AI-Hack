@@ -109,3 +109,14 @@ export async function clearOnboardingProfile(uid) {
     updatedAt: serverTimestamp(),
   }, { merge: true })
 }
+
+export async function saveActiveCropSelection(uid, cropId) {
+  if (!uid || !isFirebaseConfigured || !db) {
+    return
+  }
+
+  await setDoc(getUserRef(uid), {
+    activeCropId: String(cropId || '').trim() || null,
+    updatedAt: serverTimestamp(),
+  }, { merge: true })
+}

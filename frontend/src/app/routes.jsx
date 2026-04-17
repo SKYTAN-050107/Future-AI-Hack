@@ -6,6 +6,7 @@ import { useSessionContext } from '../hooks/useSessionContext'
 import { clearPostAuthPath, getLastAppPath, getPostAuthPath, setPostAuthPath } from '../utils/navigationState'
 import Dashboard from '../pages/app/Dashboard'
 import Chatbot from '../pages/app/Chatbot'
+import Crops from '../pages/app/Crops'
 import Inventory from '../pages/app/Inventory'
 import MapPage from '../pages/app/Map'
 import Profile from '../pages/app/Profile'
@@ -172,6 +173,7 @@ export const appRoutes = [
       { path: 'treatment', element: <Treatment /> },
       { path: 'chatbot', element: <Chatbot /> },
       { path: 'inventory', element: <Inventory /> },
+      { path: 'crops', element: <Crops /> },
       { path: 'profile', element: <Profile /> },
     ],
   },

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { IconCloud, IconSun } from '../../components/icons/UiIcons'
 import SectionHeader from '../../components/ui/SectionHeader'
 import { sendAssistantMessage } from '../../api/assistant'
+import { getCrops } from '../../api/crops'
 import { getDashboardSummary } from '../../api/dashboard'
 import { getWeatherOutlook } from '../../api/weather'
 import { useSessionContext } from '../../hooks/useSessionContext'
@@ -125,6 +126,8 @@ export default function Dashboard() {
   const [zoneQuickReview, setZoneQuickReview] = useState('')
   const [zoneQuickReviewError, setZoneQuickReviewError] = useState('')
   const [isZoneQuickReviewLoading, setIsZoneQuickReviewLoading] = useState(false)
+  const [cropCount, setCropCount] = useState(0)
+  const [isCropLoading, setIsCropLoading] = useState(false)
 
   const firstGridWithCentroid = useMemo(
     () => grids.find((grid) => Number.isFinite(grid?.centroid?.lat) && Number.isFinite(grid?.centroid?.lng)),
@@ -301,6 +304,42 @@ export default function Dashboard() {
   }, [zoneOptions])
 
   useEffect(() => {
+    let active = true
+    const userId = String(user?.uid || '').trim()
+
+    if (!userId) {
+      setCropCount(0)
+      setIsCropLoading(false)
+      return undefined
+    }
+
+    setIsCropLoading(true)
+    getCrops({ userId })
+      .then((response) => {
+        if (!active) {
+          return
+        }
+
+        const count = Array.isArray(response?.items) ? response.items.length : 0
+        setCropCount(count)
+      })
+      .catch(() => {
+        if (active) {
+          setCropCount(0)
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setIsCropLoading(false)
+        }
+      })
+
+    return () => {
+      active = false
+    }
+  }, [user?.uid])
+
+  useEffect(() => {
     const userId = String(user?.uid || '').trim()
     if (!selectedZoneName || !userId) {
       setZoneQuickReview('')
@@ -382,6 +421,17 @@ export default function Dashboard() {
           <p>{loadError}</p>
         </article>
       ) : null}
+
+      {!isCropLoading && cropCount === 0 ? (
+        <article className="pg-card" style={{ marginBottom: 16 }}>
+          <h2>Add your first crop</h2>
+          <p>Farm setup is complete. Add a crop profile now to unlock crop-level ROI and inventory planning.</p>
+          <button type="button" className="pg-btn pg-btn-primary" onClick={() => navigate('/app/crops')}>
+            Manage Crops
+          </button>
+        </article>
+      ) : null}
+
       <div className="pg-dashboard-grid">
         <button
           type="button"

@@ -49,15 +49,23 @@ class DashboardService:
         zone_health = await asyncio.to_thread(self._compute_zone_health_sync, user_id)
 
         treatment = await self._treatment_svc.build_plan(
+            crop_id=None,
+            user_id=user_id,
             disease="Crop disease risk",
             crop_type=crop_type,
             treatment_plan=treatment_plan,
-            user_id=user_id,
             farm_size_hectares=farm_size_hectares,
             survival_prob=survival_prob,
             lat=lat,
             lng=lng,
             treatment_cost_rm=None,
+            selling_channel="middleman",
+            market_condition="normal",
+            manual_price_override=None,
+            yield_kg=None,
+            actual_sold_kg=None,
+            labor_cost_rm=None,
+            other_costs_rm=None,
         )
 
         inventory = await self._inventory_svc.list_items(user_id=user_id)

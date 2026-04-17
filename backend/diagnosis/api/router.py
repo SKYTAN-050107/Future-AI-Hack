@@ -22,6 +22,12 @@ from models.scan_models import (
     AssistantMessageRequest,
     AssistantMessageResponse,
     BoundingBox,
+    CropCreateRequest,
+    CropCreateResponse,
+    CropItemResponse,
+    CropListResponse,
+    CropUpdateRequest,
+    CropUpdateResponse,
     DashboardSummaryRequest,
     DashboardSummaryResponse,
     HttpScanAssistantRequest,
@@ -51,6 +57,7 @@ from models.scan_models import (
 from orchestration.pipeline import LiveScanPipeline
 from services.assistant_message_service import AssistantMessageService
 from services.dashboard_service import DashboardService
+from services.crop_service import CropService
 from services.firestore_service import FirestoreService
 from services.inventory_service import InventoryService
 from services.region_detection_service import RegionDetectionService
@@ -98,6 +105,9 @@ _treatment_service_init_error: str | None = None
 
 _inventory_service: InventoryService | None = None
 _inventory_service_init_error: str | None = None
+
+_crop_service: CropService | None = None
+_crop_service_init_error: str | None = None
 
 _dashboard_service: DashboardService | None = None
 _dashboard_service_init_error: str | None = None
@@ -204,6 +214,26 @@ def _get_inventory_service() -> InventoryService | None:
         return None
 
     return _inventory_service
+
+
+def _get_crop_service() -> CropService | None:
+    global _crop_service
+    global _crop_service_init_error
+
+    if _crop_service is not None:
+        return _crop_service
+
+    if _crop_service_init_error is not None:
+        return None
+
+    try:
+        _crop_service = CropService()
+    except Exception as exc:
+        _crop_service_init_error = str(exc)
+        logger.exception("CropService init failed: %s", exc)
+        return None
+
+    return _crop_service
 
 
 def _get_dashboard_service() -> DashboardService | None:
@@ -672,15 +702,23 @@ async def treatment_plan(payload: TreatmentPlanRequest) -> TreatmentPlanResponse
 
     try:
         result = await service.build_plan(
+            crop_id=payload.crop_id,
+            user_id=payload.user_id,
             disease=payload.disease,
             crop_type=payload.crop_type,
             treatment_plan=payload.treatment_plan,
-            user_id=payload.user_id,
             farm_size_hectares=payload.farm_size_hectares,
             survival_prob=payload.survival_prob,
             lat=payload.lat,
             lng=payload.lng,
             treatment_cost_rm=payload.treatment_cost_rm,
+            selling_channel=payload.selling_channel,
+            market_condition=payload.market_condition,
+            manual_price_override=payload.manual_price_override,
+            yield_kg=payload.yield_kg,
+            actual_sold_kg=payload.actual_sold_kg,
+            labor_cost_rm=payload.labor_cost_rm,
+            other_costs_rm=payload.other_costs_rm,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -750,6 +788,7 @@ async def inventory_create(payload: InventoryCreateRequest) -> InventoryCreateRe
             quantity=payload.quantity,
             usage=payload.usage,
             unit=payload.unit,
+            cost_per_unit_rm=payload.cost_per_unit_rm,
         )
     except ValueError as exc:
         return _error_response(400, str(exc))
@@ -811,6 +850,7 @@ async def inventory_update(item_id: str, payload: InventoryUpdateRequest) -> Inv
             item_id=item_id,
             liters=payload.liters,
             description=payload.description,
+            unit_cost_rm=payload.unit_cost_rm,
         )
     except ValueError as exc:
         return _error_response(400, str(exc))
@@ -854,6 +894,111 @@ async def inventory_delete(item_id: str, user_id: str = Query(..., min_length=1)
     )
 
     return InventoryDeleteResponse.model_validate(result)
+
+
+@router.get("/api/crops", response_model=CropListResponse)
+async def crop_list(user_id: str = Query(..., min_length=1)) -> CropListResponse | JSONResponse:
+    """List user crops from Firestore."""
+    service = _get_crop_service()
+    if service is None:
+        return _error_response(503, _crop_service_init_error or "crop service unavailable")
+
+    try:
+        result = await service.list_crops(user_id=user_id)
+    except ValueError as exc:
+        return _error_response(400, str(exc))
+    except Exception as exc:
+        logger.exception("Crop list failed: %s", exc)
+        return _error_response(502, f"Crop service failed: {exc}")
+
+    logger.info(
+        "Crop list response: user_id=%s count=%d",
+        user_id,
+        len(result.get("items") or []),
+    )
+    return CropListResponse.model_validate(result)
+
+
+@router.get("/api/crops/{crop_id}", response_model=CropItemResponse)
+async def crop_get(crop_id: str, user_id: str = Query(..., min_length=1)) -> CropItemResponse | JSONResponse:
+    """Get a crop by id for ROI workflows."""
+    service = _get_crop_service()
+    if service is None:
+        return _error_response(503, _crop_service_init_error or "crop service unavailable")
+
+    try:
+        result = await service.get_crop(user_id=user_id, crop_id=crop_id)
+    except ValueError as exc:
+        return _error_response(400, str(exc))
+    except Exception as exc:
+        logger.exception("Crop get failed: %s", exc)
+        return _error_response(502, f"Crop service failed: {exc}")
+
+    logger.info("Crop get response: user_id=%s crop_id=%s", user_id, crop_id)
+    return CropItemResponse.model_validate(result)
+
+
+@router.post("/api/crops", response_model=CropCreateResponse)
+async def crop_create(payload: CropCreateRequest) -> CropCreateResponse | JSONResponse:
+    """Create a crop profile under users/{uid}/crops."""
+    service = _get_crop_service()
+    if service is None:
+        return _error_response(503, _crop_service_init_error or "crop service unavailable")
+
+    try:
+        created_item = await service.create_crop(
+            user_id=payload.user_id,
+            name=payload.name,
+            expected_yield_kg=payload.expected_yield_kg,
+            area_hectares=payload.area_hectares,
+            planting_date=payload.planting_date,
+            status=payload.status,
+            crop_inventory_usage=[item.model_dump() for item in payload.crop_inventory_usage],
+            labor_cost_rm=payload.labor_cost_rm,
+            other_costs_rm=payload.other_costs_rm,
+        )
+    except ValueError as exc:
+        return _error_response(400, str(exc))
+    except Exception as exc:
+        logger.exception("Crop create failed: %s", exc)
+        return _error_response(502, f"Crop service failed: {exc}")
+
+    logger.info("Crop create response: user_id=%s crop_id=%s", payload.user_id, created_item.get("id"))
+    return CropCreateResponse.model_validate({"success": True, "item": created_item})
+
+
+@router.patch("/api/crops/{crop_id}", response_model=CropUpdateResponse)
+async def crop_update(crop_id: str, payload: CropUpdateRequest) -> CropUpdateResponse | JSONResponse:
+    """Update crop profile fields and linked inventory usage."""
+    service = _get_crop_service()
+    if service is None:
+        return _error_response(503, _crop_service_init_error or "crop service unavailable")
+
+    usage_payload = None
+    if payload.crop_inventory_usage is not None:
+        usage_payload = [item.model_dump() for item in payload.crop_inventory_usage]
+
+    try:
+        updated_item = await service.update_crop(
+            user_id=payload.user_id,
+            crop_id=crop_id,
+            name=payload.name,
+            expected_yield_kg=payload.expected_yield_kg,
+            area_hectares=payload.area_hectares,
+            planting_date=payload.planting_date,
+            status=payload.status,
+            crop_inventory_usage=usage_payload,
+            labor_cost_rm=payload.labor_cost_rm,
+            other_costs_rm=payload.other_costs_rm,
+        )
+    except ValueError as exc:
+        return _error_response(400, str(exc))
+    except Exception as exc:
+        logger.exception("Crop update failed: %s", exc)
+        return _error_response(502, f"Crop service failed: {exc}")
+
+    logger.info("Crop update response: user_id=%s crop_id=%s", payload.user_id, crop_id)
+    return CropUpdateResponse.model_validate({"success": True, "item": updated_item})
 
 
 @router.get("/api/zones", response_model=ZoneHealthSummaryResponse)

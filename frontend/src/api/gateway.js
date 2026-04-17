@@ -148,39 +148,144 @@ export const gateway = {
   },
 
   getTreatmentPlan: async (input) => {
-    const disease = String(input?.disease || '').trim()
-    const cropType = String(input?.cropType || '').trim()
-    const treatmentPlan = String(input?.treatmentPlan || '').trim()
     const userId = String(input?.userId || '').trim()
-    const farmSizeHectares = toFiniteNumber(input?.farmSizeHectares)
-    const survivalProb = toFiniteNumber(input?.survivalProb)
+    const cropId = String(input?.cropId || '').trim()
 
-    if (!disease || !cropType || !treatmentPlan || !userId) {
-      throw new Error('disease, cropType, treatmentPlan, and userId are required for treatment plan')
+    if (!userId) {
+      throw new Error('userId is required for treatment plan')
     }
 
-    if (farmSizeHectares === null || farmSizeHectares <= 0) {
-      throw new Error('farmSizeHectares must be greater than 0')
+    const body = {
+      user_id: userId,
+      crop_id: cropId || null,
+      disease: String(input?.disease || 'Crop disease risk').trim() || 'Crop disease risk',
+      crop_type: String(input?.cropType || input?.cropName || '').trim() || null,
+      treatment_plan: String(input?.treatmentPlan || 'recommended treatment').trim() || null,
+      farm_size_hectares: toFiniteNumber(input?.farmSizeHectares),
+      survival_prob: toFiniteNumber(input?.survivalProb) ?? 1,
+      lat: toFiniteNumber(input?.lat),
+      lng: toFiniteNumber(input?.lng),
+      weatherContext: input?.weatherContext || null,
+      treatment_cost_rm: toFiniteNumber(input?.treatmentCostRm),
+      selling_channel: String(input?.sellingChannel || 'middleman').trim().toLowerCase(),
+      market_condition: String(input?.marketCondition || 'normal').trim().toLowerCase(),
+      manual_price_override: toFiniteNumber(input?.manualPriceOverride),
+      yield_kg: toFiniteNumber(input?.yieldKg),
+      actual_sold_kg: toFiniteNumber(input?.actualSoldKg),
+      labor_cost_rm: toFiniteNumber(input?.laborCostRm),
+      other_costs_rm: toFiniteNumber(input?.otherCostsRm),
     }
 
-    if (survivalProb === null || survivalProb < 0 || survivalProb > 1) {
-      throw new Error('survivalProb must be between 0 and 1')
+    if (!cropId) {
+      const disease = String(input?.disease || '').trim()
+      const cropType = String(input?.cropType || '').trim()
+      const treatmentPlan = String(input?.treatmentPlan || '').trim()
+      const farmSizeHectares = toFiniteNumber(input?.farmSizeHectares)
+      const survivalProb = toFiniteNumber(input?.survivalProb)
+
+      if (!disease || !cropType || !treatmentPlan) {
+        throw new Error('disease, cropType, and treatmentPlan are required when cropId is not provided')
+      }
+
+      if (farmSizeHectares === null || farmSizeHectares <= 0) {
+        throw new Error('farmSizeHectares must be greater than 0 when cropId is not provided')
+      }
+
+      if (survivalProb === null || survivalProb < 0 || survivalProb > 1) {
+        throw new Error('survivalProb must be between 0 and 1')
+      }
     }
 
     return requestJson('/api/treatment', {
       method: 'POST',
+      body: JSON.stringify(body),
+    })
+  },
+
+  getCrops: async ({ userId }) => {
+    const safeUserId = String(userId || '').trim()
+    if (!safeUserId) {
+      throw new Error('userId is required for crops lookup')
+    }
+
+    return requestJson(`/api/crops${buildQueryString({ user_id: safeUserId })}`, {
+      method: 'GET',
+    })
+  },
+
+  getCropById: async (cropId, { userId }) => {
+    const safeCropId = String(cropId || '').trim()
+    const safeUserId = String(userId || '').trim()
+
+    if (!safeCropId || !safeUserId) {
+      throw new Error('cropId and userId are required for crop lookup')
+    }
+
+    return requestJson(`/api/crops/${encodeURIComponent(safeCropId)}${buildQueryString({ user_id: safeUserId })}`, {
+      method: 'GET',
+    })
+  },
+
+  createCrop: async (payload) => {
+    const userId = String(payload?.userId || '').trim()
+    const name = String(payload?.name || '').trim()
+    const expectedYieldKg = toFiniteNumber(payload?.expectedYieldKg)
+
+    if (!userId || !name || expectedYieldKg === null || expectedYieldKg < 0) {
+      throw new Error('userId, name, and expectedYieldKg are required to create a crop')
+    }
+
+    const usage = Array.isArray(payload?.cropInventoryUsage)
+      ? payload.cropInventoryUsage
+      : []
+
+    return requestJson('/api/crops', {
+      method: 'POST',
       body: JSON.stringify({
-        disease,
-        zone: input?.zone || null,
-        crop_type: cropType,
-        treatment_plan: treatmentPlan,
         user_id: userId,
-        farm_size_hectares: farmSizeHectares,
-        survival_prob: survivalProb,
-        lat: toFiniteNumber(input?.lat),
-        lng: toFiniteNumber(input?.lng),
-        weatherContext: input?.weatherContext || null,
-        treatment_cost_rm: toFiniteNumber(input?.treatmentCostRm),
+        name,
+        expected_yield_kg: expectedYieldKg,
+        area_hectares: toFiniteNumber(payload?.areaHectares) ?? 0,
+        planting_date: String(payload?.plantingDate || '').trim() || null,
+        status: String(payload?.status || 'growing').trim().toLowerCase(),
+        labor_cost_rm: toFiniteNumber(payload?.laborCostRm) ?? 0,
+        other_costs_rm: toFiniteNumber(payload?.otherCostsRm) ?? 0,
+        crop_inventory_usage: usage.map((item) => ({
+          inventory_id: String(item?.inventoryId || '').trim(),
+          quantity_used: toFiniteNumber(item?.quantityUsed) ?? 0,
+        })).filter((item) => item.inventory_id),
+      }),
+    })
+  },
+
+  updateCrop: async (cropId, payload) => {
+    const safeCropId = String(cropId || '').trim()
+    const userId = String(payload?.userId || '').trim()
+    if (!safeCropId || !userId) {
+      throw new Error('cropId and userId are required to update a crop')
+    }
+
+    const usage = Array.isArray(payload?.cropInventoryUsage)
+      ? payload.cropInventoryUsage
+      : null
+
+    return requestJson(`/api/crops/${encodeURIComponent(safeCropId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        user_id: userId,
+        name: payload?.name,
+        expected_yield_kg: toFiniteNumber(payload?.expectedYieldKg),
+        area_hectares: toFiniteNumber(payload?.areaHectares),
+        planting_date: payload?.plantingDate ?? undefined,
+        status: payload?.status ? String(payload.status).trim().toLowerCase() : undefined,
+        labor_cost_rm: toFiniteNumber(payload?.laborCostRm),
+        other_costs_rm: toFiniteNumber(payload?.otherCostsRm),
+        crop_inventory_usage: usage
+          ? usage.map((item) => ({
+            inventory_id: String(item?.inventoryId || '').trim(),
+            quantity_used: toFiniteNumber(item?.quantityUsed) ?? 0,
+          })).filter((item) => item.inventory_id)
+          : undefined,
       }),
     })
   },
@@ -196,7 +301,7 @@ export const gateway = {
     })
   },
 
-  updateInventoryItem: async (itemId, { userId, liters, description }) => {
+  updateInventoryItem: async (itemId, { userId, liters, description, unitCostRm }) => {
     const safeItemId = String(itemId || '').trim()
     const safeUserId = String(userId || '').trim()
     const safeLiters = toFiniteNumber(liters)
@@ -220,6 +325,11 @@ export const gateway = {
       body.description = safeDescription
     }
 
+    const safeUnitCost = toFiniteNumber(unitCostRm)
+    if (safeUnitCost !== null && safeUnitCost >= 0) {
+      body.unit_cost_rm = safeUnitCost
+    }
+
     return requestJson(`/api/inventory/${encodeURIComponent(safeItemId)}`, {
       method: 'PATCH',
       body: JSON.stringify(body),
@@ -239,7 +349,7 @@ export const gateway = {
     })
   },
 
-  createInventoryItem: async ({ userId, name, quantity, usage, unit }) => {
+  createInventoryItem: async ({ userId, name, quantity, usage, unit, costPerUnitRm }) => {
     const safeUserId = String(userId || '').trim()
     const safeName = String(name || '').trim()
     const safeUsage = String(usage || '').trim()
@@ -254,6 +364,8 @@ export const gateway = {
       throw new Error('quantity must be a non-negative number')
     }
 
+    const safeCostPerUnit = toFiniteNumber(costPerUnitRm)
+
     return requestJson('/api/inventory', {
       method: 'POST',
       body: JSON.stringify({
@@ -262,6 +374,7 @@ export const gateway = {
         quantity: safeQuantity,
         usage: safeUsage,
         unit: safeUnit,
+        cost_per_unit_rm: safeCostPerUnit !== null && safeCostPerUnit >= 0 ? safeCostPerUnit : 0,
       }),
     })
   },

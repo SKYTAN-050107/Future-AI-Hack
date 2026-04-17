@@ -22,7 +22,7 @@ function getPathRank(pathname) {
     return 2
   }
 
-  if (pathname.startsWith('/app/inventory') || pathname.startsWith('/app/treatment')) {
+  if (pathname.startsWith('/app/inventory') || pathname.startsWith('/app/treatment') || pathname.startsWith('/app/crops')) {
     return 3
   }
 

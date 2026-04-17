@@ -179,17 +179,25 @@ class WeatherV1Response(BaseModel):
 class TreatmentPlanRequest(BaseModel):
     """Input contract for treatment and ROI analysis."""
 
-    disease: str = Field(..., min_length=1)
-    zone: str | None = None
-    crop_type: str = Field(..., min_length=1)
-    treatment_plan: str = Field(..., min_length=1)
     user_id: str = Field(..., min_length=1)
-    farm_size_hectares: float = Field(..., gt=0)
-    survival_prob: float = Field(..., ge=0.0, le=1.0)
+    crop_id: str | None = None
+    disease: str = Field(default="Crop disease risk", min_length=1)
+    zone: str | None = None
+    crop_type: str | None = None
+    treatment_plan: str | None = None
+    farm_size_hectares: float | None = Field(default=None, gt=0)
+    survival_prob: float = Field(default=1.0, ge=0.0, le=1.0)
     lat: float | None = None
     lng: float | None = None
     weatherContext: str | None = None
     treatment_cost_rm: float | None = Field(default=None, ge=0.0)
+    selling_channel: str = Field(default="middleman", min_length=1)
+    market_condition: str = Field(default="normal", min_length=1)
+    manual_price_override: float | None = Field(default=None, ge=0.0)
+    yield_kg: float | None = Field(default=None, ge=0.0)
+    actual_sold_kg: float | None = Field(default=None, ge=0.0)
+    labor_cost_rm: float | None = Field(default=None, ge=0.0)
+    other_costs_rm: float | None = Field(default=None, ge=0.0)
 
 
 class TreatmentPlanResponse(BaseModel):
@@ -198,8 +206,23 @@ class TreatmentPlanResponse(BaseModel):
     recommendation: str
     estimated_cost_rm: float = Field(..., ge=0.0)
     expected_gain_rm: float = Field(..., ge=0.0)
-    roi_x: float = Field(..., ge=0.0)
+    roi_x: float | None = Field(default=None, ge=0.0)
     organic_alternative: str
+    retail_price_rm_per_kg: float | None = Field(default=None, ge=0.0)
+    farm_price_rm_per_kg: float | None = Field(default=None, ge=0.0)
+    price_date: str | None = None
+    yield_kg: float | None = Field(default=None, ge=0.0)
+    actual_sold_kg: float | None = Field(default=None, ge=0.0)
+    inventory_cost_rm: float | None = Field(default=None, ge=0.0)
+    inventory_breakdown: list[dict] = Field(default_factory=list)
+    labor_cost_rm: float | None = Field(default=None, ge=0.0)
+    other_costs_rm: float | None = Field(default=None, ge=0.0)
+    profit_rm: float | None = None
+    roi_percent: float | None = None
+    roi_note: str | None = None
+    selling_channel: str | None = None
+    market_condition: str | None = None
+    used_manual_price_override: bool = False
 
 
 class InventoryItemResponse(BaseModel):
@@ -229,6 +252,7 @@ class InventoryUpdateRequest(BaseModel):
     user_id: str = Field(..., min_length=1)
     liters: float = Field(..., ge=0.0)
     description: str | None = None
+    unit_cost_rm: float | None = Field(default=None, ge=0.0)
 
 
 class InventoryUpdateResponse(BaseModel):
@@ -237,6 +261,7 @@ class InventoryUpdateResponse(BaseModel):
     id: str
     liters: float = Field(..., ge=0.0)
     description: str | None = None
+    unit_cost_rm: float = Field(default=0.0, ge=0.0)
     updated: bool
 
 
@@ -248,6 +273,7 @@ class InventoryCreateRequest(BaseModel):
     quantity: float = Field(..., ge=0.0)
     usage: str = Field(..., min_length=1)
     unit: str = Field(..., min_length=1)
+    cost_per_unit_rm: float = Field(default=0.0, ge=0.0)
 
 
 class InventoryCreateResponse(BaseModel):
@@ -273,6 +299,7 @@ class InventoryV1ItemResponse(BaseModel):
     quantity: float = Field(..., ge=0.0)
     usage: str
     unit: str
+    cost_per_unit_rm: float = Field(default=0.0, ge=0.0)
     created_at: str | None = None
     updated_at: str | None = None
 
@@ -296,6 +323,79 @@ class InventoryDeleteResponse(BaseModel):
     success: bool = True
     id: str
     deleted: bool
+
+
+class CropInventoryUsageItem(BaseModel):
+    """One inventory line-item used by a specific crop cycle."""
+
+    inventory_id: str = Field(..., min_length=1)
+    quantity_used: float = Field(..., ge=0.0)
+
+
+class CropItemResponse(BaseModel):
+    """Crop profile used for ROI and farm planning."""
+
+    id: str
+    name: str
+    expected_yield_kg: float = Field(..., ge=0.0)
+    area_hectares: float = Field(default=0.0, ge=0.0)
+    planting_date: str | None = None
+    status: str = Field(default="growing")
+    crop_inventory_usage: list[CropInventoryUsageItem] = Field(default_factory=list)
+    labor_cost_rm: float = Field(default=0.0, ge=0.0)
+    other_costs_rm: float = Field(default=0.0, ge=0.0)
+    last_price_rm_per_kg: float | None = Field(default=None, ge=0.0)
+    price_date: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class CropListResponse(BaseModel):
+    """List payload for crop management UI."""
+
+    items: list[CropItemResponse] = Field(default_factory=list)
+
+
+class CropCreateRequest(BaseModel):
+    """Payload for creating a user crop."""
+
+    user_id: str = Field(..., min_length=1)
+    name: str = Field(..., min_length=1)
+    expected_yield_kg: float = Field(..., ge=0.0)
+    area_hectares: float = Field(default=0.0, ge=0.0)
+    planting_date: str | None = None
+    status: str = Field(default="growing")
+    crop_inventory_usage: list[CropInventoryUsageItem] = Field(default_factory=list)
+    labor_cost_rm: float = Field(default=0.0, ge=0.0)
+    other_costs_rm: float = Field(default=0.0, ge=0.0)
+
+
+class CropCreateResponse(BaseModel):
+    """Result of creating a crop."""
+
+    success: bool = True
+    item: CropItemResponse
+
+
+class CropUpdateRequest(BaseModel):
+    """Patch payload for crop updates."""
+
+    user_id: str = Field(..., min_length=1)
+    name: str | None = None
+    expected_yield_kg: float | None = Field(default=None, ge=0.0)
+    area_hectares: float | None = Field(default=None, ge=0.0)
+    planting_date: str | None = None
+    status: str | None = None
+    crop_inventory_usage: list[CropInventoryUsageItem] | None = None
+    labor_cost_rm: float | None = Field(default=None, ge=0.0)
+    other_costs_rm: float | None = Field(default=None, ge=0.0)
+
+
+class CropUpdateResponse(BaseModel):
+    """Result of updating a crop."""
+
+    success: bool = True
+    item: CropItemResponse
 
 
 class DashboardSummaryRequest(BaseModel):

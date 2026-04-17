@@ -19,6 +19,7 @@ const FILTERS = ['All', 'Pesticides', 'Fungicides', 'Fertilizers']
 
 function normalizeInventoryItem(rawItem) {
   const liters = Number(rawItem?.liters)
+  const unitCostRm = Number(rawItem?.unit_cost_rm)
 
   return {
     id: String(rawItem?.id || ''),
@@ -26,6 +27,7 @@ function normalizeInventoryItem(rawItem) {
     description: String(rawItem?.description || '').trim(),
     category: String(rawItem?.category || 'Uncategorized'),
     liters: Number.isFinite(liters) ? liters : 0,
+    unitCostRm: Number.isFinite(unitCostRm) ? unitCostRm : 0,
   }
 }
 
@@ -187,9 +189,20 @@ export default function Inventory() {
       return
     }
 
+    const costPerUnitRaw = window.prompt('Cost per unit (RM)', '0')
+    if (costPerUnitRaw === null) {
+      return
+    }
+
     const quantity = Number(quantityRaw)
     if (!Number.isFinite(quantity) || quantity < 0) {
       setError('Quantity must be a non-negative number.')
+      return
+    }
+
+    const costPerUnitRm = Number(costPerUnitRaw)
+    if (!Number.isFinite(costPerUnitRm) || costPerUnitRm < 0) {
+      setError('Cost per unit must be a non-negative number.')
       return
     }
 
@@ -204,6 +217,7 @@ export default function Inventory() {
         quantity,
         usage,
         unit,
+        costPerUnitRm,
       })
       console.log('[Inventory API] create response', createResponse)
       await refreshInventory(userId)
@@ -252,6 +266,21 @@ export default function Inventory() {
 
     const description = String(descriptionRaw).trim()
 
+    const unitCostRaw = window.prompt(
+      `Cost per liter for ${selectedItem.name} (RM)`,
+      String(selectedItem.unitCostRm || 0),
+    )
+
+    if (unitCostRaw === null) {
+      return
+    }
+
+    const unitCostRm = Number(unitCostRaw)
+    if (!Number.isFinite(unitCostRm) || unitCostRm < 0) {
+      setError('Cost per unit must be a non-negative number.')
+      return
+    }
+
     setIsUpdatingItem(true)
     setError('')
     setIsActionMenuOpen(false)
@@ -261,6 +290,7 @@ export default function Inventory() {
         userId,
         liters,
         description,
+        unitCostRm,
       })
       console.log('[Inventory API] update response', updateResponse)
       await refreshInventory(userId)
@@ -403,6 +433,7 @@ export default function Inventory() {
                 <div className="pg-inventory-item-meta">
                   <span>{item.liters.toFixed(1)} Liters</span>
                   <span>{item.category}</span>
+                  <span>RM {item.unitCostRm.toFixed(2)}/L</span>
                 </div>
               </div>
 

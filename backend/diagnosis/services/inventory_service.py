@@ -31,6 +31,7 @@ class InventoryService:
         item_id: str,
         liters: float,
         description: str | None = None,
+        unit_cost_rm: float | None = None,
     ) -> dict:
         if not user_id:
             raise ValueError("user_id is required")
@@ -45,6 +46,7 @@ class InventoryService:
             item_id,
             liters,
             description,
+            unit_cost_rm,
         )
 
     async def create_item_v1(
@@ -55,6 +57,7 @@ class InventoryService:
         quantity: float,
         usage: str,
         unit: str,
+        cost_per_unit_rm: float = 0.0,
     ) -> dict:
         if not user_id:
             raise ValueError("user_id is required")
@@ -74,6 +77,7 @@ class InventoryService:
             float(quantity),
             usage.strip(),
             unit.strip(),
+            max(0.0, float(cost_per_unit_rm)),
         )
 
     async def list_items_v1(self, user_id: str) -> dict:
@@ -130,7 +134,7 @@ class InventoryService:
                 "description": item_v1.get("description"),
                 "category": str(item_v1.get("usage") or "Uncategorized").title(),
                 "liters": liters,
-                "unit_cost_rm": 0.0,
+                "unit_cost_rm": self._resolve_unit_cost(item_v1),
                 "last_updated_iso": updated_iso,
             }
             items.append(item)
@@ -155,6 +159,7 @@ class InventoryService:
         quantity: float,
         usage: str,
         unit: str,
+        cost_per_unit_rm: float,
     ) -> dict:
         ref = (
             self._db.collection("users")
@@ -168,6 +173,8 @@ class InventoryService:
             "quantity": quantity,
             "usage": usage,
             "unit": unit,
+            "cost_per_unit_rm": cost_per_unit_rm,
+            "unit_cost_rm": cost_per_unit_rm,
             # Backward-compatible fields still used by current frontend displays.
             "liters": quantity,
             "category": usage.title(),
@@ -256,6 +263,7 @@ class InventoryService:
         item_id: str,
         liters: float,
         description: str | None = None,
+        unit_cost_rm: float | None = None,
     ) -> dict:
         ref = (
             self._db.collection("users")
@@ -278,6 +286,11 @@ class InventoryService:
         if description is not None:
             payload["description"] = description.strip()
 
+        if unit_cost_rm is not None:
+            safe_cost = max(0.0, float(unit_cost_rm))
+            payload["cost_per_unit_rm"] = safe_cost
+            payload["unit_cost_rm"] = safe_cost
+
         ref.set(payload, merge=True)
 
         updated_snapshot = ref.get()
@@ -289,6 +302,7 @@ class InventoryService:
             "id": item_id,
             "liters": self._resolve_liters(updated_data),
             "description": self._resolve_description(updated_data),
+            "unit_cost_rm": self._resolve_unit_cost(updated_data),
             "updated": True,
         }
 
@@ -338,6 +352,18 @@ class InventoryService:
         return text if text else None
 
     @staticmethod
+    def _resolve_unit_cost(data: dict) -> float:
+        for key in ("unit_cost_rm", "cost_per_unit_rm", "costPerUnitRm"):
+            value = data.get(key)
+            if value is None:
+                continue
+            try:
+                return max(0.0, float(value))
+            except (TypeError, ValueError):
+                continue
+        return 0.0
+
+    @staticmethod
     def _parse_iso_datetime(value: object) -> datetime | None:
         if not value or not isinstance(value, str):
             return None
@@ -370,6 +396,7 @@ class InventoryService:
             "quantity": self._resolve_quantity(data),
             "usage": str(data.get("usage") or data.get("category") or "general"),
             "unit": str(data.get("unit") or "liters"),
+            "cost_per_unit_rm": self._resolve_unit_cost(data),
             "created_at": self._timestamp_to_iso(created_at),
             "updated_at": self._timestamp_to_iso(updated_at),
         }
