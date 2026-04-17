@@ -10,6 +10,7 @@ from typing import Any, Awaitable, Callable
 
 from config import get_settings
 from orchestration.assistant_pipeline import AssistantPipeline
+from agents.response_validation_agent import ResponseValidationAgent
 from services.crop_service import CropService
 from services.dashboard_service import DashboardService
 from services.firebase_admin_service import get_firestore_client
@@ -36,6 +37,9 @@ class InteractionSupervisor:
 
         self._assistant_pipeline: AssistantPipeline | None = None
         self._assistant_pipeline_error: str | None = None
+
+        self._response_validation_agent: ResponseValidationAgent | None = None
+        self._response_validation_agent_error: str | None = None
 
         self._dashboard_service: DashboardService | None = None
         self._dashboard_service_error: str | None = None
@@ -85,6 +89,61 @@ class InteractionSupervisor:
             return None
 
         return self._assistant_pipeline
+
+    def _get_response_validation_agent(self) -> ResponseValidationAgent | None:
+        if self._response_validation_agent is not None:
+            return self._response_validation_agent
+        if self._response_validation_agent_error is not None:
+            return None
+
+        try:
+            self._response_validation_agent = ResponseValidationAgent(
+                name="ResponseValidationAgent",
+                description="Validate Gemini replies before returning them to the user.",
+            )
+        except Exception as exc:
+            self._response_validation_agent_error = str(exc)
+            logger.warning("ResponseValidationAgent unavailable for supervisor replies: %s", exc)
+            return None
+
+        return self._response_validation_agent
+
+    async def _finalize_response(
+        self,
+        *,
+        user_prompt: str,
+        draft_reply: str,
+        context: dict[str, Any],
+    ) -> str:
+        reply = str(draft_reply or "").strip()
+        if not reply:
+            return reply
+
+        validator = self._get_response_validation_agent()
+        if validator is None:
+            return reply
+
+        try:
+            validation_result = await validator.validate_and_repair_reply(
+                user_prompt=user_prompt,
+                draft_reply=reply,
+                context=context,
+            )
+        except Exception as exc:
+            logger.warning("Reply validation failed, using draft reply: %s", exc)
+            return reply
+
+        final_reply = str(validation_result.get("final_reply") or reply).strip()
+        verdict = str(validation_result.get("verdict") or "").strip().lower()
+        if verdict and verdict != "pass":
+            logger.info(
+                "Reply validation verdict=%s score=%s truncated=%s",
+                verdict,
+                validation_result.get("score"),
+                validation_result.get("truncated"),
+            )
+
+        return final_reply or reply
 
     def _get_dashboard_service(self) -> DashboardService | None:
         if self._dashboard_service is not None:
@@ -284,44 +343,88 @@ class InteractionSupervisor:
     ) -> str:
         current_scan = scan_result or (scan_results[0] if scan_results else {})
         low_confidence = self._is_low_confidence(confidence, scan_results)
+        validation_context = {
+            "confidence": confidence,
+            "scan_result": current_scan,
+            "scan_results": scan_results or [],
+        }
 
         if scan_results and len(scan_results) > 1:
             if low_confidence:
                 llm = self._get_llm_service()
                 if llm is not None:
-                    return await llm.generate_low_confidence_photo_reply(
+                    draft_reply = await llm.generate_low_confidence_photo_reply(
                         user_prompt=user_prompt,
                         scan_results=scan_results,
                     )
-                return self._low_confidence_fallback(user_prompt=user_prompt, scan_result=current_scan)
+                else:
+                    draft_reply = self._low_confidence_fallback(user_prompt=user_prompt, scan_result=current_scan)
+
+                return await self._finalize_response(
+                    user_prompt=user_prompt,
+                    draft_reply=draft_reply,
+                    context=validation_context,
+                )
 
             llm = self._get_llm_service()
             if llm is not None:
-                return await llm.generate_consolidated_assistant_dialogue(scan_results, user_prompt)
+                draft_reply = await llm.generate_consolidated_assistant_dialogue(scan_results, user_prompt)
+                return await self._finalize_response(
+                    user_prompt=user_prompt,
+                    draft_reply=draft_reply,
+                    context=validation_context,
+                )
 
-            return self._low_confidence_fallback(user_prompt=user_prompt, scan_result=current_scan)
+            draft_reply = self._low_confidence_fallback(user_prompt=user_prompt, scan_result=current_scan)
+            return await self._finalize_response(
+                user_prompt=user_prompt,
+                draft_reply=draft_reply,
+                context=validation_context,
+            )
 
         if low_confidence:
             llm = self._get_llm_service()
             if llm is not None:
-                return await llm.generate_low_confidence_photo_reply(
+                draft_reply = await llm.generate_low_confidence_photo_reply(
                     user_prompt=user_prompt,
                     scan_result=current_scan,
                 )
-            return self._low_confidence_fallback(user_prompt=user_prompt, scan_result=current_scan)
+            else:
+                draft_reply = self._low_confidence_fallback(user_prompt=user_prompt, scan_result=current_scan)
+
+            return await self._finalize_response(
+                user_prompt=user_prompt,
+                draft_reply=draft_reply,
+                context=validation_context,
+            )
 
         assistant_pipeline = self._get_assistant_pipeline()
         if assistant_pipeline is not None:
             try:
-                return await assistant_pipeline.run(current_scan, user_prompt)
+                draft_reply = await assistant_pipeline.run(current_scan, user_prompt)
+                return await self._finalize_response(
+                    user_prompt=user_prompt,
+                    draft_reply=draft_reply,
+                    context=validation_context,
+                )
             except Exception as exc:
                 logger.warning("AssistantPipeline reply failed, falling back to Gemini: %s", exc)
 
         llm = self._get_llm_service()
         if llm is not None:
-            return await llm.generate_assistant_dialogue(current_scan, user_prompt)
+            draft_reply = await llm.generate_assistant_dialogue(current_scan, user_prompt)
+            return await self._finalize_response(
+                user_prompt=user_prompt,
+                draft_reply=draft_reply,
+                context=validation_context,
+            )
 
-        return build_farmer_fallback_dialogue(current_scan, user_prompt)
+        draft_reply = build_farmer_fallback_dialogue(current_scan, user_prompt)
+        return await self._finalize_response(
+            user_prompt=user_prompt,
+            draft_reply=draft_reply,
+            context=validation_context,
+        )
 
     async def build_text_reply(
         self,
@@ -335,6 +438,14 @@ class InteractionSupervisor:
     ) -> str:
         """Return the response-agent reply for a text-only request."""
         intents = self._detect_intents(user_prompt)
+        validation_context_base = {
+            "intents": sorted(intents),
+            "location": location,
+            "lat": lat,
+            "lng": lng,
+            "user_id": user_id,
+            "zone": zone,
+        }
 
         nodes: list[TaskNode] = []
 
@@ -348,6 +459,23 @@ class InteractionSupervisor:
                     name="inventory_summary",
                     runner=lambda _state: self._load_inventory_summary(user_id=user_id),
                 )
+            )
+
+        if intents & {"resource"}:
+            inventory_summary = await self._load_inventory_summary(user_id=user_id)
+            llm = self._get_llm_service()
+            if llm is not None:
+                draft_reply = await llm.generate_inventory_reply(
+                    user_prompt=user_prompt,
+                    inventory_summary=inventory_summary,
+                )
+            else:
+                draft_reply = self._inventory_fallback(inventory_summary=inventory_summary)
+
+            return await self._finalize_response(
+                user_prompt=user_prompt,
+                draft_reply=draft_reply,
+                context={**validation_context_base, "inventory_summary": inventory_summary},
             )
 
         if needs_recent_scan:
@@ -422,17 +550,27 @@ class InteractionSupervisor:
         )
 
         state = await self._run_task_graph(nodes)
+        validation_context = {**validation_context_base, **state}
         response = str(state.get("response") or "").strip()
         if response:
-            return response
+            return await self._finalize_response(
+                user_prompt=user_prompt,
+                draft_reply=response,
+                context=validation_context,
+            )
 
-        return self._text_fallback(
+        draft_reply = self._text_fallback(
             user_prompt=user_prompt,
             intents=intents,
             state=state,
             location=location,
             lat=lat,
             lng=lng,
+        )
+        return await self._finalize_response(
+            user_prompt=user_prompt,
+            draft_reply=draft_reply,
+            context=validation_context,
         )
 
     async def _load_recent_scan_context(self, *, user_id: str, zone: str | None) -> dict[str, Any]:

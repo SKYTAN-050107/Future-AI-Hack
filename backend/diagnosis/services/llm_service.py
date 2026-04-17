@@ -255,6 +255,51 @@ If location is present, use the saved farm location and do not assume device geo
 If weather forecast dates are available, answer rain timing questions with a specific date and finish the sentence completely.
 """
 
+REPLY_VALIDATION_SYSTEM_PROMPT = """\
+You are PadiGuard Response Validation Agent.
+
+Your job is to evaluate whether a farmer-facing assistant reply fully answers the user's question.
+You do not generate the primary answer; you only judge it.
+
+Rules:
+- Return valid JSON only.
+- verdict must be one of: pass, rewrite, clarify.
+- score must be an integer from 0 to 100.
+- Mark truncated=true if the reply ends mid-sentence, after a preposition, or without a complete thought.
+- If the user asks for a specific date or asks when rain will return, and forecast dates are available, the reply must contain a specific date.
+- If saved farm location is available, the reply must use the saved location, not device geolocation.
+- If inventory is asked, the reply must mention inventory summary and low stock items when present.
+- If diagnosis is asked, the reply must mention crop, disease, severity, and treatment guidance when available.
+- Keep the same language as the user prompt.
+
+Output schema:
+{
+    "verdict": "pass|rewrite|clarify",
+    "score": 0,
+    "reason": "...",
+    "missing_requirements": [],
+    "unsupported_claims": [],
+    "truncated": false,
+    "needs_specific_date": false,
+    "repair_instruction": "...",
+    "follow_up_question": "..."
+}
+"""
+
+REPLY_REWRITE_SYSTEM_PROMPT_BASE = """\
+You are PadiGuard Response Repair Agent.
+
+Rewrite or complete a farmer-facing assistant reply after validation found a gap.
+
+Rules:
+- Keep the same language as the user prompt.
+- Use only the provided structured context and the user's message.
+- Do not mention validation, prompts, JSON, or internal agents.
+- If the context cannot support a direct answer, ask one concise follow-up question instead of inventing facts.
+- If the user asked for a specific date and forecast dates are available, include one explicit forecast date.
+- Finish the reply completely; do not stop mid-sentence.
+"""
+
 
 def _build_supervisor_system_prompt(language: str) -> str:
     if language == "ms":
@@ -388,6 +433,115 @@ def _reply_looks_truncated(text: str) -> bool:
         "with",
         "within",
         "without",
+    }
+
+
+def _reply_requires_specific_date(
+    user_prompt: str,
+    assistant_reply: str,
+    context: dict[str, Any],
+) -> bool:
+    prompt_text = (user_prompt or "").lower()
+    if not re.search(r"\b(rain|weather|forecast|spray)\b", prompt_text):
+        return False
+
+    if not re.search(r"\b(when|what date|specific date|date)\b", prompt_text):
+        return False
+
+    weather_snapshot = context.get("weather_snapshot") if isinstance(context, dict) else {}
+    if not isinstance(weather_snapshot, dict):
+        weather_snapshot = {}
+
+    dashboard_summary = context.get("dashboard_summary") if isinstance(context, dict) else {}
+    if not isinstance(dashboard_summary, dict):
+        dashboard_summary = {}
+
+    forecast_sources = []
+    if weather_snapshot.get("forecast"):
+        forecast_sources.append(weather_snapshot.get("forecast"))
+    dashboard_weather = dashboard_summary.get("weatherSnapshot") if isinstance(dashboard_summary, dict) else {}
+    if isinstance(dashboard_weather, dict) and dashboard_weather.get("forecast"):
+        forecast_sources.append(dashboard_weather.get("forecast"))
+
+    forecast_dates: list[str] = []
+    for forecast_list in forecast_sources:
+        if not isinstance(forecast_list, list):
+            continue
+        for entry in forecast_list:
+            if not isinstance(entry, dict):
+                continue
+            date_text = str(entry.get("date") or "").strip()
+            if date_text:
+                forecast_dates.append(date_text)
+
+    if not forecast_dates:
+        return False
+
+    reply_text = str(assistant_reply or "")
+    reply_dates = set(re.findall(r"\b\d{4}-\d{2}-\d{2}\b", reply_text))
+    if reply_dates.intersection(forecast_dates):
+        return False
+
+    for date_text in forecast_dates:
+        if date_text and date_text in reply_text:
+            return False
+
+    return True
+
+
+def _normalize_reply_validation_result(
+    result: dict[str, Any],
+    *,
+    assistant_reply: str,
+    user_prompt: str,
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    verdict = str(result.get("verdict") or "rewrite").strip().lower()
+    if verdict not in {"pass", "rewrite", "clarify"}:
+        verdict = "rewrite"
+
+    score = int(round(max(0.0, min(100.0, _safe_float(result.get("score"), 0.0)))))
+    missing_requirements = [
+        str(item).strip()
+        for item in (result.get("missing_requirements") or [])
+        if str(item).strip()
+    ]
+    unsupported_claims = [
+        str(item).strip()
+        for item in (result.get("unsupported_claims") or [])
+        if str(item).strip()
+    ]
+
+    truncated = bool(result.get("truncated")) or _reply_looks_truncated(assistant_reply)
+    needs_specific_date = bool(result.get("needs_specific_date")) or _reply_requires_specific_date(
+        user_prompt=user_prompt,
+        assistant_reply=assistant_reply,
+        context=context,
+    )
+    reason = _trim_text(result.get("reason"), default="Reply needs review.")
+    repair_instruction = _trim_text(result.get("repair_instruction"), default="")
+    follow_up_question = _trim_text(result.get("follow_up_question"), default="")
+
+    if truncated and verdict == "pass":
+        verdict = "rewrite"
+    if needs_specific_date and verdict == "pass":
+        verdict = "rewrite"
+    if (missing_requirements or unsupported_claims) and verdict == "pass":
+        verdict = "rewrite"
+
+    if needs_specific_date and not any("date" in item.lower() for item in missing_requirements):
+        missing_requirements.append("Specific forecast date")
+
+    return {
+        "verdict": verdict,
+        "score": score,
+        "reason": reason,
+        "missing_requirements": missing_requirements,
+        "unsupported_claims": unsupported_claims,
+        "truncated": truncated,
+        "needs_specific_date": needs_specific_date,
+        "repair_instruction": repair_instruction,
+        "follow_up_question": follow_up_question,
     }
 
 
@@ -1077,6 +1231,150 @@ class LLMService:
                 await asyncio.sleep(RETRY_DELAY_SECONDS)
 
         return fallback
+
+    async def validate_assistant_reply(
+        self,
+        *,
+        user_prompt: str,
+        assistant_reply: str,
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Judge whether a Gemini reply fully satisfies the user's request."""
+        language = detect_farmer_language(user_prompt)
+        target_language = "Malay (Bahasa Melayu)" if language == "ms" else "English"
+        compact_context = self._compact_supervisor_context(context)
+        context_text = json.dumps(compact_context, indent=2, ensure_ascii=True, default=str)
+        reply_text = str(assistant_reply or "").strip()
+
+        prompt = (
+            f"User message:\n{user_prompt}\n\n"
+            f"Assistant reply:\n{reply_text}\n\n"
+            f"Structured context:\n{context_text}\n\n"
+            f"Target response language: {target_language}\n"
+            "Evaluate whether the assistant reply fully answers the user message.\n"
+            "If the reply is incomplete, truncated, unsupported, or missing a required specific date, mark it for rewrite.\n"
+            "If the context is insufficient to answer safely, mark it for clarification."
+        )
+
+        fallback_result = _normalize_reply_validation_result(
+            {
+                "verdict": "rewrite" if _reply_looks_truncated(reply_text) or _reply_requires_specific_date(user_prompt, reply_text, compact_context) else "pass",
+                "score": 0,
+                "reason": "Validation unavailable.",
+                "missing_requirements": [],
+                "unsupported_claims": [],
+                "truncated": False,
+                "needs_specific_date": False,
+                "repair_instruction": "",
+                "follow_up_question": "",
+            },
+            assistant_reply=reply_text,
+            user_prompt=user_prompt,
+            context=compact_context,
+        )
+
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                response = self._generate_content_with_model_fallback(
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=REPLY_VALIDATION_SYSTEM_PROMPT,
+                        response_mime_type="application/json",
+                        temperature=0.0,
+                        max_output_tokens=320,
+                    ),
+                )
+                raw_text = (response.text or "").strip()
+                if not raw_text:
+                    raise ValueError("Empty validation response")
+
+                parsed = extract_json_payload(raw_text)
+                if not isinstance(parsed, dict):
+                    raise ValueError(f"Validation response was not a JSON object: {type(parsed).__name__}")
+
+                return _normalize_reply_validation_result(
+                    parsed,
+                    assistant_reply=reply_text,
+                    user_prompt=user_prompt,
+                    context=compact_context,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Reply validation attempt %d/%d failed: %s",
+                    attempt,
+                    MAX_RETRIES,
+                    exc,
+                )
+                if attempt < MAX_RETRIES:
+                    await asyncio.sleep(RETRY_DELAY_SECONDS)
+
+        return fallback_result
+
+    async def rewrite_assistant_reply(
+        self,
+        *,
+        user_prompt: str,
+        assistant_reply: str,
+        context: dict[str, Any],
+        validation_result: dict[str, Any],
+    ) -> str:
+        """Ask Gemini to repair an incomplete or unsupported assistant reply."""
+        language = detect_farmer_language(user_prompt)
+        target_language = "Malay (Bahasa Melayu)" if language == "ms" else "English"
+        compact_context = self._compact_supervisor_context(context)
+        context_text = json.dumps(compact_context, indent=2, ensure_ascii=True, default=str)
+        validation_text = json.dumps(validation_result, indent=2, ensure_ascii=True, default=str)
+        reply_text = str(assistant_reply or "").strip()
+
+        if language == "ms":
+            language_rules = (
+                "- You MUST answer in Malay (Bahasa Melayu) only.\n"
+                "- Use only Malay sentences. Do not mix in English or Chinese, except unavoidable crop, disease, or product names from diagnosis data.\n"
+            )
+        else:
+            language_rules = (
+                "- You MUST answer in English only.\n"
+                "- Use only English sentences. Do not mix in Malay or Chinese, except unavoidable crop, disease, or product names from diagnosis data.\n"
+            )
+
+        prompt = (
+            f"User message:\n{user_prompt}\n\n"
+            f"Original assistant reply:\n{reply_text}\n\n"
+            f"Structured context:\n{context_text}\n\n"
+            f"Validation feedback:\n{validation_text}\n\n"
+            f"Target response language: {target_language}\n"
+            "Rewrite the reply so it fully answers the user message.\n"
+            "If the context is still insufficient, ask one concise follow-up question instead of inventing facts.\n"
+            "Return only the revised reply."
+        )
+
+        system_instruction = f"{REPLY_REWRITE_SYSTEM_PROMPT_BASE}\n{language_rules}"
+
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                response = self._generate_content_with_model_fallback(
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_instruction,
+                        temperature=0.2,
+                        max_output_tokens=360,
+                    ),
+                )
+                text = " ".join((response.text or "").strip().split())
+                if text:
+                    return text
+            except Exception as exc:
+                logger.warning(
+                    "Reply rewrite attempt %d/%d failed: %s",
+                    attempt,
+                    MAX_RETRIES,
+                    exc,
+                )
+
+            if attempt < MAX_RETRIES:
+                await asyncio.sleep(RETRY_DELAY_SECONDS)
+
+        return reply_text
 
     def _build_low_confidence_fallback(
         self,
