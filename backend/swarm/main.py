@@ -10,8 +10,11 @@ Usage:
     python main.py
 """
 
+import atexit
 import asyncio
+import json
 import os
+from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -20,6 +23,7 @@ BACKEND_ENV_PATH = Path(__file__).resolve().parents[1] / ".env"
 load_dotenv(dotenv_path=BACKEND_ENV_PATH)
 
 from genkit.ai import Genkit
+from genkit.ai import _server as genkit_server
 from genkit.ai._server import ServerSpec
 
 from schemas.orchestrator import SwarmInput, SwarmOutput
@@ -42,6 +46,38 @@ from agents.spatial_propagation import register_spatial_agent, SpatialInput
 # ── Initialize Genkit (LLM calls go through config/llm.py) ───────
 # Genkit reflection server only starts in dev mode.
 os.environ.setdefault("GENKIT_ENV", "dev")
+
+
+def _create_runtime_windows_safe(runtime_dir: str, reflection_server_spec: ServerSpec, at_exit_fn=None) -> Path:
+    if not os.path.exists(runtime_dir):
+        os.makedirs(runtime_dir)
+
+    current_datetime = datetime.now()
+    runtime_file_name = f"{current_datetime.isoformat().replace(':', '-')}.json"
+    runtime_file_path = Path(os.path.join(runtime_dir, runtime_file_name))
+    metadata = json.dumps(
+        {
+            "reflectionApiSpecVersion": 1,
+            "id": f"{os.getpid()}",
+            "pid": os.getpid(),
+            "reflectionServerUrl": reflection_server_spec.url,
+            "timestamp": f"{current_datetime.isoformat()}",
+        }
+    )
+    runtime_file_path.write_text(metadata, encoding="utf-8")
+
+    def cleanup_runtime() -> None:
+        if at_exit_fn:
+            at_exit_fn(runtime_file_path)
+
+    if at_exit_fn:
+        atexit.register(cleanup_runtime)
+
+    return runtime_file_path
+
+
+if os.name == "nt":
+    genkit_server.create_runtime = _create_runtime_windows_safe
 
 SWARM_HOST = "0.0.0.0"
 SWARM_PORT = 3400
