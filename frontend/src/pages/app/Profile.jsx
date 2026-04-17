@@ -51,7 +51,7 @@ export default function Profile() {
   const email = user?.email || 'Not signed in'
   const farmName = profile?.onboarding?.farmName || 'My Farm'
   const variety = profile?.onboarding?.variety || 'Not set'
-  const location = profile?.onboarding?.location || 'Not set'
+  const location = profile?.onboarding?.locationLabel || profile?.onboarding?.location || 'Not set'
   const language = profile?.onboarding?.language || 'BM'
   const userId = String(user?.uid || '').trim()
 
@@ -181,7 +181,7 @@ export default function Profile() {
           <div className="pg-profile-detail-row">
             <IconMap className="pg-icon" />
             <div>
-              <span className="pg-profile-detail-label">Location</span>
+              <span className="pg-profile-detail-label">Farm address</span>
               <span className="pg-profile-detail-value">{location}</span>
             </div>
           </div>
@@ -243,11 +243,12 @@ export default function Profile() {
 
       <article className="pg-card">
         <h2>Account</h2>
+        <p style={{ marginTop: 0 }}>You can update your farm address anytime.</p>
         <div className="pg-cta-row">
           <button type="button" className="pg-btn pg-btn-ghost" onClick={() => {
             navigate('/onboarding', { state: { fromProfile: true } })
           }}>
-            Edit farm setup
+            Edit farm address
           </button>
           <button type="button" className="pg-btn pg-btn-primary" onClick={async () => {
             await logout()

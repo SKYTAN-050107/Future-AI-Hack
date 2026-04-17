@@ -1,12 +1,13 @@
 import { useLocation, useNavigate } from 'react-router-dom'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSessionContext } from '../../hooks/useSessionContext'
+import { geocodeLocation } from '../../services/locationResolver'
 import { clearPostAuthPath, getPostAuthPath } from '../../utils/navigationState'
 
 export default function Onboarding() {
   const routerLocation = useLocation()
   const navigate = useNavigate()
-  const { completeOnboarding } = useSessionContext()
+  const { completeOnboarding, profile } = useSessionContext()
   const fromProfile = Boolean(routerLocation.state?.fromProfile)
   const [step, setStep] = useState(0)
   const [farmName, setFarmName] = useState('')
@@ -15,13 +16,27 @@ export default function Onboarding() {
   const [language, setLanguage] = useState('BM')
   const [isSaving, setIsSaving] = useState(false)
   const [feedback, setFeedback] = useState('')
+  const hydratedFromProfileRef = useRef(false)
 
   const progress = useMemo(() => ((step + 1) / 3) * 100, [step])
 
   const canProceed =
     (step === 0 && farmName.trim().length > 2) ||
-    (step === 1 && location.trim().length > 2) ||
+    (step === 1 && location.trim().length > 5) ||
     (step === 2 && variety.trim().length > 1)
+
+  useEffect(() => {
+    const onboarding = profile?.onboarding
+    if (!onboarding || hydratedFromProfileRef.current) {
+      return
+    }
+
+    setFarmName(String(onboarding.farmName || '').trim())
+    setLocation(String(onboarding.locationLabel || onboarding.location || '').trim())
+    setVariety(String(onboarding.variety || '').trim())
+    setLanguage(String(onboarding.language || 'BM').trim() || 'BM')
+    hydratedFromProfileRef.current = true
+  }, [profile?.onboarding])
 
   const onNext = async () => {
     if (!canProceed) {
@@ -37,9 +52,24 @@ export default function Onboarding() {
     setFeedback('')
 
     try {
+      const trimmedLocation = location.trim()
+      let resolvedLocation = null
+
+      if (trimmedLocation) {
+        try {
+          resolvedLocation = await geocodeLocation(trimmedLocation)
+        } catch {
+          resolvedLocation = null
+        }
+      }
+
       const result = await completeOnboarding({
         farmName: farmName.trim(),
-        location: location.trim(),
+        location: trimmedLocation,
+        locationLabel: resolvedLocation?.label || trimmedLocation,
+        locationLat: resolvedLocation?.lat ?? null,
+        locationLng: resolvedLocation?.lng ?? null,
+        locationSource: resolvedLocation ? 'geocoded' : 'manual',
         variety: variety.trim(),
         language,
       })
@@ -48,7 +78,7 @@ export default function Onboarding() {
         setFeedback('Saved locally. Cloud sync will retry when connection is ready.')
       }
 
-      const resumePath = getPostAuthPath()
+      const resumePath = fromProfile ? '/app/profile' : getPostAuthPath()
       clearPostAuthPath()
       navigate(resumePath && resumePath.startsWith('/app') ? resumePath : '/app', { replace: true })
     } catch (error) {
@@ -83,14 +113,15 @@ export default function Onboarding() {
 
         {step === 1 ? (
           <>
-            <label className="pg-field-label" htmlFor="location">Location</label>
+            <label className="pg-field-label" htmlFor="location">Farm address</label>
             <input
               id="location"
               className="pg-input"
-              placeholder="Mukim, district, state"
+              placeholder="Lot, village, district, state"
               value={location}
               onChange={(event) => setLocation(event.target.value)}
             />
+            <p className="pg-copy">Enter the most precise farm address you have. You can update it anytime from Profile.</p>
           </>
         ) : null}
 

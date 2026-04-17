@@ -6,6 +6,7 @@ import {
   bootstrapUserProfile,
   createUserProfile,
   clearOnboardingProfile,
+  normalizeOnboardingData,
   saveOnboardingProfile,
 } from '../services/userProfile'
 
@@ -61,6 +62,10 @@ export function useSession() {
               onboarding: {
                 farmName: null,
                 location: null,
+                locationLabel: null,
+                locationLat: null,
+                locationLng: null,
+                locationSource: null,
                 variety: null,
                 language: 'BM',
               },
@@ -106,16 +111,15 @@ export function useSession() {
       throw new Error('Authenticated Firebase session is required to complete onboarding.')
     }
 
-    await saveOnboardingProfile(user.uid, onboardingData)
+    const normalizedOnboarding = normalizeOnboardingData(onboardingData)
+
+    await saveOnboardingProfile(user.uid, normalizedOnboarding)
 
     setProfile((current) => ({
       ...(current || {}),
       onboardingCompleted: true,
       onboarding: {
-        farmName: onboardingData?.farmName || null,
-        location: onboardingData?.location || null,
-        variety: onboardingData?.variety || null,
-        language: onboardingData?.language || 'BM',
+        ...normalizedOnboarding,
       },
       onboardingSyncStatus: 'synced',
     }))

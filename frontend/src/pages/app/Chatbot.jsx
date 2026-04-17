@@ -319,6 +319,8 @@ export default function Chatbot() {
   const farmLocation = String(profile?.onboarding?.location || '').trim()
   const { coordinates } = useFarmLocationCoordinates({
     locationText: farmLocation,
+    savedLat: profile?.onboarding?.locationLat,
+    savedLng: profile?.onboarding?.locationLng,
   })
 
   const persistConversationToFirestore = useCallback(async (uid, entry) => {

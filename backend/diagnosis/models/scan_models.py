@@ -139,6 +139,7 @@ class HourlyEntry(BaseModel):
 class WeatherForecastEntry(BaseModel):
     """One day forecast entry for weather page rendering."""
 
+    date: str | None = None
     day: str
     condition: str
     rainChance: int = Field(..., ge=0, le=100)

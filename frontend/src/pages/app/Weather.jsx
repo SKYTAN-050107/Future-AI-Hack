@@ -155,6 +155,8 @@ export default function Weather() {
   const farmLocation = String(profile?.onboarding?.location || '').trim()
   const { coordinates, locationResolutionError } = useFarmLocationCoordinates({
     locationText: farmLocation,
+    savedLat: profile?.onboarding?.locationLat,
+    savedLng: profile?.onboarding?.locationLng,
     gridLat: firstGridWithCentroid?.centroid?.lat,
     gridLng: firstGridWithCentroid?.centroid?.lng,
   })

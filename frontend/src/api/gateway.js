@@ -11,22 +11,38 @@ function normalizeBase64Image(value) {
   return input
 }
 
+const DEFAULT_REQUEST_TIMEOUT_MS = 30000
+
 async function requestJson(path, options = {}) {
   let response = null
   const method = String(options?.method || 'GET').toUpperCase()
+  const timeoutMs = Number(options?.timeoutMs || DEFAULT_REQUEST_TIMEOUT_MS)
+  const controller = timeoutMs > 0 ? new AbortController() : null
+  const timeoutId = controller
+    ? window.setTimeout(() => controller.abort(), timeoutMs)
+    : null
 
   console.debug('[API request]', { method, path })
   try {
     response = await fetch(path, {
       ...options,
+      signal: controller ? controller.signal : options.signal,
       headers: {
         Accept: 'application/json',
         'Content-Type': 'application/json',
         ...(options.headers || {}),
       },
     })
-  } catch {
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s. Please try again.`)
+    }
+
     throw new Error('Cannot reach diagnosis backend on current origin. Ensure backend proxy is running and retry.')
+  } finally {
+    if (timeoutId) {
+      window.clearTimeout(timeoutId)
+    }
   }
 
   let payload = null
@@ -87,6 +103,7 @@ export const gateway = {
 
     return requestJson(`/api/weather${buildQueryString({ lat: safeLat, lng: safeLng, days: safeDays || 7 })}`, {
       method: 'GET',
+      timeoutMs: 30000,
     })
   },
 
@@ -98,6 +115,7 @@ export const gateway = {
 
     return requestJson('/api/scan', {
       method: 'POST',
+      timeoutMs: 90000,
       body: JSON.stringify({
         source: input?.source || 'camera',
         grid_id: input?.gridId || null,
@@ -115,6 +133,7 @@ export const gateway = {
 
     return requestJson('/api/assistant/scan', {
       method: 'POST',
+      timeoutMs: 90000,
       body: JSON.stringify({
         source: input?.source || 'camera',
         grid_id: input?.gridId || null,
@@ -142,6 +161,7 @@ export const gateway = {
 
     return requestJson('/api/assistant/message', {
       method: 'POST',
+      timeoutMs: 30000,
       body: JSON.stringify({
         user_prompt: userPrompt,
         user_id: userId,
@@ -204,6 +224,7 @@ export const gateway = {
 
     return requestJson('/api/treatment', {
       method: 'POST',
+      timeoutMs: 45000,
       body: JSON.stringify(body),
     })
   },
@@ -216,6 +237,7 @@ export const gateway = {
 
     return requestJson(`/api/crops${buildQueryString({ user_id: safeUserId })}`, {
       method: 'GET',
+      timeoutMs: 30000,
     })
   },
 
@@ -229,6 +251,7 @@ export const gateway = {
 
     return requestJson(`/api/crops/${encodeURIComponent(safeCropId)}${buildQueryString({ user_id: safeUserId })}`, {
       method: 'GET',
+      timeoutMs: 30000,
     })
   },
 
@@ -401,6 +424,7 @@ export const gateway = {
 
     return requestJson('/api/dashboard/summary', {
       method: 'POST',
+      timeoutMs: 30000,
       body: JSON.stringify({
         user_id: userId,
         crop_type: cropType,
@@ -423,6 +447,7 @@ export const gateway = {
 
     return requestJson('/swarm-api/runAction', {
       method: 'POST',
+      timeoutMs: 30000,
       body: JSON.stringify({
         key: '/flow/meteorologist_flow',
         input: {

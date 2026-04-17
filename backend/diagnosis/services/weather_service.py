@@ -194,6 +194,7 @@ class WeatherService:
 
             results.append(
                 {
+                    "date": start_time[:10] if start_time else None,
                     "day": label,
                     "condition": condition,
                     "rainChance": max(0, min(100, rain_chance)),

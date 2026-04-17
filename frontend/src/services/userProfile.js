@@ -3,6 +3,33 @@ import { db, isFirebaseConfigured } from '../firebase'
 
 const USERS_COLLECTION = 'users'
 
+function toSafeNumber(value) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+export function normalizeOnboardingData(onboardingData = {}) {
+  const farmName = String(onboardingData?.farmName || '').trim() || null
+  const location = String(onboardingData?.location || '').trim() || null
+  const locationLabel = String(onboardingData?.locationLabel || onboardingData?.locationResolved?.label || location || '').trim() || location
+  const locationLat = toSafeNumber(onboardingData?.locationLat ?? onboardingData?.locationResolved?.lat)
+  const locationLng = toSafeNumber(onboardingData?.locationLng ?? onboardingData?.locationResolved?.lng)
+  const locationSource = String(onboardingData?.locationSource || 'manual').trim() || 'manual'
+  const variety = String(onboardingData?.variety || '').trim() || null
+  const language = String(onboardingData?.language || 'BM').trim() || 'BM'
+
+  return {
+    farmName,
+    location,
+    locationLabel,
+    locationLat,
+    locationLng,
+    locationSource,
+    variety,
+    language,
+  }
+}
+
 function ensureFirestoreReady() {
   if (!isFirebaseConfigured || !db) {
     throw new Error('Firestore is not configured')
@@ -83,14 +110,21 @@ export async function saveOnboardingProfile(uid, onboardingData) {
     throw new Error('uid is required')
   }
 
+  const normalized = normalizeOnboardingData(onboardingData)
+
   const payload = {
     onboardingCompleted: true,
     onboarding: {
-      farmName: onboardingData?.farmName || null,
-      location: onboardingData?.location || null,
-      variety: onboardingData?.variety || null,
-      language: onboardingData?.language || 'BM',
+      farmName: normalized.farmName,
+      location: normalized.location,
+      locationLabel: normalized.locationLabel,
+      locationLat: normalized.locationLat,
+      locationLng: normalized.locationLng,
+      locationSource: normalized.locationSource,
+      variety: normalized.variety,
+      language: normalized.language,
       completedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
     },
     updatedAt: serverTimestamp(),
   }

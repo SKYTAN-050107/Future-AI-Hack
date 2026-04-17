@@ -252,6 +252,7 @@ If treatment is not worth it, say that first.
 If spread risk is high, say to isolate or monitor nearby plants.
 If weatherSnapshot is present, answer weather or spray timing questions from it.
 If location is present, use the saved farm location and do not assume device geolocation.
+If weather forecast dates are available, answer rain timing questions with a specific date and finish the sentence completely.
 """
 
 
@@ -346,6 +347,90 @@ def build_farmer_fallback_dialogue(
         "Recheck Time\nRetake photos of the same area in 24-48 hours; if lesions expand, escalate treatment immediately."
         f"{reason_suffix}"
     )
+
+
+def _reply_looks_truncated(text: str) -> bool:
+    cleaned = " ".join(str(text or "").strip().split())
+    if not cleaned:
+        return True
+
+    if cleaned.endswith((".", "!", "?", ")", '"', "'")):
+        return False
+
+    if cleaned.endswith((",", ":", ";", "-", "—")):
+        return True
+
+    words = re.findall(r"[A-Za-z0-9']+", cleaned)
+    if not words:
+        return False
+
+    return words[-1].lower() in {
+        "a",
+        "an",
+        "and",
+        "as",
+        "at",
+        "because",
+        "before",
+        "by",
+        "for",
+        "from",
+        "in",
+        "into",
+        "of",
+        "on",
+        "or",
+        "over",
+        "the",
+        "to",
+        "under",
+        "until",
+        "with",
+        "within",
+        "without",
+    }
+
+
+def _compact_forecast_entries(forecast: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    compacted: list[dict[str, Any]] = []
+    for entry in (forecast or [])[:5]:
+        if not isinstance(entry, dict):
+            continue
+
+        compacted.append(
+            {
+                "date": _trim_text(entry.get("date"), default=""),
+                "day": _trim_text(entry.get("day"), default=""),
+                "condition": _trim_text(entry.get("condition"), default="Unknown"),
+                "rainChance": int(_safe_float(entry.get("rainChance"), default=0.0)),
+                "wind": _trim_text(entry.get("wind"), default=""),
+                "sprayWindow": _trim_text(entry.get("sprayWindow"), default="Delay spraying"),
+                "safe": bool(entry.get("safe")),
+                "temperature_high": entry.get("temperature_high"),
+                "temperature_low": entry.get("temperature_low"),
+            }
+        )
+
+    return compacted
+
+
+def _compact_weather_snapshot(weather_snapshot: dict[str, Any]) -> dict[str, Any]:
+    compacted = {
+        "condition": _trim_text(weather_snapshot.get("condition"), default="Unknown"),
+        "temperatureC": _safe_float(weather_snapshot.get("temperatureC"), default=0.0),
+        "humidity": int(_safe_float(weather_snapshot.get("humidity"), default=0.0)),
+        "windKmh": _safe_float(weather_snapshot.get("windKmh"), default=0.0),
+        "windDirection": _trim_text(weather_snapshot.get("windDirection"), default=""),
+        "rainInHours": weather_snapshot.get("rainInHours"),
+        "safeToSpray": bool(weather_snapshot.get("safeToSpray")),
+        "rain_probability": int(_safe_float(weather_snapshot.get("rain_probability"), default=0.0)),
+        "best_spray_window": _trim_text(weather_snapshot.get("best_spray_window"), default=""),
+        "advisory": _trim_text(weather_snapshot.get("advisory"), default=""),
+        "recommendation": _trim_text(weather_snapshot.get("recommendation"), default=""),
+        "forecast": _compact_forecast_entries(weather_snapshot.get("forecast") or []),
+    }
+
+    return compacted
 
 
 # ── Retry Configuration ───────────────────────────────────────────────
@@ -792,16 +877,27 @@ class LLMService:
     ) -> str:
         """Generate a farmer-friendly response from structured task outputs."""
         language = detect_farmer_language(user_prompt)
-        context_text = json.dumps(context, indent=2, ensure_ascii=True, default=str)
+        compact_context = self._compact_supervisor_context(context)
+        context_text = json.dumps(compact_context, indent=2, ensure_ascii=True, default=str)
         fallback = self._build_supervisor_fallback(
             language=language,
             user_prompt=user_prompt,
             context=context,
         )
 
+        weather_snapshot = compact_context.get("weather_snapshot") or {}
+        weather_instructions = ""
+        if weather_snapshot:
+            weather_instructions = (
+                "Weather guidance: use the forecast dates in the weather snapshot when the user asks when rain will return. "
+                "If a forecast date is available, include it explicitly in YYYY-MM-DD format. "
+                "Never stop the reply after a preposition or half-formed sentence.\n"
+            )
+
         prompt = (
             f"User message:\n{user_prompt}\n\n"
             f"Structured task outputs:\n{context_text}\n\n"
+            f"{weather_instructions}"
             "Use only the structured task outputs.\n"
             "Answer the farmer directly and keep it short.\n"
             "If the data is incomplete, ask one clear follow-up question and stop.\n"
@@ -814,11 +910,22 @@ class LLMService:
                     config=types.GenerateContentConfig(
                         system_instruction=_build_supervisor_system_prompt(language),
                         temperature=0.25,
-                        max_output_tokens=280,
+                        max_output_tokens=420,
                     ),
                 )
                 text = " ".join((response.text or "").strip().split())
                 if text:
+                    if _reply_looks_truncated(text):
+                        continuation = await self._continue_supervisor_reply(
+                            user_prompt=user_prompt,
+                            context_text=context_text,
+                            partial_text=text,
+                            language=language,
+                            weather_instructions=weather_instructions,
+                        )
+                        merged = self._merge_reply_segments(text, continuation)
+                        if merged:
+                            return merged
                     return text
             except Exception as exc:
                 logger.warning(
@@ -832,6 +939,87 @@ class LLMService:
                 await asyncio.sleep(RETRY_DELAY_SECONDS)
 
         return fallback
+
+    async def _continue_supervisor_reply(
+        self,
+        *,
+        user_prompt: str,
+        context_text: str,
+        partial_text: str,
+        language: str,
+        weather_instructions: str = "",
+    ) -> str:
+        prompt = (
+            f"User message:\n{user_prompt}\n\n"
+            f"Structured task outputs:\n{context_text}\n\n"
+            f"Previous draft answer:\n{partial_text}\n\n"
+            f"{weather_instructions}"
+            "Continue the draft from the next word only. Do not repeat any part of the draft. "
+            "Return only the missing continuation."
+        )
+
+        for attempt in range(1, 3):
+            try:
+                response = self._generate_content_with_model_fallback(
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=_build_supervisor_system_prompt(language),
+                        temperature=0.2,
+                        max_output_tokens=160,
+                    ),
+                )
+                text = " ".join((response.text or "").strip().split())
+                if text:
+                    return text
+            except Exception as exc:
+                logger.warning(
+                    "Supervisor continuation attempt %d/2 failed: %s",
+                    attempt,
+                    exc,
+                )
+
+            if attempt < 2:
+                await asyncio.sleep(RETRY_DELAY_SECONDS)
+
+        return ""
+
+    @staticmethod
+    def _compact_supervisor_context(context: dict[str, Any]) -> dict[str, Any]:
+        compacted = dict(context)
+
+        weather_snapshot = compacted.get("weather_snapshot")
+        if isinstance(weather_snapshot, dict):
+            compacted["weather_snapshot"] = _compact_weather_snapshot(weather_snapshot)
+
+        dashboard_summary = compacted.get("dashboard_summary")
+        if isinstance(dashboard_summary, dict):
+            compact_dashboard = dict(dashboard_summary)
+            weather_snapshot_from_dashboard = compact_dashboard.get("weatherSnapshot")
+            if isinstance(weather_snapshot_from_dashboard, dict):
+                compact_dashboard["weatherSnapshot"] = _compact_weather_snapshot(weather_snapshot_from_dashboard)
+            compacted["dashboard_summary"] = compact_dashboard
+
+        return compacted
+
+    @staticmethod
+    def _merge_reply_segments(prefix: str, continuation: str) -> str:
+        prefix_clean = " ".join(str(prefix or "").split())
+        continuation_clean = " ".join(str(continuation or "").split())
+
+        if not continuation_clean:
+            return prefix_clean
+
+        prefix_words = prefix_clean.split()
+        continuation_words = continuation_clean.split()
+
+        if prefix_words and continuation_words:
+            previous_tail = prefix_words[-1].lower().strip(".,;:!?")
+            next_head = continuation_words[0].lower().strip(".,;:!?")
+            if previous_tail == next_head:
+                continuation_words = continuation_words[1:]
+
+        merged = " ".join(prefix_words + continuation_words).strip()
+        return merged or prefix_clean
 
     async def generate_inventory_reply(
         self,
