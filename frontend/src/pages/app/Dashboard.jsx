@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { IconCloud, IconSun } from '../../components/icons/UiIcons'
 import SectionHeader from '../../components/ui/SectionHeader'
+import { sendAssistantMessage } from '../../api/assistant'
 import { getDashboardSummary } from '../../api/dashboard'
 import { useSessionContext } from '../../hooks/useSessionContext'
 import { useGrids } from '../../hooks/useGrids'
@@ -116,6 +117,10 @@ export default function Dashboard() {
   const { latestReport } = useScanHistory()
   const [summary, setSummary] = useState(null)
   const [loadError, setLoadError] = useState('')
+  const [selectedZoneName, setSelectedZoneName] = useState('')
+  const [zoneQuickReview, setZoneQuickReview] = useState('')
+  const [zoneQuickReviewError, setZoneQuickReviewError] = useState('')
+  const [isZoneQuickReviewLoading, setIsZoneQuickReviewLoading] = useState(false)
 
   const firstGridWithCentroid = useMemo(
     () => grids.find((grid) => Number.isFinite(grid?.centroid?.lat) && Number.isFinite(grid?.centroid?.lng)),
@@ -134,6 +139,23 @@ export default function Dashboard() {
     () => buildZoneHealthSummaryFromGrids(grids),
     [grids],
   )
+
+  const zoneOptions = useMemo(() => {
+    const seen = new Set()
+    const options = []
+
+    grids.forEach((grid) => {
+      const name = String(grid?.gridId || grid?.id || '').trim()
+      if (!name || seen.has(name)) {
+        return
+      }
+
+      seen.add(name)
+      options.push(name)
+    })
+
+    return options
+  }, [grids])
 
   const requestBuild = useMemo(() => {
     const userId = String(user?.uid || '').trim()
@@ -211,6 +233,59 @@ export default function Dashboard() {
     }
   }, [requestBuild.error, requestBuild.payload])
 
+  useEffect(() => {
+    if (zoneOptions.length === 0) {
+      setSelectedZoneName('')
+      return
+    }
+
+    setSelectedZoneName((current) => (
+      zoneOptions.includes(current) ? current : zoneOptions[0]
+    ))
+  }, [zoneOptions])
+
+  useEffect(() => {
+    const userId = String(user?.uid || '').trim()
+    if (!selectedZoneName || !userId) {
+      setZoneQuickReview('')
+      setZoneQuickReviewError('')
+      setIsZoneQuickReviewLoading(false)
+      return
+    }
+
+    let active = true
+    setIsZoneQuickReviewLoading(true)
+    setZoneQuickReview('')
+    setZoneQuickReviewError('')
+
+    sendAssistantMessage({
+      userPrompt: '[ZONE_REVIEW] Provide one very short quick review for this zone in one sentence.',
+      userId,
+      zone: selectedZoneName,
+    })
+      .then((response) => {
+        if (!active) {
+          return
+        }
+        setZoneQuickReview(String(response?.assistant_reply || '').trim())
+      })
+      .catch((error) => {
+        if (!active) {
+          return
+        }
+        setZoneQuickReviewError(error?.message || 'Unable to generate quick zone review.')
+      })
+      .finally(() => {
+        if (active) {
+          setIsZoneQuickReviewLoading(false)
+        }
+      })
+
+    return () => {
+      active = false
+    }
+  }, [selectedZoneName, user?.uid])
+
   if (!summary && !loadError) {
     return (
       <section className="pg-page pg-dashboard-page" aria-label="Financial and climate command center">
@@ -263,15 +338,30 @@ export default function Dashboard() {
           </span>
         </button>
 
-        <button
-          type="button"
-          className="pg-dashboard-card pg-zone-card"
-          onClick={() => navigate('/app/map')}
-          aria-label="Open zone health map"
-        >
+        <article className="pg-dashboard-card pg-zone-card" aria-label="Zone health summary">
           <header className="pg-dashboard-card-header">
             <span className="pg-dashboard-card-title">Zone Health Summary</span>
           </header>
+
+          <label htmlFor="pg-dashboard-zone-select" className="pg-field-label" style={{ marginBottom: 8 }}>
+            Area quick review
+          </label>
+          <select
+            id="pg-dashboard-zone-select"
+            className="pg-input"
+            value={selectedZoneName}
+            onChange={(event) => setSelectedZoneName(event.target.value)}
+            disabled={zoneOptions.length === 0}
+            style={{ marginBottom: 10 }}
+          >
+            {zoneOptions.length === 0 ? (
+              <option value="">No area available</option>
+            ) : (
+              zoneOptions.map((zoneName) => (
+                <option key={zoneName} value={zoneName}>{zoneName}</option>
+              ))
+            )}
+          </select>
 
           <p className="pg-zone-area">Total Area Scanned: {safeNumber(zoneHealthSummary.totalAreaHectares).toFixed(1)} ha</p>
 
@@ -292,7 +382,24 @@ export default function Dashboard() {
           </div>
 
           <p className="pg-zone-alert">{safeNumber(zoneHealthSummary.zonesNeedingAttention)} Zones Require Attention</p>
-        </button>
+
+          <p className="pg-zone-alert" style={{ marginTop: 8 }}>
+            {isZoneQuickReviewLoading
+              ? 'Generating quick AI review...'
+              : zoneQuickReviewError
+                ? zoneQuickReviewError
+                : zoneQuickReview || 'Select an area to generate a quick AI review.'}
+          </p>
+
+          <button
+            type="button"
+            className="pg-btn pg-btn-inline"
+            onClick={() => navigate('/app/map')}
+            style={{ marginTop: 8 }}
+          >
+            Open map
+          </button>
+        </article>
 
         <button
           type="button"

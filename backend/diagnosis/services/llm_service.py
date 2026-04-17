@@ -590,3 +590,58 @@ class LLMService:
                 await asyncio.sleep(RETRY_DELAY_SECONDS)
 
         return fallback
+
+    async def generate_zone_quick_review(
+        self,
+        *,
+        zone_name: str,
+        latest_disease: str,
+        latest_severity: float,
+        latest_confidence: float,
+        trend_hint: str,
+    ) -> str:
+        """Generate a very short zone-specific health review sentence."""
+        fallback = (
+            f"{zone_name}: {latest_disease} at {latest_severity:.0f}% severity. "
+            "Prioritize quick treatment and rescan soon."
+        )
+
+        prompt = (
+            "You are an agronomy assistant. Produce exactly one short sentence for a dashboard quick review.\n\n"
+            f"Zone: {zone_name}\n"
+            f"Latest disease: {latest_disease}\n"
+            f"Latest severity: {latest_severity:.0f}%\n"
+            f"Latest confidence: {latest_confidence:.0f}%\n"
+            f"Trend hint: {trend_hint}\n\n"
+            "Constraints:\n"
+            "- Maximum 22 words\n"
+            "- No bullet points\n"
+            "- Mention urgency/action clearly\n"
+            "- Plain farmer-friendly language\n"
+        )
+
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                response = self._generate_content_with_model_fallback(
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        temperature=0.2,
+                        max_output_tokens=80,
+                    ),
+                )
+
+                text = " ".join((response.text or "").strip().split())
+                if text:
+                    return text
+            except Exception as exc:
+                logger.warning(
+                    "Zone quick review attempt %d/%d failed: %s",
+                    attempt,
+                    MAX_RETRIES,
+                    exc,
+                )
+
+            if attempt < MAX_RETRIES:
+                await asyncio.sleep(RETRY_DELAY_SECONDS)
+
+        return fallback
