@@ -70,6 +70,7 @@ export default function MapPage() {
   const [localAreaHectares, setLocalAreaHectares] = useState(0)
   const [pendingFeature, setPendingFeature] = useState(null)
   const [isSavingPending, setIsSavingPending] = useState(false)
+  const [deletingGridId, setDeletingGridId] = useState('')
   const [lastSaveState, setLastSaveState] = useState('idle')
   const centroidTargetRef = useRef({ center: DEFAULT_CENTER, hasSaved: false })
 
@@ -481,6 +482,39 @@ export default function MapPage() {
     }
   }
 
+  const handleDeletePersistedGrid = async (grid) => {
+    if (!grid?.id) {
+      return
+    }
+
+    if (!isFirebaseConfigured) {
+      setActionMessage('Grid delete requires Firebase configuration and authenticated access.')
+      setLastSaveState('failed')
+      return
+    }
+
+    const gridLabel = grid.gridId || grid.id
+    const shouldDelete = window.confirm(`Delete saved polygon ${gridLabel}?`)
+    if (!shouldDelete) {
+      return
+    }
+
+    try {
+      setDeletingGridId(String(grid.id))
+      await deleteGrid(String(grid.id))
+      if (String(pendingFeature?.id || '') === String(grid.mapFeatureId || grid.id)) {
+        setPendingFeature(null)
+      }
+      setActionMessage(`Removed ${gridLabel}.`)
+      setLastSaveState('saved')
+    } catch (deleteError) {
+      setActionMessage(deleteError?.message || `Failed to delete ${gridLabel}.`)
+      setLastSaveState('failed')
+    } finally {
+      setDeletingGridId('')
+    }
+  }
+
   const totalHectares = useMemo(
     () => grids.reduce((sum, item) => sum + Number(item.areaHectares || 0), 0),
     [grids],
@@ -568,6 +602,36 @@ export default function MapPage() {
             <p className="pg-map-status" style={{ marginTop: 8 }}>
               <strong>Sync detail:</strong> {error}
             </p>
+          ) : null}
+
+          {grids.length > 0 ? (
+            <article className="pg-card" style={{ marginTop: 12 }}>
+              <h3>Saved polygons</h3>
+              {grids.slice(0, 10).map((grid) => (
+                <div
+                  key={grid.id}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: 8,
+                    marginBottom: 8,
+                  }}
+                >
+                  <small style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {grid.gridId || grid.id} ({Number(grid.areaHectares || 0).toFixed(2)} ha)
+                  </small>
+                  <button
+                    type="button"
+                    className="pg-btn"
+                    onClick={() => handleDeletePersistedGrid(grid)}
+                    disabled={deletingGridId === grid.id}
+                  >
+                    {deletingGridId === grid.id ? 'Deleting…' : 'Delete'}
+                  </button>
+                </div>
+              ))}
+            </article>
           ) : null}
 
           {riskRecommendations.length > 0 ? (
