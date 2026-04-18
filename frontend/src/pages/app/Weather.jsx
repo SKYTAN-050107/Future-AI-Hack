@@ -49,6 +49,53 @@ function normalizeForecastEntry(entry, index) {
   }
 }
 
+const ADVISORY_CACHE_TTL_MS = 15 * 60 * 1000
+
+function buildAdvisoryCacheKey(lat, lng, cropType) {
+  const safeLat = Number.isFinite(Number(lat)) ? Number(lat).toFixed(4) : 'na'
+  const safeLng = Number.isFinite(Number(lng)) ? Number(lng).toFixed(4) : 'na'
+  const safeCrop = String(cropType || 'Rice').trim().toLowerCase().replace(/\s+/g, '-')
+  return `padiguard:weather:meteorologist:${safeLat}:${safeLng}:${safeCrop}`
+}
+
+function readAdvisoryCache(cacheKey) {
+  if (typeof window === 'undefined') return null
+
+  try {
+    const raw = window.localStorage.getItem(cacheKey)
+    if (!raw) return null
+
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed.advisory !== 'string' || typeof parsed.fetchedAt !== 'number') {
+      return null
+    }
+
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+function writeAdvisoryCache(cacheKey, advisory) {
+  if (typeof window === 'undefined') return
+
+  try {
+    window.localStorage.setItem(cacheKey, JSON.stringify({ advisory, fetchedAt: Date.now() }))
+  } catch {
+    // Ignore storage failures and keep the advisory in-memory only.
+  }
+}
+
+function advisoryAgeMinutes(fetchedAt) {
+  if (!Number.isFinite(Number(fetchedAt)) || Number(fetchedAt) <= 0) return null
+  return Math.max(0, Math.floor((Date.now() - Number(fetchedAt)) / 60000))
+}
+
+function advisoryCacheRemainingMinutes(fetchedAt) {
+  if (!Number.isFinite(Number(fetchedAt)) || Number(fetchedAt) <= 0) return null
+  return Math.max(0, Math.ceil((ADVISORY_CACHE_TTL_MS - (Date.now() - Number(fetchedAt))) / 60000))
+}
+
 /* ── Chevron SVG ──────────────────────────────────────────── */
 
 function ChevronDown({ className }) {
@@ -146,6 +193,7 @@ export default function Weather() {
   const [advisory, setAdvisory] = useState('')
   const [advisoryLoading, setAdvisoryLoading] = useState(false)
   const [advisoryError, setAdvisoryError] = useState('')
+  const [advisoryFetchedAt, setAdvisoryFetchedAt] = useState(0)
 
   const firstGridWithCentroid = useMemo(
     () => grids.find((grid) => Number.isFinite(grid?.centroid?.lat) && Number.isFinite(grid?.centroid?.lng)),
@@ -164,6 +212,16 @@ export default function Weather() {
   const lat = Number(coordinates?.lat)
   const lng = Number(coordinates?.lng)
   const hasCoords = Number.isFinite(lat) && Number.isFinite(lng)
+  const advisoryCacheKey = useMemo(
+    () => (hasCoords ? buildAdvisoryCacheKey(lat, lng, 'Rice') : ''),
+    [hasCoords, lat, lng],
+  )
+
+  useEffect(() => {
+    setAdvisory('')
+    setAdvisoryError('')
+    setAdvisoryFetchedAt(0)
+  }, [advisoryCacheKey])
 
   // Fetch weather data
   useEffect(() => {
@@ -216,6 +274,14 @@ export default function Weather() {
   const fetchAdvisory = useCallback(() => {
     if (!hasCoords) return
 
+    const cachedAdvisory = advisoryCacheKey ? readAdvisoryCache(advisoryCacheKey) : null
+    if (cachedAdvisory && (Date.now() - cachedAdvisory.fetchedAt) < ADVISORY_CACHE_TTL_MS) {
+      setAdvisory(cachedAdvisory.advisory)
+      setAdvisoryFetchedAt(cachedAdvisory.fetchedAt)
+      setAdvisoryError('')
+      return
+    }
+
     setAdvisoryLoading(true)
     setAdvisoryError('')
 
@@ -228,14 +294,25 @@ export default function Weather() {
             ? response
             : JSON.stringify(response?.result || response, null, 2)
         setAdvisory(text)
+        setAdvisoryFetchedAt(Date.now())
+        if (advisoryCacheKey) {
+          writeAdvisoryCache(advisoryCacheKey, text)
+        }
       })
       .catch((err) => {
+        if (cachedAdvisory?.advisory) {
+          setAdvisory(cachedAdvisory.advisory)
+          setAdvisoryFetchedAt(cachedAdvisory.fetchedAt)
+          setAdvisoryError('')
+          return
+        }
+
         setAdvisoryError(err?.message || 'Unable to load AI advisory. Ensure swarm server is running.')
       })
       .finally(() => {
         setAdvisoryLoading(false)
       })
-  }, [lat, lng, hasCoords])
+  }, [advisoryCacheKey, hasCoords, lat, lng])
 
   // Auto-fetch advisory once we have coords and weather data
   useEffect(() => {
@@ -247,6 +324,9 @@ export default function Weather() {
   /* ── Today snapshot from the response root ─────────────── */
   const today = weatherData || {}
   const safeToSpray = Boolean(today.safeToSpray)
+  const serviceWarning = String(today.serviceWarning || '').trim()
+  const advisoryAge = advisoryAgeMinutes(advisoryFetchedAt)
+  const advisoryCooldown = advisoryCacheRemainingMinutes(advisoryFetchedAt)
 
   return (
     <section className="pg-page pg-weather-page">
@@ -307,6 +387,12 @@ export default function Weather() {
             </span>
           </div>
 
+          {serviceWarning ? (
+            <p style={{ marginTop: 12, fontSize: 12, lineHeight: 1.4, color: 'var(--pg-warning, #ffb454)' }}>
+              {serviceWarning}
+            </p>
+          ) : null}
+
           {today.best_spray_window ? (
             <div className="pg-weather-day-meta" style={{ padding: '0' }}>
               <span>🕐</span>
@@ -332,6 +418,12 @@ export default function Weather() {
               {advisoryLoading ? 'Analyzing…' : 'Refresh'}
             </button>
           </div>
+
+          <p style={{ margin: 0, fontSize: 12, lineHeight: 1.45, color: 'rgba(255,255,255,0.72)' }}>
+            AI advisory is cached locally for 15 minutes to reduce repeated calls.
+            {advisoryAge !== null ? ` Last updated ${advisoryAge} minute(s) ago.` : ''}
+            {advisoryCooldown !== null ? ` Refreshes reuse the cache for about ${advisoryCooldown} more minute(s).` : ''}
+          </p>
 
           {advisoryLoading && !advisory ? (
             <div className="pg-weather-ai-loading">

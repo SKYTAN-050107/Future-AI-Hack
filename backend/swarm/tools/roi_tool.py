@@ -20,6 +20,10 @@ class RoiInput(BaseModel):
     treatment_cost: float
     crop_type: str
     farm_size_hectares: float
+    predicted_yield_kg: float | None = None
+    yield_loss_percent: float | None = None
+    yield_confidence: float | None = None
+    yield_source: str | None = None
 
 
 async def calculate_roi_deterministic(input_data: RoiInput) -> dict:
@@ -33,8 +37,13 @@ async def calculate_roi_deterministic(input_data: RoiInput) -> dict:
     farm_gate_price = input_data.retail_price * 0.45
 
     # Step 2: Estimate yield gain
-    yield_per_ha = YIELD_ESTIMATES.get(input_data.crop_type, DEFAULT_YIELD)
-    estimated_yield_gain = yield_per_ha * input_data.farm_size_hectares
+    if input_data.predicted_yield_kg is not None and input_data.predicted_yield_kg > 0:
+        estimated_yield_gain = input_data.predicted_yield_kg
+        yield_source = input_data.yield_source or "yield_forecast"
+    else:
+        yield_per_ha = YIELD_ESTIMATES.get(input_data.crop_type, DEFAULT_YIELD)
+        estimated_yield_gain = yield_per_ha * input_data.farm_size_hectares
+        yield_source = input_data.yield_source or "baseline"
 
     # Step 3: ROI calculation
     revenue = estimated_yield_gain * input_data.survival_prob * farm_gate_price
@@ -51,10 +60,15 @@ async def calculate_roi_deterministic(input_data: RoiInput) -> dict:
         treatment_cost=input_data.treatment_cost,
         roi=round(roi, 4),
         profitable=roi > 0,
+        predicted_yield_kg=input_data.predicted_yield_kg,
+        yield_loss_percent=input_data.yield_loss_percent,
+        yield_confidence=input_data.yield_confidence,
+        yield_source=yield_source,
         explanation=(
             f"Retail price: RM{input_data.retail_price:.2f}/kg -> "
             f"Farm gate (45% markdown): RM{farm_gate_price:.2f}/kg. "
             f"Expected yield gain: {estimated_yield_gain:.0f} kg. "
+            f"Yield source: {yield_source}. "
             f"ROI: {roi * 100:.1f}%. "
             f"{'Treatment is profitable.' if roi > 0 else 'Treatment may not be cost-effective.'}"
         ),

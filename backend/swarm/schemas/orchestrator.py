@@ -2,6 +2,8 @@
 
 from pydantic import BaseModel, Field
 from typing import Optional
+
+from schemas.context import AgentContext, YieldForecastResult
 from schemas.spatial import PredictedBufferZone
 
 
@@ -21,12 +23,27 @@ class SwarmInput(BaseModel):
     treatment_plan: str = Field(
         ..., description="Recommended treatment chemical name"
     )
+    growth_stage: Optional[str] = Field(
+        default=None,
+        description="Optional crop growth stage, e.g. vegetative, reproductive, maturity",
+    )
+    confidence: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Optional scan confidence for shared context",
+    )
     wind_speed_kmh: float = Field(..., ge=0.0)
     wind_direction: str = Field(..., description="Compass direction e.g., 'NE'")
+    grid_density: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description="Optional grid density factor for propagation analysis",
+    )
 
 
 class SwarmOutput(BaseModel):
-    """Master output: combined results from all four agents."""
+    """Master output: combined results from the coordinated swarm agents."""
 
     weather: str = Field(..., description="Meteorologist advisory text")
     economy: str = Field(..., description="Economist analysis text")
@@ -34,3 +51,16 @@ class SwarmOutput(BaseModel):
     spatial_risk: Optional[PredictedBufferZone] = Field(
         None, description="Predicted buffer zone parameters"
     )
+    yield_forecast: Optional[YieldForecastResult] = Field(
+        default=None, description="Yield forecasting output"
+    )
+    chatbot_reply: Optional[str] = Field(
+        default=None, description="Final merged Genkit chatbot reply"
+    )
+    context: Optional[AgentContext] = Field(
+        default=None, description="Merged shared agent context"
+    )
+
+
+SwarmInput.model_rebuild()
+SwarmOutput.model_rebuild()

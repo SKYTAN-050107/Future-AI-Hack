@@ -1,8 +1,8 @@
 """
-Region detection service using Gemini 2.0 Flash to identify multiple crop regions in a photo.
+Region detection service using Gemini 2.0 Flash to identify one primary crop region in a photo.
 
-Detects bounding boxes for separate plants/crops in a single image,
-enabling multi-crop analysis in the chatbot.
+Detects a single bounding box for the most prominent plant/crop/pest in an image,
+so the live scanner can focus on one target at a time.
 """
 
 from __future__ import annotations
@@ -26,8 +26,8 @@ You are a crop region detection system for agricultural imagery.
 
 Your job is to:
 1. Analyze a farm/garden photo
-2. Identify all visible crops or plants
-3. Return normalized bounding boxes for each crop region
+2. Identify the single most prominent crop, plant, or pest region
+3. Return one normalized bounding box only
 
 OUTPUT FORMAT (strictly JSON, no markdown):
 {
@@ -53,8 +53,8 @@ Constraints:
 - All coordinates are normalized to [0, 1] range
 - x, y is top-left corner of bounding box
 - width and height are sizes (must be > 0 and <= 1)
-- Minimum 1 region, maximum 5 regions per photo
-- Avoid overlapping boxes as much as possible
+- Return exactly 1 region when a target is visible
+- If multiple targets are visible, choose the clearest or most prominent one
 - Include vegetation within reasonable margins
 """
 
@@ -114,6 +114,46 @@ def _normalize_regions_payload(raw_text: str) -> list[dict[str, Any]]:
     return [region for region in regions if isinstance(region, dict)]
 
 
+def _parse_detection_score(box_data: dict[str, Any]) -> float:
+    for key in ("detection_score", "score", "confidence"):
+        value = box_data.get(key)
+        if value is None:
+            continue
+
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+
+    return 0.0
+
+
+def _select_primary_region(detected_boxes: list[dict[str, Any]]) -> tuple[BoundingBox, float, float, dict[str, Any]] | None:
+    candidates: list[tuple[float, float, BoundingBox, dict[str, Any]]] = []
+
+    for box_data in detected_boxes:
+        try:
+            bbox = BoundingBox(
+                x=float(box_data.get("x", 0)),
+                y=float(box_data.get("y", 0)),
+                width=float(box_data.get("width", 1)),
+                height=float(box_data.get("height", 1)),
+            )
+        except (KeyError, ValueError, TypeError):
+            continue
+
+        detection_score = _parse_detection_score(box_data)
+        area_score = bbox.width * bbox.height
+        candidates.append((detection_score, area_score, bbox, box_data))
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    detection_score, area_score, bbox, box_data = candidates[0]
+    return bbox, detection_score, area_score, box_data
+
+
 class RegionDetectionService:
     """Detect multiple crop regions in a single photo using Gemini 2.0 Flash."""
 
@@ -153,7 +193,7 @@ class RegionDetectionService:
                 raise
 
     async def detect_regions(self, base64_image: str) -> list[HttpScanRegion]:
-        """Detect multiple crop regions from a single base64-encoded image.
+        """Detect one primary crop region from a single base64-encoded image.
 
         Args:
             base64_image: Base64-encoded image data (raw or data URL format).
@@ -183,33 +223,29 @@ class RegionDetectionService:
                 )
             ]
 
-        # Convert detected boxes to scan regions with cropped images
-        regions = []
-        for box_data in detected_boxes:
-            try:
-                bbox = BoundingBox(
-                    x=float(box_data.get("x", 0)),
-                    y=float(box_data.get("y", 0)),
-                    width=float(box_data.get("width", 1)),
-                    height=float(box_data.get("height", 1)),
+        selected_region = _select_primary_region(detected_boxes)
+        if selected_region is None:
+            logger.warning("No valid region detected by Gemini, returning full image as single region")
+            return [
+                HttpScanRegion(
+                    cropped_image_b64=base64_image,
+                    bbox=BoundingBox(x=0, y=0, width=1, height=1),
                 )
+            ]
 
-                # Create cropped image for this region
-                cropped_b64 = self._crop_image(image_bytes, bbox)
-                regions.append(
-                    HttpScanRegion(
-                        cropped_image_b64=cropped_b64,
-                        bbox=bbox,
-                    )
-                )
-            except (KeyError, ValueError, TypeError) as e:
-                logger.warning("Skipping invalid region: %s", e)
-                continue
+        bbox, detection_score, area_score, _ = selected_region
+        logger.info(
+            "Gemini detected %d regions; using one primary region (score=%.3f, area=%.3f)",
+            len(detected_boxes),
+            detection_score,
+            area_score,
+        )
 
-        return regions if regions else [
+        cropped_b64 = self._crop_image(image_bytes, bbox)
+        return [
             HttpScanRegion(
-                cropped_image_b64=base64_image,
-                bbox=BoundingBox(x=0, y=0, width=1, height=1),
+                cropped_image_b64=cropped_b64,
+                bbox=bbox,
             )
         ]
 
@@ -227,7 +263,7 @@ class RegionDetectionService:
                                 data=base64.b64decode(base64_image),
                             ),
                         ),
-                        types.Part(text="Detect all separate crop regions in this image."),
+                        types.Part(text="Detect the single most prominent crop or pest region in this image."),
                     ],
                     config=types.GenerateContentConfig(
                         system_instruction=REGION_DETECTION_SYSTEM_PROMPT,

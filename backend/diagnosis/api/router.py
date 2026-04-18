@@ -1146,8 +1146,8 @@ async def dashboard_summary(payload: DashboardSummaryRequest) -> DashboardSummar
 async def live_scan(websocket: WebSocket) -> None:
     """WebSocket endpoint for real-time plant scanning.
 
-    Each message contains all cropped regions from one camera key-frame.
-    Regions are processed CONCURRENTLY through the ADK pipeline.
+    Each message is reduced to one primary region from one camera key-frame.
+    The primary region is processed once through the ADK pipeline.
     """
     await websocket.accept()
     logger.info("Scanner connected")
@@ -1194,45 +1194,40 @@ async def live_scan(websocket: WebSocket) -> None:
                     )
                     continue
 
-            # ── Process all regions concurrently via ADK pipeline ─────
-            tasks = [
-                _run_scan_pipeline(
-                    cropped_image_b64=region.cropped_image_b64,
-                    bbox=region.bbox,
+            if len(frame_regions) > 1:
+                logger.info(
+                    "WS scan reduced %d regions to one primary region",
+                    len(frame_regions),
+                )
+                frame_regions = frame_regions[:1]
+
+            primary_region = frame_regions[0]
+
+            # ── Process the primary region through the ADK pipeline ─
+            try:
+                raw_result = await _run_scan_pipeline(
+                    cropped_image_b64=primary_region.cropped_image_b64,
+                    bbox=primary_region.bbox,
                     grid_id=frame.grid_id,
                 )
-                for region in frame_regions
-            ]
-            raw_results = await asyncio.gather(*tasks, return_exceptions=True)
+            except Exception as pipeline_exc:
+                await websocket.send_json({"error": f"Pipeline run failed: {pipeline_exc}"})
+                continue
 
-            first_error = next((item for item in raw_results if isinstance(item, Exception)), None)
-            if first_error is not None:
-                await websocket.send_json({"error": f"Pipeline run failed: {first_error}"})
+            if not isinstance(raw_result, dict):
+                await websocket.send_json({"error": "Pipeline returned invalid result payload"})
                 continue
 
             # ── Build response ────────────────────────────────────────
-            results: list[ScanResult] = []
-            for i, raw_result in enumerate(raw_results):
-                bbox = frame_regions[i].bbox
+            result = _build_scan_result(raw_result, primary_region.bbox, 0)
 
-                if not isinstance(raw_result, dict):
-                    await websocket.send_json({"error": "Pipeline returned invalid result payload"})
-                    results = []
-                    break
-
-                result = _build_scan_result(raw_result, bbox, i)
-                results.append(result)
-
-                # ── Firestore write-back for abnormal results ─────────
-                await _record_abnormal_scan(result, frame.grid_id)
-
-            if not results:
-                continue
+            # ── Firestore write-back for abnormal result ─────────────
+            await _record_abnormal_scan(result, frame.grid_id)
 
             # ── Send results ──────────────────────────────────────────
             response = ScanResponse(
                 frame_number=frame.frame_number,
-                results=results,
+                results=[result],
             )
             await websocket.send_text(response.model_dump_json())
 

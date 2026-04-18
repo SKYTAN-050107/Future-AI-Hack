@@ -406,6 +406,7 @@ export default function Dashboard() {
 
   const weatherSnapshot = weatherData || {}
   const financialSummary = summary?.financialSummary || {}
+  const weatherServiceWarning = String(weatherSnapshot.serviceWarning || '').trim()
 
   const hourlyForecast6h = useMemo(() => {
     const firstDay = Array.isArray(weatherSnapshot?.forecast)
@@ -475,6 +476,12 @@ export default function Dashboard() {
           <p className="pg-weather-wind">
             Wind {safeNumber(weatherSnapshot.windKmh)} km/h {weatherSnapshot.windDirection || '-'}
           </p>
+
+          {weatherServiceWarning ? (
+            <p style={{ marginTop: 8, fontSize: 12, lineHeight: 1.4, color: 'var(--pg-warning, #ffb454)' }}>
+              {weatherServiceWarning}
+            </p>
+          ) : null}
 
           <div style={{ marginTop: 8 }}>
             <small style={{ opacity: 0.85, display: 'block', marginBottom: 6 }}>Next 6h</small>

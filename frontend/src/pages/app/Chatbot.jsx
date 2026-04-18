@@ -19,6 +19,7 @@ import { useScanHistory } from '../../hooks/useScanHistory'
 import { useScanReports } from '../../hooks/useScanReports'
 import { useSessionContext } from '../../hooks/useSessionContext'
 import { useFarmLocationCoordinates } from '../../hooks/useFarmLocationCoordinates'
+import { downloadUrlToDataUrl, loadUserScanCapture, persistUserScanCapture, createScanCaptureId } from '../../services/scanCaptureStore'
 
 const STORAGE_KEY_PREFIX = 'pg_chatbot_conversations_v2'
 const PENDING_CAPTURE_KEY = 'pg_pending_scan_capture_v1'
@@ -285,6 +286,49 @@ function clearPendingCapture() {
   }
 }
 
+function savePendingCapture(payload) {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  try {
+    window.sessionStorage.setItem(PENDING_CAPTURE_KEY, JSON.stringify(payload))
+  } catch {
+    // Ignore storage failures and let chatbot run without auto-processing.
+  }
+}
+
+function getQueryParam(search, key) {
+  try {
+    return String(new URLSearchParams(search).get(key) || '').trim()
+  } catch {
+    return ''
+  }
+}
+
+async function hydratePendingCaptureFromFirestore(uid, captureId) {
+  const record = await loadUserScanCapture(uid, captureId)
+  if (!record?.downloadURL) {
+    return null
+  }
+
+  const base64Image = await downloadUrlToDataUrl(record.downloadURL)
+  const payload = {
+    source: record.source || 'camera',
+    captureId: String(record.captureId || captureId).trim(),
+    base64Image,
+    capturedAt: record.capturedAt || new Date().toISOString(),
+    userPrompt: record.userPrompt || 'I just captured this crop photo. Please diagnose and advise.',
+    ownerUid: record.ownerUid || uid,
+    captureDownloadURL: record.downloadURL || null,
+    captureStoragePath: record.storagePath || null,
+    gridId: record.gridId || null,
+  }
+
+  savePendingCapture(payload)
+  return payload
+}
+
 function normalizeScanStatus(result) {
   return Number(result?.severity || 0) >= 40 ? 'abnormal' : 'normal'
 }
@@ -355,39 +399,42 @@ export default function Chatbot() {
     const docsById = new Map()
     const ownerFields = ['ownerUid', 'userId', 'uid']
 
-    for (const fieldName of ownerFields) {
-      const snapshot = await getDocs(query(legacyRootCollection, where(fieldName, '==', uid)))
-      snapshot.docs.forEach((item) => {
-        docsById.set(item.id, item)
-      })
-    }
+    try {
+      for (const fieldName of ownerFields) {
+        const snapshot = await getDocs(query(legacyRootCollection, where(fieldName, '==', uid)))
+        snapshot.docs.forEach((legacyDoc) => {
+          docsById.set(legacyDoc.id, legacyDoc)
+        })
+      }
 
-    if (docsById.size === 0) {
-      migratedConversationUsersRef.current.add(uid)
-      return
-    }
+      const migrationTasks = [...docsById.values()].map(async (legacyDoc) => {
+        const legacyData = legacyDoc.data() || {}
+        const normalized = normalizeConversationRecord(legacyDoc.id, legacyData)
 
-    await Promise.all(
-      [...docsById.values()].map(async (legacyDoc) => {
-        const normalized = normalizeConversationRecord(legacyDoc.id, legacyDoc.data() || {})
-        if (normalized) {
-          await setDoc(
-            doc(db, USERS_COLLECTION, uid, CONVERSATION_COLLECTION, normalized.id),
-            {
-              id: normalized.id,
-              ownerUid: uid,
-              title: normalized.title,
-              messages: normalized.messages,
-              clientUpdatedAt: normalized.updatedAt,
-              updatedAt: serverTimestamp(),
-            },
-            { merge: true },
-          )
+        if (!normalized) {
+          return
         }
 
+        await setDoc(
+          doc(db, USERS_COLLECTION, uid, CONVERSATION_COLLECTION, normalized.id),
+          {
+            id: normalized.id,
+            ownerUid: uid,
+            title: normalized.title,
+            messages: normalized.messages,
+            clientUpdatedAt: normalized.updatedAt,
+            updatedAt: serverTimestamp(),
+          },
+          { merge: true },
+        )
+
         await deleteDoc(legacyDoc.ref)
-      }),
-    )
+      })
+
+      await Promise.all(migrationTasks)
+    } catch (migrationError) {
+      console.warn('Legacy conversation migration skipped:', migrationError)
+    }
 
     migratedConversationUsersRef.current.add(uid)
   }, [])
@@ -473,6 +520,8 @@ export default function Chatbot() {
   useEffect(() => {
     const params = new URLSearchParams(location.search)
     const fromScan = params.get('fromScan') === '1'
+    const captureIdFromUrl = getQueryParam(location.search, 'captureId')
+
     if (!fromScan || isAutoProcessing || isThinking) {
       return
     }
@@ -481,78 +530,106 @@ export default function Chatbot() {
       return
     }
 
-    const pendingCapture = loadPendingCapture()
-    if (!pendingCapture?.base64Image) {
-      autoScanTriggeredRef.current = true
-      navigate('/app/chatbot', { replace: true })
-      return
-    }
+    const uid = String(user?.uid || '').trim()
+    let cancelled = false
 
-    autoScanTriggeredRef.current = true
+    const runAutoScan = async () => {
+      let pendingCapture = loadPendingCapture()
 
-    const conversationId = activeConversationId || createConversationId()
-    if (activeConversationId !== conversationId) {
-      setActiveConversationId(conversationId)
-    }
-
-    const userText = pendingCapture.userPrompt || 'I just captured this crop photo. Please diagnose and advise.'
-    const userMessage = { role: 'user', text: userText }
-
-    setMessages((prev) => {
-      const next = [...prev, userMessage]
-      persistConversation(conversationId, next)
-      return next
-    })
-
-    setIsAutoProcessing(true)
-    setIsThinking(true)
-    navigate('/app/chatbot', { replace: true })
-
-    scanAndAskAssistant({
-      source: pendingCapture.source || 'camera',
-      gridId: pendingCapture.gridId || null,
-      userId: String(user?.uid || '').trim() || null,
-      base64Image: pendingCapture.base64Image,
-      userPrompt: userText,
-    })
-      .then(async (response) => {
+      if ((!pendingCapture?.base64Image || !pendingCapture?.captureId) && captureIdFromUrl && uid) {
         try {
-          await saveScanReport({
-            ...response,
-            ownerUid: String(user?.uid || '').trim() || null,
-            source: pendingCapture.source || 'camera',
-            status: normalizeScanStatus(response),
+          pendingCapture = await hydratePendingCaptureFromFirestore(uid, captureIdFromUrl)
+        } catch (captureLoadError) {
+          console.warn('Unable to hydrate scan capture from Firestore:', captureLoadError)
+        }
+      }
+
+      if (cancelled) {
+        return
+      }
+
+      if (!pendingCapture?.base64Image) {
+        autoScanTriggeredRef.current = true
+        navigate('/app/chatbot', { replace: true })
+        return
+      }
+
+      autoScanTriggeredRef.current = true
+
+      const conversationId = activeConversationId || createConversationId()
+      if (activeConversationId !== conversationId) {
+        setActiveConversationId(conversationId)
+      }
+
+      const userText = pendingCapture.userPrompt || 'I just captured this crop photo. Please diagnose and advise.'
+      const userMessage = { role: 'user', text: userText }
+
+      setMessages((prev) => {
+        const next = [...prev, userMessage]
+        persistConversation(conversationId, next)
+        return next
+      })
+
+      setIsAutoProcessing(true)
+      setIsThinking(true)
+      navigate('/app/chatbot', { replace: true })
+
+      scanAndAskAssistant({
+        source: pendingCapture.source || 'camera',
+        gridId: pendingCapture.gridId || null,
+        userId: uid || null,
+        base64Image: pendingCapture.base64Image,
+        userPrompt: userText,
+      })
+        .then(async (response) => {
+          try {
+            await saveScanReport({
+              ...response,
+              ownerUid: uid || null,
+              source: pendingCapture.source || 'camera',
+              status: normalizeScanStatus(response),
+              captureId: pendingCapture.captureId || captureIdFromUrl || null,
+              captureDownloadURL: pendingCapture.captureDownloadURL || null,
+              captureStoragePath: pendingCapture.captureStoragePath || null,
+              captureCapturedAt: pendingCapture.capturedAt || null,
+            })
+          } catch {
+            // Keep chat flow smooth even when persistence fails.
+          }
+
+          const diagnosisLine = `Diagnosis: ${response.disease} | Severity ${response.severity}% | Confidence ${response.confidence}% | Risk ${response.spread_risk}.`
+          const assistantText = `${response.assistant_reply}\n\n${diagnosisLine}`
+
+          const aiMessage = { role: 'ai', text: assistantText }
+          setMessages((prev) => {
+            const next = [...prev, aiMessage]
+            persistConversation(conversationId, next)
+            return next
           })
-        } catch {
-          // Keep chat flow smooth even when persistence fails.
-        }
-
-        const diagnosisLine = `Diagnosis: ${response.disease} | Severity ${response.severity}% | Confidence ${response.confidence}% | Risk ${response.spread_risk}.`
-        const assistantText = `${response.assistant_reply}\n\n${diagnosisLine}`
-
-        const aiMessage = { role: 'ai', text: assistantText }
-        setMessages((prev) => {
-          const next = [...prev, aiMessage]
-          persistConversation(conversationId, next)
-          return next
         })
-      })
-      .catch((scanError) => {
-        const aiMessage = {
-          role: 'ai',
-          text: scanError?.message || 'I could not process that photo right now. Please capture again and retry.',
-        }
-        setMessages((prev) => {
-          const next = [...prev, aiMessage]
-          persistConversation(conversationId, next)
-          return next
+        .catch((scanError) => {
+          const aiMessage = {
+            role: 'ai',
+            text: scanError?.message || 'I could not process that photo right now. Please capture again and retry.',
+          }
+          setMessages((prev) => {
+            const next = [...prev, aiMessage]
+            persistConversation(conversationId, next)
+            return next
+          })
         })
-      })
-      .finally(() => {
-        clearPendingCapture()
-        setIsAutoProcessing(false)
-        setIsThinking(false)
-      })
+        .finally(() => {
+          clearPendingCapture()
+          setIsAutoProcessing(false)
+          setIsThinking(false)
+        })
+    }
+
+    runAutoScan()
+
+    return () => {
+      cancelled = true
+    }
   }, [
     activeConversationId,
     isAutoProcessing,
@@ -560,6 +637,7 @@ export default function Chatbot() {
     location.search,
     navigate,
     saveScanReport,
+    user?.uid,
   ])
 
   const persistConversation = (conversationId, nextMessages) => {
@@ -681,9 +759,30 @@ export default function Chatbot() {
 
     try {
       const base64Image = await fileToUploadDataUrl(file)
+      const uid = String(user?.uid || '').trim()
+      const captureId = createScanCaptureId()
+      let persistedCapture = { captureId, persisted: false, downloadURL: null, storagePath: null }
+
+      if (uid) {
+        try {
+          persistedCapture = await persistUserScanCapture({
+            uid,
+            captureId,
+            base64Image,
+            capturedAt: new Date().toISOString(),
+            source: 'upload',
+            userPrompt,
+            gridId: reports[0]?.gridId || reports[0]?.zone || null,
+            conversationId,
+          })
+        } catch (captureError) {
+          console.warn('Failed to persist uploaded scan capture:', captureError)
+        }
+      }
+
       const response = await scanAndAskAssistant({
         source: 'upload',
-        userId: String(user?.uid || '').trim() || null,
+        userId: uid || null,
         base64Image,
         userPrompt,
       })
@@ -691,9 +790,13 @@ export default function Chatbot() {
       try {
         await saveScanReport({
           ...response,
-          ownerUid: String(user?.uid || '').trim() || null,
+          ownerUid: uid || null,
           source: 'upload',
           status: normalizeScanStatus(response),
+          captureId: persistedCapture.captureId,
+          captureDownloadURL: persistedCapture.downloadURL || null,
+          captureStoragePath: persistedCapture.storagePath || null,
+          captureCapturedAt: new Date().toISOString(),
         })
       } catch {
         // Keep chat response flow even if report persistence fails.
