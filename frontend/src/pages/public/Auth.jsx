@@ -315,11 +315,11 @@ export default function Auth() {
 
           {/* Header */}
           <div className="pg-auth-header">
-            <div className="pg-auth-logo-circle">
-              <span className="pg-auth-logo-text">PG</span>
+            <div className="pg-auth-logo-circle" style={{ overflow: 'hidden', border: 'none', background: 'transparent' }}>
+              <img src="/futurehack.png" alt="AcreZen" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
             </div>
             <h1 className="pg-auth-title">
-              {isLogin ? 'Welcome Back' : 'Join PadiGuard AI'}
+              {isLogin ? 'Welcome Back' : 'Join AcreZen'}
             </h1>
             <p className="pg-auth-subtitle">
               {isLogin

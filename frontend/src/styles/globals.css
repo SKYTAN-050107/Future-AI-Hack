@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Sora:wght@600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Caveat:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=Sora:wght@600;700;800&display=swap');
 
 :root {
   --bg: #F2F2F2;
@@ -3642,3 +3642,84 @@ body {
     animation: none !important;
   }
 }
+
+/* ── AcreZen Splash Screen (iOS Glass) ── */
+.pg-ios-glass-bg {
+  /* An iOS style colourful abstract background, here using a vibrant gradient */
+  background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);
+  position: relative;
+  overflow: hidden;
+}
+
+.pg-ios-glass-bg::before {
+  content: "";
+  position: absolute;
+  top: -50%; left: -50%; width: 200%; height: 200%;
+  background: radial-gradient(circle at 50% 50%, rgba(255,255,255,0.4) 0%, rgba(255,255,255,0) 50%),
+              radial-gradient(circle at 10% 90%, rgba(88, 222, 165, 0.4) 0%, rgba(255,255,255,0) 40%),
+              radial-gradient(circle at 90% 10%, rgba(255, 149, 149, 0.4) 0%, rgba(255,255,255,0) 40%);
+  animation: fluid-bg 20s infinite alternate;
+  z-index: 0;
+}
+
+@keyframes fluid-bg {
+  0% { transform: scale(1) rotate(0deg); }
+  100% { transform: scale(1.1) rotate(15deg); }
+}
+
+.pg-glass-panel {
+  /* Apple iOS Glass effect */
+  background: rgba(255, 255, 255, 0.3);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.15);
+  border-radius: 28px;
+  z-index: 1 !important; /* Above the fluid background */
+}
+
+.pg-launch-logo-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.pg-launch-logo-img {
+  width: 96px;
+  height: 96px;
+  object-fit: cover;
+  border-radius: 22px; /* iOS icon curve roughly */
+  background: transparent;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.1);
+}
+
+.pg-caveat-title {
+  font-family: 'Caveat', cursive !important;
+  font-size: 3.5rem !important;
+  color: #2b4f3b !important; /* Some dark rich green to match nature/zen */
+  margin: -10px 0 0 0 !important;
+  text-shadow: 1px 1px 2px rgba(255,255,255,0.5);
+  
+  /* Left-to-right drawing reveal animation */
+  animation: draw-text 1.5s cubic-bezier(0.2, 0.8, 0.2, 1) forwards !important;
+  opacity: 0;
+  clip-path: polygon(-10% -10%, -10% -10%, -10% 120%, -10% 120%);
+  display: inline-block;
+}
+
+@keyframes draw-text {
+  0% {
+    opacity: 0;
+    clip-path: polygon(-10% -10%, -10% -10%, -10% 120%, -10% 120%);
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 1;
+    clip-path: polygon(-10% -10%, 120% -10%, 120% 120%, -10% 120%);
+  }
+}
+
+
