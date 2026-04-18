@@ -160,15 +160,15 @@ export default function Profile() {
         align="center"
       />
 
-      <div className="pg-profile-hero">
-        <div className="pg-profile-avatar" aria-hidden="true">
-          <IconUser className="pg-icon" />
+      <div className="pg-profile-hero pg-ios-glass-bg pg-profile-hero-glass">
+        <div className="pg-profile-avatar pg-glass-panel" aria-hidden="true">
+          <IconUser className="pg-icon pg-avatar-icon" />
         </div>
-        <h2 className="pg-profile-name">{displayName}</h2>
-        <p className="pg-profile-email">{email}</p>
+        <h2 className="pg-profile-name pg-glass-text">{displayName}</h2>
+        <p className="pg-profile-email pg-glass-text">{email}</p>
       </div>
 
-      <article className="pg-card">
+      <article className="pg-card pg-glass-panel pg-profile-card">
         <h2>Farm Details</h2>
         <div className="pg-profile-details">
           <div className="pg-profile-detail-row">
@@ -185,13 +185,7 @@ export default function Profile() {
               <span className="pg-profile-detail-value">{location}</span>
             </div>
           </div>
-          <div className="pg-profile-detail-row">
-            <IconChart className="pg-icon" />
-            <div>
-              <span className="pg-profile-detail-label">Rice Variety</span>
-              <span className="pg-profile-detail-value">{variety}</span>
-            </div>
-          </div>
+
           <div className="pg-profile-detail-row">
             <IconUser className="pg-icon" />
             <div>
@@ -202,7 +196,7 @@ export default function Profile() {
         </div>
       </article>
 
-      <article className="pg-card">
+      <article className="pg-card pg-glass-panel pg-profile-card">
         <h2>Crop Summary</h2>
 
         {cropError ? <p>{cropError}</p> : null}
@@ -241,7 +235,7 @@ export default function Profile() {
         </div>
       </article>
 
-      <article className="pg-card">
+      <article className="pg-card pg-glass-panel pg-profile-card" style={{ marginBottom: 40 }}>
         <h2>Account</h2>
         <p style={{ marginTop: 0 }}>You can update your farm address anytime.</p>
         <div className="pg-cta-row">

@@ -284,7 +284,7 @@ export default function Auth() {
   }
 
   return (
-    <div className="pg-auth-page">
+    <div className="pg-auth-page pg-ios-glass-bg">
       {/* Back button */}
       <button
         className="pg-auth-back-btn"
@@ -295,7 +295,7 @@ export default function Auth() {
       </button>
 
       <div className="pg-auth-container">
-        <div className="pg-auth-card-glass">
+        <div className="pg-auth-card-glass pg-glass-panel">
 
           {/* Sign In / Sign Up toggle */}
           <div className="pg-auth-toggle-wrapper">

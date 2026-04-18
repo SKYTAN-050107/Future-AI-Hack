@@ -452,7 +452,7 @@ body {
   overflow: hidden;
 }
 
-.pg-progress > span {
+.pg-progress>span {
   display: block;
   height: 100%;
   border-radius: inherit;
@@ -556,28 +556,28 @@ body {
   animation: none;
 }
 
-.pg-page > * {
+.pg-page>* {
   opacity: 0;
   animation: item-rise 240ms ease forwards;
 }
 
-.pg-page > *:nth-child(1) {
+.pg-page>*:nth-child(1) {
   animation-delay: 20ms;
 }
 
-.pg-page > *:nth-child(2) {
+.pg-page>*:nth-child(2) {
   animation-delay: 50ms;
 }
 
-.pg-page > *:nth-child(3) {
+.pg-page>*:nth-child(3) {
   animation-delay: 80ms;
 }
 
-.pg-page > *:nth-child(4) {
+.pg-page>*:nth-child(4) {
   animation-delay: 110ms;
 }
 
-.pg-page > *:nth-child(5) {
+.pg-page>*:nth-child(5) {
   animation-delay: 140ms;
 }
 
@@ -1549,6 +1549,7 @@ body {
     opacity: 0;
     transform: translateY(-6px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -1699,7 +1700,9 @@ body {
 }
 
 @keyframes pgSpin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .pg-weather-ai-error {
@@ -2551,8 +2554,18 @@ body {
 }
 
 @keyframes pg-typing-bounce {
-  0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
-  30% { opacity: 1; transform: translateY(-4px); }
+
+  0%,
+  60%,
+  100% {
+    opacity: 0.3;
+    transform: translateY(0);
+  }
+
+  30% {
+    opacity: 1;
+    transform: translateY(-4px);
+  }
 }
 
 /* Quick prompts */
@@ -3053,11 +3066,13 @@ body {
 }
 
 @keyframes pg-chatbot-typing {
+
   0%,
   100% {
     transform: translateY(0);
     opacity: 0.35;
   }
+
   40% {
     transform: translateY(-3px);
     opacity: 1;
@@ -3269,7 +3284,7 @@ body {
   flex-shrink: 0;
 }
 
-.pg-profile-detail-row > div {
+.pg-profile-detail-row>div {
   flex: 1;
   display: flex;
   justify-content: space-between;
@@ -3479,10 +3494,12 @@ body {
     transform: scale(0.9);
     opacity: 0.9;
   }
+
   50% {
     transform: scale(1);
     opacity: 1;
   }
+
   100% {
     transform: scale(0.9);
     opacity: 0.9;
@@ -3494,6 +3511,7 @@ body {
     transform: translateY(10px);
     opacity: 0;
   }
+
   to {
     transform: translateY(0);
     opacity: 1;
@@ -3505,6 +3523,7 @@ body {
     transform: translateY(10px);
     opacity: 0;
   }
+
   to {
     transform: translateY(0);
     opacity: 1;
@@ -3516,10 +3535,12 @@ body {
     transform: scale(1);
     box-shadow: 0 0 0 0 rgba(var(--secondary-rgb), 0.45);
   }
+
   70% {
     transform: scale(1);
     box-shadow: 0 0 0 12px rgba(var(--secondary-rgb), 0);
   }
+
   100% {
     transform: scale(1);
     box-shadow: 0 0 0 0 rgba(var(--secondary-rgb), 0);
@@ -3530,9 +3551,11 @@ body {
   0% {
     box-shadow: 0 10px 24px rgba(var(--primary-rgb), 0.34);
   }
+
   50% {
     box-shadow: 0 12px 28px rgba(var(--secondary-rgb), 0.4);
   }
+
   100% {
     box-shadow: 0 10px 24px rgba(var(--primary-rgb), 0.34);
   }
@@ -3543,6 +3566,7 @@ body {
     transform: translateY(24px);
     opacity: 0;
   }
+
   to {
     transform: translateY(0);
     opacity: 1;
@@ -3554,6 +3578,7 @@ body {
     opacity: 0;
     transform: translateX(14px) translateY(6px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -3565,6 +3590,7 @@ body {
     opacity: 0;
     transform: translateX(-14px) translateY(6px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -3576,6 +3602,7 @@ body {
     opacity: 0;
     transform: translateY(10px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -3625,8 +3652,9 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
+
   .pg-route-stage,
-  .pg-page > *,
+  .pg-page>*,
   .pg-launch-title,
   .pg-launch-subtitle,
   .pg-sheet,
@@ -3635,9 +3663,11 @@ body {
   .pg-launch {
     animation: none !important;
   }
-  .pg-page > * {
+
+  .pg-page>* {
     opacity: 1 !important;
   }
+
   .pg-skeleton::after {
     animation: none !important;
   }
@@ -3654,17 +3684,25 @@ body {
 .pg-ios-glass-bg::before {
   content: "";
   position: absolute;
-  top: -50%; left: -50%; width: 200%; height: 200%;
-  background: radial-gradient(circle at 50% 50%, rgba(255,255,255,0.4) 0%, rgba(255,255,255,0) 50%),
-              radial-gradient(circle at 10% 90%, rgba(88, 222, 165, 0.4) 0%, rgba(255,255,255,0) 40%),
-              radial-gradient(circle at 90% 10%, rgba(255, 149, 149, 0.4) 0%, rgba(255,255,255,0) 40%);
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0) 50%),
+    radial-gradient(circle at 10% 90%, rgba(88, 222, 165, 0.4) 0%, rgba(255, 255, 255, 0) 40%),
+    radial-gradient(circle at 90% 10%, rgba(255, 149, 149, 0.4) 0%, rgba(255, 255, 255, 0) 40%);
   animation: fluid-bg 20s infinite alternate;
   z-index: 0;
 }
 
 @keyframes fluid-bg {
-  0% { transform: scale(1) rotate(0deg); }
-  100% { transform: scale(1.1) rotate(15deg); }
+  0% {
+    transform: scale(1) rotate(0deg);
+  }
+
+  100% {
+    transform: scale(1.1) rotate(15deg);
+  }
 }
 
 .pg-glass-panel {
@@ -3675,7 +3713,8 @@ body {
   border: 1px solid rgba(255, 255, 255, 0.5);
   box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.15);
   border-radius: 28px;
-  z-index: 1 !important; /* Above the fluid background */
+  z-index: 1 !important;
+  /* Above the fluid background */
 }
 
 .pg-launch-logo-container {
@@ -3689,18 +3728,20 @@ body {
   width: 96px;
   height: 96px;
   object-fit: cover;
-  border-radius: 22px; /* iOS icon curve roughly */
+  border-radius: 22px;
+  /* iOS icon curve roughly */
   background: transparent;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.1);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
 }
 
 .pg-caveat-title {
   font-family: 'Caveat', cursive !important;
   font-size: 3.5rem !important;
-  color: #2b4f3b !important; /* Some dark rich green to match nature/zen */
+  color: #2b4f3b !important;
+  /* Some dark rich green to match nature/zen */
   margin: -10px 0 0 0 !important;
-  text-shadow: 1px 1px 2px rgba(255,255,255,0.5);
-  
+  text-shadow: 1px 1px 2px rgba(255, 255, 255, 0.5);
+
   /* Left-to-right drawing reveal animation */
   animation: draw-text 1.5s cubic-bezier(0.2, 0.8, 0.2, 1) forwards !important;
   opacity: 0;
@@ -3713,13 +3754,103 @@ body {
     opacity: 0;
     clip-path: polygon(-10% -10%, -10% -10%, -10% 120%, -10% 120%);
   }
+
   20% {
     opacity: 1;
   }
+
   100% {
     opacity: 1;
     clip-path: polygon(-10% -10%, 120% -10%, 120% 120%, -10% 120%);
   }
 }
 
+/* ── Dark Mode Overrides for Glass effect ── */
+.dark .pg-ios-glass-bg {
+  background: linear-gradient(135deg, #091a13 0%, #16162a 100%);
+}
 
+.dark .pg-ios-glass-bg::before {
+  background: radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0) 50%),
+    radial-gradient(circle at 10% 90%, rgba(88, 222, 165, 0.2) 0%, rgba(255, 255, 255, 0) 40%),
+    radial-gradient(circle at 90% 10%, rgba(255, 149, 149, 0.15) 0%, rgba(255, 255, 255, 0) 40%);
+}
+
+.dark .pg-glass-panel {
+  background: rgba(30, 30, 30, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.6);
+}
+
+.dark .pg-caveat-title {
+  color: #a8edea !important;
+  text-shadow: 1px 1px 3px rgba(0, 0, 0, 0.8);
+}
+
+/* ── Dark Mode Overrides for Weather Widget ── */
+.dark .pg-weather-card {
+  border-color: rgba(6, 182, 212, 0.3);
+  background: linear-gradient(165deg, #082f49, #0f172a);
+}
+
+.dark .pg-weather-card .pg-icon {
+  color: #38bdf8;
+}
+
+.dark .pg-weather-primary strong,
+.dark .pg-weather-primary span,
+.dark .pg-weather-wind,
+.dark .pg-weather-card .pg-dashboard-card-title,
+.dark .pg-weather-card small {
+  color: #e0f2fe;
+}
+
+/* ── Profile Glass UI Extensions ── */
+.pg-profile-hero-glass {
+  border-radius: 28px !important;
+  padding: 36px 20px !important;
+  margin-bottom: 28px !important;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12) !important;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+}
+.dark .pg-profile-hero-glass {
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4) !important;
+}
+
+.pg-glass-text {
+  color: #0F4E59 !important;
+  text-shadow: none !important;
+  position: relative;
+  z-index: 1;
+}
+.dark .pg-glass-text {
+  color: #fff !important;
+  text-shadow: 0 2px 5px rgba(0, 0, 0, 0.6) !important;
+}
+
+.pg-profile-hero-glass .pg-avatar-icon {
+  width: 42px;
+  height: 42px;
+  color: #0F4E59;
+}
+.dark .pg-profile-hero-glass .pg-avatar-icon {
+  color: #e0f2fe;
+}
+
+.pg-profile-hero-glass .pg-profile-avatar {
+  background: rgba(255, 255, 255, 0.3) !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1) !important;
+  border: 1px solid rgba(255, 255, 255, 0.6) !important;
+  position: relative;
+  z-index: 1;
+}
+.dark .pg-profile-hero-glass .pg-profile-avatar {
+  background: rgba(0, 0, 0, 0.3) !important;
+  border-color: rgba(255, 255, 255, 0.2) !important;
+}
+
+.pg-profile-card {
+  margin-bottom: 24px;
+  border-radius: 20px !important;
+}
