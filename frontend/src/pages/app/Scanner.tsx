@@ -93,7 +93,7 @@ export default function Scanner() {
             }
 
             setCameraState('ready')
-            setStatusMessage('Camera ready. Hold leaf inside guide frame.')
+            setStatusMessage('Camera ready. Point the lens at the crop.')
           }
 
           videoRef.current.play().catch(() => {
@@ -229,10 +229,6 @@ export default function Scanner() {
           <IconSparkles className="pg-icon" />
         </button>
       </header>
-
-      <div className="pg-scanner-viewfinder" aria-hidden="true">
-        <div className="pg-scanner-viewfinder-frame" />
-      </div>
 
       <footer className="pg-scanner-bottom-overlay">
         <p className="pg-scanner-status">

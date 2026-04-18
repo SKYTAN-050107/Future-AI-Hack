@@ -23,6 +23,55 @@ function formatCaptureTime(date) {
   }).format(date)
 }
 
+function selectPrimaryDetection(results, frameNumber) {
+  if (!Array.isArray(results) || results.length === 0) {
+    return null
+  }
+
+  const candidates = results
+    .map((item, index) => ({
+      id: `${frameNumber || 0}-${index}`,
+      cropType: String(item?.cropType || 'Unknown'),
+      disease: String(item?.disease || 'Unknown'),
+      severity: String(item?.severity || 'Low'),
+      bbox: item?.bbox || { x: 0, y: 0, width: 0, height: 0 },
+    }))
+    .filter((item) => Number(item.bbox?.width || 0) > 0 && Number(item.bbox?.height || 0) > 0)
+
+  if (candidates.length === 0) {
+    return null
+  }
+
+  return candidates.reduce((best, candidate) => {
+    if (!best) {
+      return candidate
+    }
+
+    const candidateScore = Number(candidate.bbox?.detection_score || 0)
+    const bestScore = Number(best.bbox?.detection_score || 0)
+    if (candidateScore !== bestScore) {
+      return candidateScore > bestScore ? candidate : best
+    }
+
+    const candidateArea = Number(candidate.bbox?.width || 0) * Number(candidate.bbox?.height || 0)
+    const bestArea = Number(best.bbox?.width || 0) * Number(best.bbox?.height || 0)
+    if (candidateArea !== bestArea) {
+      return candidateArea > bestArea ? candidate : best
+    }
+
+    return best
+  }, null)
+}
+
+function formatDetectionSummary(detection) {
+  if (!detection) {
+    return 'No crop or pest found in current frame.'
+  }
+
+  const cropType = detection.cropType && detection.cropType !== 'Unknown' ? detection.cropType : 'Target'
+  return `${cropType} • ${detection.disease} • ${detection.severity}`
+}
+
 function captureFrameAsDataUrl(videoElement, options = {}) {
   const maxWidth = Number(options.maxWidth || 960)
   const quality = Number(options.quality || 0.85)
@@ -157,7 +206,7 @@ export default function Scanner() {
       if (!isMountedRef.current) {
         return
       }
-      setStatusMessage('Realtime diagnosis active. Hold plants inside camera view.')
+      setStatusMessage('Realtime diagnosis active. Tracking one plant or pest at a time.')
       stopLiveLoop()
       frameTimerRef.current = window.setInterval(sendLiveFrame, LIVE_FRAME_INTERVAL_MS)
       sendLiveFrame()
@@ -176,23 +225,14 @@ export default function Scanner() {
           return
         }
 
-        const nextDetections = Array.isArray(payload?.results)
-          ? payload.results
-              .map((item, index) => ({
-                id: `${payload.frame_number || 0}-${index}`,
-                disease: String(item?.disease || 'Unknown'),
-                severity: String(item?.severity || 'Low'),
-                bbox: item?.bbox || { x: 0, y: 0, width: 0, height: 0 },
-              }))
-              .filter((item) => Number(item.bbox?.width || 0) > 0 && Number(item.bbox?.height || 0) > 0)
-          : []
+        const primaryDetection = selectPrimaryDetection(payload?.results, payload?.frame_number)
 
-        setLiveDetections(nextDetections)
-        if (nextDetections.length > 0) {
-          setStatusMessage(`Detected ${nextDetections.length} region(s) in live frame.`)
-        } else {
-          setStatusMessage('Realtime diagnosis active. No crop region found in current frame.')
-        }
+        setLiveDetections(primaryDetection ? [primaryDetection] : [])
+        setStatusMessage(
+          primaryDetection
+            ? `Tracking one target: ${formatDetectionSummary(primaryDetection)}`
+            : 'Realtime diagnosis active. No crop or pest found in current frame.',
+        )
       } catch {
         setStatusMessage('Invalid realtime response from diagnosis backend.')
       }
@@ -252,7 +292,7 @@ export default function Scanner() {
             }
 
             setCameraState('ready')
-            setStatusMessage('Camera ready. Starting realtime diagnosis...')
+            setStatusMessage('Camera ready. Point the lens at a plant or pest.')
           }
 
           videoRef.current.play().catch(() => {
@@ -378,28 +418,35 @@ export default function Scanner() {
           playsInline
         />
 
-        <div className="pg-scanner-detection-overlay" aria-hidden="true">
-          {liveDetections.map((detection) => {
-            const x = Math.max(0, Math.min(1, Number(detection.bbox?.x || 0)))
-            const y = Math.max(0, Math.min(1, Number(detection.bbox?.y || 0)))
-            const width = Math.max(0, Math.min(1 - x, Number(detection.bbox?.width || 0)))
-            const height = Math.max(0, Math.min(1 - y, Number(detection.bbox?.height || 0)))
-            return (
-              <div
-                key={detection.id}
-                className="pg-scanner-bbox"
-                style={{
-                  left: `${x * 100}%`,
-                  top: `${y * 100}%`,
-                  width: `${width * 100}%`,
-                  height: `${height * 100}%`,
-                }}
-              >
-                <span className="pg-scanner-bbox-label">{`${detection.disease} • ${detection.severity}`}</span>
-              </div>
-            )
-          })}
-        </div>
+        {liveDetections.length > 0 ? (
+          <div className="pg-scanner-detection-overlay" aria-hidden="true">
+            {liveDetections.map((detection) => {
+              const x = Math.max(0, Math.min(1, Number(detection.bbox?.x || 0)))
+              const y = Math.max(0, Math.min(1, Number(detection.bbox?.y || 0)))
+              const width = Math.max(0, Math.min(1 - x, Number(detection.bbox?.width || 0)))
+              const height = Math.max(0, Math.min(1 - y, Number(detection.bbox?.height || 0)))
+
+              return (
+                <div
+                  key={detection.id}
+                  className="pg-scanner-bbox"
+                  style={{
+                    left: `${x * 100}%`,
+                    top: `${y * 100}%`,
+                    width: `${width * 100}%`,
+                    height: `${height * 100}%`,
+                  }}
+                >
+                  <span className="pg-scanner-bbox-label">
+                    {detection.cropType && detection.cropType !== 'Unknown'
+                      ? `${detection.cropType} • ${detection.disease}`
+                      : `${detection.disease} • ${detection.severity}`}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        ) : null}
 
         {cameraState !== 'ready' ? (
           <div className="pg-scanner-loading" role="status" aria-live="polite">
@@ -431,10 +478,6 @@ export default function Scanner() {
           </button>
         </div>
       </header>
-
-      <div className="pg-scanner-viewfinder" aria-hidden="true">
-        <div className="pg-scanner-viewfinder-frame" />
-      </div>
 
       <footer className="pg-scanner-bottom-overlay">
         <p className="pg-scanner-status">
