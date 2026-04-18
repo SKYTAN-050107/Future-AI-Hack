@@ -70,6 +70,7 @@ Firestore:
 - `FIRESTORE_GRID_COLLECTION`
 - `FIRESTORE_REPORT_COLLECTION`
 - `FIRESTORE_CANDIDATE_COLLECTION`
+- `FIRESTORE_PESTICIDE_COLLECTION`
 
 External services:
 
@@ -110,6 +111,28 @@ Optional flags:
 - `--collection candidateMetadata`
 - `--id-field id`
 - `--dry-run`
+
+## Pesticide Catalog Priority
+
+Photo diagnosis treatment guidance now resolves pesticide recommendations in this order:
+
+1. `pesticideCatalog` in Firestore (configurable by `FIRESTORE_PESTICIDE_COLLECTION`).
+2. Diagnosis fallback guidance from pipeline defaults when no catalog match is found.
+
+When a catalog match exists, the scan result includes:
+
+- `recommendedPesticides`
+- `recommendationSource` (`pesticideCatalog`)
+- `matchedPestName`
+
+The `/api/scan` and `/api/assistant/scan` responses expose these fields so frontend and assistant layers can keep recommendations consistent.
+
+To import or refresh the catalog from CSV:
+
+```bash
+cd backend/diagnosis
+python scripts/import_pesticide_catalog.py --input gs://disease_dataset_pd/Pesticide_Dataset/Pesticides.csv
+```
 
 ## Module Layout
 

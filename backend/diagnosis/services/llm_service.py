@@ -62,6 +62,7 @@ Rules:
 - Be concise, clear, and actionable.
 - Mention what was detected and confidence context in plain language.
 - Do not hallucinate unavailable lab data.
+- If recommendationSource is pesticideCatalog and recommendedPesticides is present, keep those pesticide names as the primary recommendation and do not replace them.
 - If disease is Apple Scab, clearly mention Apple Scab management priorities.
 """
 
@@ -429,6 +430,17 @@ def build_farmer_fallback_dialogue(
     severity_score = _safe_float(scan_result.get("severityScore", 0.0), 0.0)
     treatment_plan = str(scan_result.get("treatmentPlan", "Consult agrologist")).strip()
     survival_prob = _safe_float(scan_result.get("survivalProb", 0.0), 0.0)
+    recommended_raw = scan_result.get("recommendedPesticides", scan_result.get("recommended_pesticides", []))
+    if not isinstance(recommended_raw, list):
+        recommended_raw = []
+    recommended_pesticides = [
+        str(item).strip()
+        for item in recommended_raw
+        if str(item).strip()
+    ]
+    recommendation_source = str(
+        scan_result.get("recommendationSource", scan_result.get("recommendation_source", "")),
+    ).strip().lower()
     disease_normalized = disease.lower()
 
     if language == "ms":
@@ -442,6 +454,12 @@ def build_farmer_fallback_dialogue(
             disease_label = "Tidak Konklusif"
             plan_text = (
                 "Keputusan belum jelas. Ambil semula gambar close-up kawasan simptom dalam pencahayaan baik sebelum pilih rawatan."
+            )
+        elif recommendation_source == "pesticidecatalog" and recommended_pesticides:
+            plan_text = (
+                "Rujukan katalog racun: "
+                + ", ".join(recommended_pesticides)
+                + ". Ikut kadar label dan tempoh pra-tuai sebelum aplikasi."
             )
 
         reason_suffix = _format_reason_suffix(language, reason)
@@ -465,6 +483,12 @@ def build_farmer_fallback_dialogue(
         disease_label = "Inconclusive"
         plan_text = (
             "The result is not clear yet. Retake a close-up photo of the symptom area in good lighting before selecting treatment."
+        )
+    elif recommendation_source == "pesticidecatalog" and recommended_pesticides:
+        plan_text = (
+            "Catalog-based pesticides: "
+            + ", ".join(recommended_pesticides)
+            + ". Follow product label rate and pre-harvest interval before application."
         )
 
     reason_suffix = _format_reason_suffix(language, reason)

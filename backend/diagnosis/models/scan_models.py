@@ -53,6 +53,9 @@ class ScanResult(BaseModel):
     treatmentPlan: str = Field(default="None")
     survivalProb: float = Field(default=1.0, ge=0.0, le=1.0)
     is_abnormal: bool = Field(default=False)
+    recommendedPesticides: list[str] = Field(default_factory=list)
+    recommendationSource: str | None = None
+    matchedPestName: str | None = None
     bbox: BoundingBox
 
 
@@ -82,6 +85,9 @@ class HttpScanResponse(BaseModel):
     zone: str | None = None
     crop_type: str = Field(default="Unknown")
     treatment_plan: str = Field(default="Consult Agrologist")
+    recommended_pesticides: list[str] = Field(default_factory=list)
+    recommendation_source: str | None = None
+    matched_pest_name: str | None = None
 
 
 class HttpScanAssistantRequest(HttpScanRequest):

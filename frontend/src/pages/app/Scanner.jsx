@@ -1,13 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import mapboxgl from 'mapbox-gl'
+import * as turf from '@turf/turf'
 import { IconArrowLeft, IconSparkles } from '../../components/icons/UiIcons'
 import { useGrids } from '../../hooks/useGrids'
 import { useSessionContext } from '../../hooks/useSessionContext'
 import { createScanCaptureId, persistUserScanCapture } from '../../services/scanCaptureStore'
+import 'mapbox-gl/dist/mapbox-gl.css'
 
 const PENDING_CAPTURE_KEY = 'pg_pending_scan_capture_v1'
 const LIVE_FRAME_INTERVAL_MS = 1300
 const DEFAULT_CAPTURE_PROMPT = 'I just took this photo. Please analyze it and tell me what to do next.'
+
+const DEFAULT_ZONE_MAP_STYLE = 'mapbox://styles/mapbox/satellite-streets-v12'
 
 function resolveWsScanUrl() {
   if (typeof window === 'undefined') {
@@ -108,6 +113,59 @@ function savePendingCapture(payload) {
   }
 }
 
+function isFiniteCoordinatePair(position) {
+  return Number.isFinite(Number(position?.lat)) && Number.isFinite(Number(position?.lng))
+}
+
+function normalizeZonePosition(position) {
+  if (!isFiniteCoordinatePair(position)) {
+    return null
+  }
+
+  return {
+    lat: Number(position.lat),
+    lng: Number(position.lng),
+  }
+}
+
+function deriveZonePositionLabel(zoneGeometry, lngLatPoint) {
+  try {
+    const feature = turf.feature(zoneGeometry)
+    const centroid = turf.centroid(feature)
+    const [centerLng, centerLat] = centroid.geometry.coordinates
+    const [minLng, minLat, maxLng, maxLat] = turf.bbox(feature)
+
+    const dx = Number(lngLatPoint.lng) - Number(centerLng)
+    const dy = Number(lngLatPoint.lat) - Number(centerLat)
+
+    const lngThreshold = Math.max((Number(maxLng) - Number(minLng)) * 0.15, 0.00001)
+    const latThreshold = Math.max((Number(maxLat) - Number(minLat)) * 0.15, 0.00001)
+
+    const horizontal = dx > lngThreshold ? 'East' : dx < -lngThreshold ? 'West' : ''
+    const vertical = dy > latThreshold ? 'North' : dy < -latThreshold ? 'South' : ''
+
+    const label = `${vertical}${horizontal}`.trim()
+    return label || 'Center'
+  } catch {
+    return 'Marked point'
+  }
+}
+
+function getZoneMapSourceData(zoneGeometry, gridId) {
+  return {
+    type: 'FeatureCollection',
+    features: [
+      {
+        type: 'Feature',
+        properties: {
+          gridId,
+        },
+        geometry: zoneGeometry,
+      },
+    ],
+  }
+}
+
 export default function Scanner() {
   const navigate = useNavigate()
   const { user } = useSessionContext()
@@ -120,6 +178,9 @@ export default function Scanner() {
   const frameCounterRef = useRef(0)
   const requestInFlightRef = useRef(false)
   const isMountedRef = useRef(false)
+  const zoneMapContainerRef = useRef(null)
+  const zoneMapRef = useRef(null)
+  const zoneMapMarkerRef = useRef(null)
   const [cameraState, setCameraState] = useState('loading')
   const [statusMessage, setStatusMessage] = useState('Initializing rear camera...')
   const [lastCaptureTime, setLastCaptureTime] = useState('')
@@ -130,7 +191,12 @@ export default function Scanner() {
   const [isZoneChoiceOpen, setIsZoneChoiceOpen] = useState(false)
   const [selectedGridId, setSelectedGridId] = useState('')
   const [zoneChoiceError, setZoneChoiceError] = useState('')
+  const [zoneMarkerPosition, setZoneMarkerPosition] = useState(null)
+  const [zoneMarkerLabel, setZoneMarkerLabel] = useState('')
   const [pendingCaptureDraft, setPendingCaptureDraft] = useState(null)
+
+  const mapboxToken = import.meta.env.VITE_MAPBOX_TOKEN
+  const isMapboxConfigured = Boolean(mapboxToken && !String(mapboxToken).includes('YOUR_'))
 
   const zoneOptions = useMemo(() => {
     const uniqueZones = new Map()
@@ -146,25 +212,86 @@ export default function Scanner() {
         label: gridId,
         healthState: String(grid?.healthState || 'Healthy'),
         areaHectares: Number(grid?.areaHectares || 0),
+        geometry: grid?.polygon || null,
+        hasGeometry: ['Polygon', 'MultiPolygon'].includes(String(grid?.polygon?.type || '')),
+        centroid: grid?.centroid || null,
       })
     }
 
     return Array.from(uniqueZones.values())
   }, [grids])
 
+  const selectedZone = useMemo(
+    () => zoneOptions.find((zone) => zone.value === selectedGridId) || null,
+    [zoneOptions, selectedGridId],
+  )
+
+  const canMarkSelectedZone = Boolean(
+    isMapboxConfigured
+    && selectedZone?.hasGeometry
+    && ['Polygon', 'MultiPolygon'].includes(String(selectedZone?.geometry?.type || '')),
+  )
+
+  const clearZoneMap = () => {
+    if (zoneMapMarkerRef.current) {
+      zoneMapMarkerRef.current.remove()
+      zoneMapMarkerRef.current = null
+    }
+
+    if (zoneMapRef.current) {
+      zoneMapRef.current.remove()
+      zoneMapRef.current = null
+    }
+  }
+
+  const applyZoneMarker = (position) => {
+    const map = zoneMapRef.current
+    const normalized = normalizeZonePosition(position)
+    if (!map || !normalized) {
+      if (zoneMapMarkerRef.current) {
+        zoneMapMarkerRef.current.remove()
+        zoneMapMarkerRef.current = null
+      }
+      return
+    }
+
+    const nextLngLat = [normalized.lng, normalized.lat]
+    if (!zoneMapMarkerRef.current) {
+      zoneMapMarkerRef.current = new mapboxgl.Marker({
+        color: '#14B8A6',
+      })
+        .setLngLat(nextLngLat)
+        .addTo(map)
+      return
+    }
+
+    zoneMapMarkerRef.current.setLngLat(nextLngLat)
+  }
+
   const resetZoneChoiceState = () => {
+    clearZoneMap()
     setIsZoneChoiceOpen(false)
     setSelectedGridId('')
     setZoneChoiceError('')
+    setZoneMarkerPosition(null)
+    setZoneMarkerLabel('')
     setPendingCaptureDraft(null)
   }
 
-  const finalizeCaptureWithZone = async (gridId) => {
+  const finalizeCaptureWithZone = async (gridId, markerPosition = null, markerLabel = null) => {
     if (!pendingCaptureDraft) {
       return
     }
 
     const resolvedGridId = String(gridId || '').trim() || null
+    const resolvedMarkerPosition = resolvedGridId ? normalizeZonePosition(markerPosition) : null
+    const resolvedMarkerLabel = resolvedGridId ? String(markerLabel || '').trim() || null : null
+
+    if (resolvedGridId && !resolvedMarkerPosition) {
+      setZoneChoiceError('Tap on the zone map to mark the exact location before continuing.')
+      return
+    }
+
     const { captureId, uid, base64Image, capturedAtIso } = pendingCaptureDraft
 
     setIsFinalizingCapture(true)
@@ -183,6 +310,9 @@ export default function Scanner() {
             source: 'camera',
             userPrompt: DEFAULT_CAPTURE_PROMPT,
             gridId: resolvedGridId,
+            zoneAssignmentMode: resolvedGridId ? 'selected' : 'skipped',
+            zonePosition: resolvedMarkerPosition,
+            zonePositionLabel: resolvedMarkerLabel,
           })
         } catch (captureError) {
           console.warn('Failed to persist scanner capture:', captureError)
@@ -198,6 +328,8 @@ export default function Scanner() {
         ownerUid: uid || null,
         gridId: resolvedGridId,
         zoneAssignmentMode: resolvedGridId ? 'selected' : 'skipped',
+        zonePosition: resolvedMarkerPosition,
+        zonePositionLabel: resolvedMarkerLabel,
         captureDownloadURL: persistedCapture.downloadURL || null,
         captureStoragePath: persistedCapture.storagePath || null,
         capturePersisted: Boolean(persistedCapture.persisted),
@@ -224,8 +356,23 @@ export default function Scanner() {
       return
     }
 
+    if (!selectedZone?.hasGeometry) {
+      setZoneChoiceError('This zone has no map boundary yet. Please select another zone or skip zone.')
+      return
+    }
+
+    if (!canMarkSelectedZone) {
+      setZoneChoiceError('Zone map is unavailable. Configure map access or skip zone for this photo.')
+      return
+    }
+
+    if (!normalizeZonePosition(zoneMarkerPosition)) {
+      setZoneChoiceError('Tap on the zone map to mark the exact location before continuing.')
+      return
+    }
+
     setZoneChoiceError('')
-    void finalizeCaptureWithZone(selectedGridId)
+    void finalizeCaptureWithZone(selectedGridId, zoneMarkerPosition, zoneMarkerLabel)
   }
 
   const handleRetakeCapture = () => {
@@ -236,6 +383,127 @@ export default function Scanner() {
     resetZoneChoiceState()
     setStatusMessage('Capture discarded. Take another photo when ready.')
   }
+
+  useEffect(() => {
+    if (!selectedGridId) {
+      setZoneMarkerPosition(null)
+      setZoneMarkerLabel('')
+      return
+    }
+
+    setZoneMarkerPosition(null)
+    setZoneMarkerLabel('')
+    setZoneChoiceError('')
+  }, [selectedGridId])
+
+  useEffect(() => {
+    if (!isZoneChoiceOpen || !selectedZone || !selectedZone?.hasGeometry || !canMarkSelectedZone) {
+      clearZoneMap()
+      return undefined
+    }
+
+    if (!zoneMapContainerRef.current) {
+      return undefined
+    }
+
+    mapboxgl.accessToken = mapboxToken
+    const zoneGeometry = selectedZone.geometry
+    const zoneFeature = turf.feature(zoneGeometry)
+
+    const map = new mapboxgl.Map({
+      container: zoneMapContainerRef.current,
+      style: DEFAULT_ZONE_MAP_STYLE,
+      center: [101.6958, 3.139],
+      zoom: 16,
+      attributionControl: false,
+    })
+
+    zoneMapRef.current = map
+    map.addControl(new mapboxgl.NavigationControl({ visualizePitch: false }), 'top-right')
+
+    const onMapClick = (event) => {
+      const lng = Number(event?.lngLat?.lng)
+      const lat = Number(event?.lngLat?.lat)
+      if (!Number.isFinite(lng) || !Number.isFinite(lat)) {
+        return
+      }
+
+      const candidatePoint = turf.point([lng, lat])
+      const isInside = turf.booleanPointInPolygon(candidatePoint, zoneFeature)
+      if (!isInside) {
+        setZoneChoiceError('Marker must be inside the selected zone boundary.')
+        return
+      }
+
+      const nextPosition = {
+        lat,
+        lng,
+      }
+      setZoneMarkerPosition(nextPosition)
+      setZoneMarkerLabel(deriveZonePositionLabel(zoneGeometry, nextPosition))
+      setZoneChoiceError('')
+      applyZoneMarker(nextPosition)
+    }
+
+    map.on('load', () => {
+      const sourceData = getZoneMapSourceData(zoneGeometry, selectedZone.value)
+      map.addSource('pg-scanner-zone-boundary', {
+        type: 'geojson',
+        data: sourceData,
+      })
+
+      map.addLayer({
+        id: 'pg-scanner-zone-fill',
+        type: 'fill',
+        source: 'pg-scanner-zone-boundary',
+        paint: {
+          'fill-color': '#22D3EE',
+          'fill-opacity': 0.22,
+        },
+      })
+
+      map.addLayer({
+        id: 'pg-scanner-zone-outline',
+        type: 'line',
+        source: 'pg-scanner-zone-boundary',
+        paint: {
+          'line-color': '#0E7490',
+          'line-width': 2.2,
+        },
+      })
+
+      const [minLng, minLat, maxLng, maxLat] = turf.bbox(zoneFeature)
+      map.fitBounds(
+        [
+          [minLng, minLat],
+          [maxLng, maxLat],
+        ],
+        {
+          padding: 44,
+          duration: 0,
+          maxZoom: 18,
+        },
+      )
+
+      applyZoneMarker(zoneMarkerPosition)
+    })
+
+    map.on('click', onMapClick)
+
+    return () => {
+      map.off('click', onMapClick)
+      clearZoneMap()
+    }
+  }, [
+    canMarkSelectedZone,
+    isZoneChoiceOpen,
+    mapboxToken,
+    selectedZone,
+  ])
+
+  useEffect(() => {
+    applyZoneMarker(zoneMarkerPosition)
+  }, [zoneMarkerPosition])
 
   const stopLiveLoop = () => {
     if (frameTimerRef.current) {
@@ -637,8 +905,8 @@ export default function Scanner() {
                   {zoneOptions.length > 0 ? 'Choose one zone...' : 'No zone available'}
                 </option>
                 {zoneOptions.map((zone) => (
-                  <option key={zone.value} value={zone.value}>
-                    {zone.label} ({zone.healthState}, {zone.areaHectares.toFixed(2)} ha)
+                  <option key={zone.value} value={zone.value} disabled={!zone.hasGeometry}>
+                    {zone.label} ({zone.healthState}, {zone.areaHectares.toFixed(2)} ha{zone.hasGeometry ? '' : ', no boundary'})
                   </option>
                 ))}
               </select>
@@ -647,6 +915,29 @@ export default function Scanner() {
                 <p className="pg-scanner-zone-list-hint">
                   No saved zones found yet. Continue with photo-only diagnosis.
                 </p>
+              ) : null}
+
+              {selectedGridId && selectedZone?.hasGeometry ? (
+                <>
+                  <p className="pg-scanner-zone-list-hint">
+                    Tap once inside the zone boundary to mark the exact capture location.
+                  </p>
+
+                  {canMarkSelectedZone ? (
+                    <div ref={zoneMapContainerRef} className="pg-scanner-zone-map" />
+                  ) : (
+                    <p className="pg-scanner-zone-map-placeholder">
+                      Zone map is unavailable because Mapbox token is missing. You can skip zone for this photo.
+                    </p>
+                  )}
+
+                  {normalizeZonePosition(zoneMarkerPosition) ? (
+                    <p className="pg-scanner-zone-marker-hint">
+                      Marker saved at {Number(zoneMarkerPosition.lat).toFixed(5)}, {Number(zoneMarkerPosition.lng).toFixed(5)}
+                      {zoneMarkerLabel ? ` (${zoneMarkerLabel})` : ''}.
+                    </p>
+                  ) : null}
+                </>
               ) : null}
 
               {zoneChoiceError ? <p className="pg-scanner-zone-error">{zoneChoiceError}</p> : null}

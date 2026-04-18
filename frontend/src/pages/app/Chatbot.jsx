@@ -323,6 +323,9 @@ async function hydratePendingCaptureFromFirestore(uid, captureId) {
     captureDownloadURL: record.downloadURL || null,
     captureStoragePath: record.storagePath || null,
     gridId: record.gridId || null,
+    zoneAssignmentMode: record.zoneAssignmentMode || null,
+    zonePosition: record.zonePosition || null,
+    zonePositionLabel: record.zonePositionLabel || null,
   }
 
   savePendingCapture(payload)
@@ -588,6 +591,11 @@ export default function Chatbot() {
               ownerUid: uid || null,
               source: pendingCapture.source || 'camera',
               status: normalizeScanStatus(response),
+              gridId: pendingCapture.gridId || response?.gridId || response?.zone || null,
+              zone: pendingCapture.gridId || response?.zone || null,
+              zoneAssignmentMode: pendingCapture.zoneAssignmentMode || null,
+              zonePosition: pendingCapture.zonePosition || null,
+              zonePositionLabel: pendingCapture.zonePositionLabel || null,
               captureId: pendingCapture.captureId || captureIdFromUrl || null,
               captureDownloadURL: pendingCapture.captureDownloadURL || null,
               captureStoragePath: pendingCapture.captureStoragePath || null,
