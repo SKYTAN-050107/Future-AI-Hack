@@ -90,34 +90,32 @@ export default function Inventory() {
   const [items, setItems] = useState([])
   const [lastUpdatedLabel, setLastUpdatedLabel] = useState('Unknown')
   const [error, setError] = useState('')
+  
+  // UI Action states
   const [isCreatingItem, setIsCreatingItem] = useState(false)
   const [isUpdatingItem, setIsUpdatingItem] = useState(false)
   const [isRemovingItem, setIsRemovingItem] = useState(false)
-  const [selectedItemId, setSelectedItemId] = useState('')
-  const [isActionMenuOpen, setIsActionMenuOpen] = useState(false)
 
-  const selectedItem = useMemo(
-    () => items.find((item) => item.id === selectedItemId) || null,
-    [items, selectedItemId],
-  )
+  // Modals state
+  const [isAddingItem, setIsAddingItem] = useState(false)
+  const [editModalItem, setEditModalItem] = useState(null)
+
+  // Add Item form state
+  const [addName, setAddName] = useState('')
+  const [addLiters, setAddLiters] = useState('')
+  const [addUsage, setAddUsage] = useState('')
+  const [addUnit, setAddUnit] = useState('liters')
+  const [addCost, setAddCost] = useState('')
+
+  // Edit form state
+  const [editLiters, setEditLiters] = useState('')
+  const [editDesc, setEditDesc] = useState('')
+  const [editCost, setEditCost] = useState('')
 
   const isActionBusy = isCreatingItem || isUpdatingItem || isRemovingItem
 
-  useEffect(() => {
-    if (!selectedItemId) {
-      return
-    }
-
-    const stillExists = items.some((item) => item.id === selectedItemId)
-    if (!stillExists) {
-      setSelectedItemId('')
-    }
-  }, [items, selectedItemId])
-
   async function refreshInventory(userId) {
     const listResponse = await getInventory({ userId })
-    console.log('[Inventory API] refreshed list response', listResponse)
-
     const { nextItems, updatedLabel } = parseInventoryResponse(listResponse)
     setItems(nextItems)
     setLastUpdatedLabel(updatedLabel)
@@ -137,21 +135,13 @@ export default function Inventory() {
     setError('')
     getInventory({ userId })
       .then((response) => {
-        if (!active) {
-          return
-        }
-
-        console.log('[Inventory API] list response', response)
-
+        if (!active) return
         const { nextItems, updatedLabel } = parseInventoryResponse(response)
         setItems(nextItems)
         setLastUpdatedLabel(updatedLabel)
       })
       .catch((loadError) => {
-        if (!active) {
-          return
-        }
-
+        if (!active) return
         setItems([])
         setLastUpdatedLabel('Unknown')
         setError(loadError?.message || 'Unable to load inventory')
@@ -162,45 +152,22 @@ export default function Inventory() {
     }
   }, [user?.uid])
 
-  async function handleAddInventory() {
+  // ADD ITEM
+  async function handleAddInventory(e) {
+    e.preventDefault()
     const userId = String(user?.uid || '').trim()
     if (!userId) {
       setError('Sign in to add inventory.')
       return
     }
 
-    const name = window.prompt('Inventory name')
-    if (name === null) {
-      return
-    }
-
-    const quantityRaw = window.prompt('Quantity (number)')
-    if (quantityRaw === null) {
-      return
-    }
-
-    const usage = window.prompt('Usage (e.g. fertilizer, pesticide)')
-    if (usage === null) {
-      return
-    }
-
-    const unit = window.prompt('Unit (e.g. liters, kg)')
-    if (unit === null) {
-      return
-    }
-
-    const costPerUnitRaw = window.prompt('Cost per unit (RM)', '0')
-    if (costPerUnitRaw === null) {
-      return
-    }
-
-    const quantity = Number(quantityRaw)
+    const quantity = Number(addLiters)
     if (!Number.isFinite(quantity) || quantity < 0) {
       setError('Quantity must be a non-negative number.')
       return
     }
 
-    const costPerUnitRm = Number(costPerUnitRaw)
+    const costPerUnitRm = Number(addCost || 0)
     if (!Number.isFinite(costPerUnitRm) || costPerUnitRm < 0) {
       setError('Cost per unit must be a non-negative number.')
       return
@@ -208,19 +175,18 @@ export default function Inventory() {
 
     setIsCreatingItem(true)
     setError('')
-    setIsActionMenuOpen(false)
 
     try {
-      const createResponse = await createInventoryItem({
+      await createInventoryItem({
         userId,
-        name,
+        name: addName || 'Unnamed Item',
         quantity,
-        usage,
-        unit,
+        usage: addUsage || 'general',
+        unit: addUnit || 'liters',
         costPerUnitRm,
       })
-      console.log('[Inventory API] create response', createResponse)
       await refreshInventory(userId)
+      closeAddModal()
     } catch (createError) {
       setError(createError?.message || 'Unable to add inventory item')
     } finally {
@@ -228,54 +194,43 @@ export default function Inventory() {
     }
   }
 
-  async function handleEditInventory() {
+  // EDIT ITEM
+  function openEditModal(item) {
+    setEditModalItem(item)
+    setEditLiters(String(item.liters))
+    setEditDesc(item.description || '')
+    setEditCost(String(item.unitCostRm || 0))
+    setError('')
+  }
+
+  function closeEditModal() {
+    setEditModalItem(null)
+  }
+
+  function closeAddModal() {
+    setIsAddingItem(false)
+    setAddName('')
+    setAddLiters('')
+    setAddUsage('')
+    setAddUnit('liters')
+    setAddCost('')
+  }
+
+  async function handleEditInventory(e) {
+    e.preventDefault()
     const userId = String(user?.uid || '').trim()
     if (!userId) {
       setError('Sign in to edit inventory.')
       return
     }
 
-    if (!selectedItem) {
-      setError('Select an inventory item to edit.')
-      return
-    }
-
-    const quantityRaw = window.prompt(
-      `New quantity for ${selectedItem.name} (liters)`,
-      String(selectedItem.liters),
-    )
-
-    if (quantityRaw === null) {
-      return
-    }
-
-    const descriptionRaw = window.prompt(
-      `Description for ${selectedItem.name}`,
-      selectedItem.description || '',
-    )
-
-    if (descriptionRaw === null) {
-      return
-    }
-
-    const liters = Number(quantityRaw)
+    const liters = Number(editLiters)
     if (!Number.isFinite(liters) || liters < 0) {
       setError('Quantity must be a non-negative number.')
       return
     }
 
-    const description = String(descriptionRaw).trim()
-
-    const unitCostRaw = window.prompt(
-      `Cost per liter for ${selectedItem.name} (RM)`,
-      String(selectedItem.unitCostRm || 0),
-    )
-
-    if (unitCostRaw === null) {
-      return
-    }
-
-    const unitCostRm = Number(unitCostRaw)
+    const unitCostRm = Number(editCost)
     if (!Number.isFinite(unitCostRm) || unitCostRm < 0) {
       setError('Cost per unit must be a non-negative number.')
       return
@@ -283,17 +238,16 @@ export default function Inventory() {
 
     setIsUpdatingItem(true)
     setError('')
-    setIsActionMenuOpen(false)
 
     try {
-      const updateResponse = await updateInventoryItem(selectedItem.id, {
+      await updateInventoryItem(editModalItem.id, {
         userId,
         liters,
-        description,
+        description: editDesc,
         unitCostRm,
       })
-      console.log('[Inventory API] update response', updateResponse)
       await refreshInventory(userId)
+      closeEditModal()
     } catch (updateError) {
       setError(updateError?.message || 'Unable to edit inventory item')
     } finally {
@@ -301,32 +255,21 @@ export default function Inventory() {
     }
   }
 
+  // REMOVE ITEM
   async function handleRemoveInventory() {
     const userId = String(user?.uid || '').trim()
-    if (!userId) {
-      setError('Sign in to remove inventory.')
-      return
-    }
+    if (!userId) return
 
-    if (!selectedItem) {
-      setError('Select an inventory item to remove.')
-      return
-    }
-
-    const confirmed = window.confirm(`Remove ${selectedItem.name} from inventory?`)
-    if (!confirmed) {
-      return
-    }
+    const confirmed = window.confirm(`Remove ${editModalItem.name} from inventory? This cannot be undone.`)
+    if (!confirmed) return
 
     setIsRemovingItem(true)
     setError('')
-    setIsActionMenuOpen(false)
 
     try {
-      const deleteResponse = await deleteInventoryItem(selectedItem.id, { userId })
-      console.log('[Inventory API] delete response', deleteResponse)
+      await deleteInventoryItem(editModalItem.id, { userId })
       await refreshInventory(userId)
-      setSelectedItemId('')
+      closeEditModal()
     } catch (removeError) {
       setError(removeError?.message || 'Unable to remove inventory item')
     } finally {
@@ -350,8 +293,8 @@ export default function Inventory() {
     <section className="pg-page pg-inventory-page" aria-label="Chemical inventory">
       <SectionHeader title="Inventory" align="center" />
 
-      {error ? (
-        <article className="pg-card">
+      {error && !editModalItem && !isAddingItem ? (
+        <article className="pg-card" style={{ background: 'rgba(var(--danger-rgb), 0.1)', color: 'var(--danger)' }}>
           <p>{error}</p>
         </article>
       ) : null}
@@ -378,9 +321,7 @@ export default function Inventory() {
       </div>
 
       <p className="pg-inventory-selected-note" aria-live="polite">
-        {selectedItem
-          ? `Selected: ${selectedItem.name}. Use View more to edit or remove it.`
-          : 'Select an item, then tap View more to edit or remove it.'}
+        Select any item below to view details and edit stock.
       </p>
 
       <div className="pg-inventory-list" aria-live="polite">
@@ -399,13 +340,9 @@ export default function Inventory() {
             <button
               key={item.id}
               type="button"
-              className={`pg-inventory-item ${selectedItemId === item.id ? 'is-selected' : ''}`}
+              className="pg-inventory-item"
               aria-label={`${item.name}, ${item.liters.toFixed(1)} liters`}
-              aria-pressed={selectedItemId === item.id}
-              onClick={() => {
-                setSelectedItemId(item.id)
-                setError('')
-              }}
+              onClick={() => openEditModal(item)}
             >
               <span className="pg-inventory-item-icon" aria-hidden="true">
                 <ItemIcon className="pg-icon" />
@@ -443,51 +380,94 @@ export default function Inventory() {
         })}
       </div>
 
-      <div className={`pg-inventory-fab-stack ${isActionMenuOpen ? 'is-open' : ''}`}>
-        <div
-          id="pg-inventory-fab-actions"
-          className="pg-inventory-fab-actions"
-          aria-hidden={!isActionMenuOpen}
-        >
-          <button
-            type="button"
-            className="pg-inventory-fab-action"
-            onClick={handleAddInventory}
-            disabled={isActionBusy}
-          >
-            Add
-          </button>
-          <button
-            type="button"
-            className="pg-inventory-fab-action"
-            onClick={handleEditInventory}
-            disabled={isActionBusy || !selectedItem}
-          >
-            Edit
-          </button>
-          <button
-            type="button"
-            className="pg-inventory-fab-action is-danger"
-            onClick={handleRemoveInventory}
-            disabled={isActionBusy || !selectedItem}
-          >
-            Remove
-          </button>
-        </div>
+      {/* Floating Action Button purely for ADDING items */}
+      <button
+        type="button"
+        className="pg-inventory-add-fab pg-inventory-add-fab-main"
+        aria-label="Add new inventory item"
+        onClick={() => setIsAddingItem(true)}
+        disabled={isActionBusy}
+        style={{ position: 'fixed', bottom: 90, right: 20, zIndex: 90 }}
+      >
+        <span className="pg-inventory-add-fab-label"></span>
+        <IconPlus className="pg-icon" />
+      </button>
 
-        <button
-          type="button"
-          className="pg-inventory-add-fab pg-inventory-add-fab-main"
-          aria-label="View more inventory actions"
-          aria-expanded={isActionMenuOpen}
-          aria-controls="pg-inventory-fab-actions"
-          onClick={() => setIsActionMenuOpen((open) => !open)}
-          disabled={isActionBusy}
-        >
-          <span className="pg-inventory-add-fab-label"></span>
-          <IconPlus className={`pg-icon pg-inventory-fab-toggle-icon ${isActionMenuOpen ? 'is-open' : ''}`} />
-        </button>
-      </div>
+      {/* ── Slide-up Modals ── */}
+
+      {/* Add Item Modal */}
+      {isAddingItem && (
+        <div className="pg-modal-backdrop" onClick={closeAddModal}>
+          <div className="pg-modal-drawer" style={{ background: 'rgba(255, 255, 255, 0.85)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)' }} onClick={(e) => e.stopPropagation()}>
+            <div className="pg-modal-close-bar" onClick={closeAddModal}></div>
+            <h2 style={{ marginTop: 0, marginBottom: 16 }}>Add New Item</h2>
+            {error && <p style={{ color: 'var(--danger)', marginBottom: 16 }}>{error}</p>}
+            <form onSubmit={handleAddInventory}>
+              <label className="pg-field-label">Item Name</label>
+              <input required className="pg-input" type="text" value={addName} onChange={e => setAddName(e.target.value)} placeholder="e.g. NPK Fertilizer" />
+              
+              <label className="pg-field-label">Quantity</label>
+              <input required className="pg-input" type="number" step="0.1" min="0" value={addLiters} onChange={e => setAddLiters(e.target.value)} placeholder="e.g. 10.5" />
+              
+              <label className="pg-field-label">Category / Usage</label>
+              <input required className="pg-input" type="text" value={addUsage} onChange={e => setAddUsage(e.target.value)} placeholder="e.g. fertilizer or pesticide" />
+              
+              <label className="pg-field-label">Unit Code</label>
+              <input required className="pg-input" type="text" value={addUnit} onChange={e => setAddUnit(e.target.value)} placeholder="e.g. liters or kg" />
+              
+              <label className="pg-field-label">Cost Per Unit (RM)</label>
+              <input required className="pg-input" type="number" step="0.01" min="0" value={addCost} onChange={e => setAddCost(e.target.value)} placeholder="e.g. 45.00" />
+              
+              <div className="pg-cta-row" style={{ marginTop: 24 }}>
+                <button type="submit" className="pg-btn pg-btn-primary" disabled={isCreatingItem}>
+                  {isCreatingItem ? 'Adding...' : 'Add Item'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit/Details Modal */}
+      {editModalItem && (
+        <div className="pg-modal-backdrop" onClick={closeEditModal}>
+          <div className="pg-modal-drawer" style={{ background: 'rgba(255, 255, 255, 0.85)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)' }} onClick={(e) => e.stopPropagation()}>
+            <div className="pg-modal-close-bar" onClick={closeEditModal}></div>
+            <h2 style={{ marginTop: 0, marginBottom: 16 }}>{editModalItem.name}</h2>
+            {error && <p style={{ color: 'var(--danger)', marginBottom: 16 }}>{error}</p>}
+
+            <form onSubmit={handleEditInventory}>
+              <p style={{ margin: '0 0 16px', opacity: 0.8, fontSize: '0.9rem' }}>
+                Category: <strong>{editModalItem.category}</strong>
+              </p>
+
+              <label className="pg-field-label">Stock Quantity (Liters/Kg)</label>
+              <input required className="pg-input" type="number" step="0.1" min="0" value={editLiters} onChange={e => setEditLiters(e.target.value)} />
+
+              <label className="pg-field-label">Description (Optional)</label>
+              <input className="pg-input" type="text" value={editDesc} onChange={e => setEditDesc(e.target.value)} placeholder="Usage notes" />
+              
+              <label className="pg-field-label">Cost Per Unit (RM)</label>
+              <input required className="pg-input" type="number" step="0.01" min="0" value={editCost} onChange={e => setEditCost(e.target.value)} />
+
+              <div className="pg-cta-row" style={{ marginTop: 40, flexDirection: 'column', gap: 12 }}>
+                <button type="submit" className="pg-btn pg-btn-primary" style={{ width: '100%' }} disabled={isUpdatingItem || isRemovingItem}>
+                  {isUpdatingItem ? 'Saving...' : 'Save Changes'}
+                </button>
+                <button 
+                  type="button" 
+                  className="pg-btn" 
+                  style={{ width: '100%', background: 'rgba(var(--danger-rgb), 0.1)', color: 'var(--danger)', border: '1px solid rgba(var(--danger-rgb), 0.4)' }}
+                  onClick={handleRemoveInventory} 
+                  disabled={isUpdatingItem || isRemovingItem}
+                >
+                  {isRemovingItem ? 'Deleting...' : 'Delete Item'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </section>
   )
 }

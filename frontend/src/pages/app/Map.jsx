@@ -683,19 +683,22 @@ export default function MapPage() {
                   key={grid.id}
                   style={{
                     display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'flex-start',
+                    flexDirection: 'column',
                     gap: 8,
-                    marginBottom: 8,
+                    marginBottom: 16,
+                    paddingBottom: 16,
+                    borderBottom: '1px solid rgba(var(--border-rgb), 0.3)',
                   }}
                 >
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <small style={{ display: 'block', marginBottom: 6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {grid.gridId || grid.id} ({Number(grid.areaHectares || 0).toFixed(2)} ha)
-                    </small>
+                  <small style={{ display: 'block', fontWeight: 600, color: 'var(--pg-accent)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {grid.gridId || grid.id} ({Number(grid.areaHectares || 0).toFixed(2)} ha)
+                  </small>
+                  
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                     <input
                       className="pg-input"
                       type="text"
+                      style={{ flex: 1, minWidth: 0, margin: 0 }}
                       value={zoneNameDrafts[String(grid.id)] || ''}
                       maxLength={56}
                       onChange={(event) => {
@@ -707,24 +710,25 @@ export default function MapPage() {
                         }))
                       }}
                     />
-                  </div>
-
-                  <div style={{ display: 'grid', gap: 6 }}>
+                    
                     <button
                       type="button"
-                      className="pg-btn"
+                      className="pg-btn pg-btn-ghost"
+                      style={{ padding: '8px 12px', minHeight: 'auto', fontSize: '0.8rem' }}
                       onClick={() => handleRenamePersistedGrid(grid)}
                       disabled={renamingGridId === grid.id || deletingGridId === grid.id}
                     >
-                      {renamingGridId === grid.id ? 'Saving…' : 'Save name'}
+                      {renamingGridId === grid.id ? 'Save…' : 'Save'}
                     </button>
+                    
                     <button
                       type="button"
                       className="pg-btn"
+                      style={{ padding: '8px 12px', minHeight: 'auto', fontSize: '0.8rem', background: 'rgba(var(--danger-rgb), 0.1)', color: 'var(--danger)', border: '1px solid rgba(var(--danger-rgb), 0.4)' }}
                       onClick={() => handleDeletePersistedGrid(grid)}
                       disabled={deletingGridId === grid.id || renamingGridId === grid.id}
                     >
-                      {deletingGridId === grid.id ? 'Deleting…' : 'Delete'}
+                      {deletingGridId === grid.id ? 'Del…' : 'Delete'}
                     </button>
                   </div>
                 </div>
