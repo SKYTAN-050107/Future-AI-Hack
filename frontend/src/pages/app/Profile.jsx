@@ -4,6 +4,7 @@ import { useSessionContext } from '../../hooks/useSessionContext'
 import { getCrops } from '../../api/crops'
 import { getTreatmentPlan } from '../../api/treatment'
 import { geocodeLocation } from '../../services/locationResolver'
+import { signOutCurrentUser } from '../../services/auth'
 import { saveActiveCropSelection } from '../../services/userProfile'
 import SectionHeader from '../../components/ui/SectionHeader'
 import { IconUser, IconMap, IconSprout, IconChart } from '../../components/icons/UiIcons'
@@ -53,6 +54,8 @@ export default function Profile() {
   const [editLanguage, setEditLanguage] = useState('BM')
   const [isSavingFarmDetails, setIsSavingFarmDetails] = useState(false)
   const [editFarmFeedback, setEditFarmFeedback] = useState('')
+  const [isSigningOut, setIsSigningOut] = useState(false)
+  const [signOutError, setSignOutError] = useState('')
 
   const displayName = user?.displayName || user?.email?.split('@')[0] || 'Farmer'
   const email = user?.email || 'Not signed in'
@@ -128,6 +131,30 @@ export default function Profile() {
       setEditFarmFeedback(error?.message || 'Unable to save farm details right now. Please try again.')
     } finally {
       setIsSavingFarmDetails(false)
+    }
+  }
+
+  async function handleSignOut() {
+    if (isSigningOut) {
+      return
+    }
+
+    setIsSigningOut(true)
+    setSignOutError('')
+
+    try {
+      await logout()
+      navigate('/auth', { replace: true })
+    } catch (error) {
+      try {
+        // Frontend-only fallback if context logout fails transiently.
+        await signOutCurrentUser()
+        navigate('/auth', { replace: true })
+      } catch {
+        setSignOutError(error?.message || 'Unable to sign out right now. Please try again.')
+      }
+    } finally {
+      setIsSigningOut(false)
     }
   }
 
@@ -241,14 +268,15 @@ export default function Profile() {
           <button
             type="button"
             className="pg-btn pg-btn-primary pg-btn-inline pg-profile-signout-btn"
-            onClick={async () => {
-              await logout()
-              navigate('/auth', { replace: true })
-            }}
+            onClick={handleSignOut}
+            disabled={isSigningOut}
           >
-            Sign out
+            {isSigningOut ? 'Signing out...' : 'Sign out'}
           </button>
         </div>
+        {signOutError ? (
+          <p style={{ margin: '8px 0 0', fontSize: '0.8rem', color: 'var(--danger)' }}>{signOutError}</p>
+        ) : null}
       </div>
 
       <article className="pg-card pg-glass-panel pg-profile-card">
