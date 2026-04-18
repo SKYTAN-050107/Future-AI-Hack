@@ -15,6 +15,7 @@ from agents.response_validation_agent import ResponseValidationAgent
 from services.crop_service import CropService
 from services.dashboard_service import DashboardService
 from services.firebase_admin_service import get_firestore_client
+from services.firestore_service import FirestoreService
 from services.inventory_service import InventoryService
 from services.llm_service import LLMService, build_farmer_fallback_dialogue, detect_farmer_language
 from services.weather_service import WeatherService
@@ -56,6 +57,9 @@ class InteractionSupervisor:
 
         self._inventory_service: InventoryService | None = None
         self._inventory_service_error: str | None = None
+
+        self._diagnosis_firestore_service: FirestoreService | None = None
+        self._diagnosis_firestore_service_error: str | None = None
 
         self._firestore_client: Any | None = None
         self._firestore_error: str | None = None
@@ -231,6 +235,21 @@ class InteractionSupervisor:
 
         return self._inventory_service
 
+    def _get_diagnosis_firestore_service(self) -> FirestoreService | None:
+        if self._diagnosis_firestore_service is not None:
+            return self._diagnosis_firestore_service
+        if self._diagnosis_firestore_service_error is not None:
+            return None
+
+        try:
+            self._diagnosis_firestore_service = FirestoreService()
+        except Exception as exc:
+            self._diagnosis_firestore_service_error = str(exc)
+            logger.warning("Diagnosis FirestoreService unavailable for catalog lookup: %s", exc)
+            return None
+
+        return self._diagnosis_firestore_service
+
     def _get_firestore_client(self):
         if self._firestore_client is not None:
             return self._firestore_client
@@ -315,6 +334,101 @@ class InteractionSupervisor:
             intents.add("spread")
 
         return intents
+
+    @staticmethod
+    def _extract_catalog_pest_query(user_prompt: str) -> str | None:
+        text = str(user_prompt or "").strip()
+        if not text:
+            return None
+
+        patterns = [
+            r"\b(?:pesticides?|insecticides?|fungicides?|herbicides?|chemical(?:s)?|racun(?:\s+serangga)?)\s+(?:for|against|untuk|bagi)\s+(.+)$",
+            r"\b(?:suggest|recommend|give|what(?:'s|\s+is|\s+are)?)\s+(?:me\s+)?(?:pesticides?|insecticides?|fungicides?|herbicides?|chemical(?:s)?|racun(?:\s+serangga)?)\s+(?:for|against|untuk|bagi)\s+(.+)$",
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if not match:
+                continue
+
+            candidate = match.group(1).strip()
+            candidate = re.split(r"[?.!,;]", candidate, maxsplit=1)[0].strip()
+            candidate = re.sub(r"\b(?:not|bukan)\b.*$", "", candidate, flags=re.IGNORECASE).strip()
+            candidate = candidate.strip(" \"'()[]{}")
+
+            if not candidate:
+                continue
+
+            lowered = candidate.lower()
+            if any(keyword in lowered for keyword in ("inventory", "stock", "supply", "supplies")):
+                continue
+
+            if len(candidate) > 80:
+                continue
+
+            return candidate
+
+        return None
+
+    async def _load_pesticide_catalog_recommendation(self, *, requested_pest_name: str) -> dict[str, Any]:
+        firestore_service = self._get_diagnosis_firestore_service()
+        if firestore_service is None:
+            return {}
+
+        try:
+            return await firestore_service.get_pesticide_catalog_recommendation(requested_pest_name)
+        except Exception as exc:
+            logger.warning(
+                "Pesticide catalog lookup failed for pest=%s: %s",
+                requested_pest_name,
+                exc,
+            )
+            return {}
+
+    def _build_catalog_pesticide_reply(
+        self,
+        *,
+        user_prompt: str,
+        requested_pest_name: str,
+        catalog_recommendation: dict[str, Any],
+    ) -> str:
+        language = detect_farmer_language(user_prompt)
+        matched_name = self._trim_text(
+            catalog_recommendation.get("matchedPestName"),
+            default=requested_pest_name,
+        )
+
+        pesticides_raw = catalog_recommendation.get("recommendedPesticides") or []
+        if not isinstance(pesticides_raw, list):
+            pesticides_raw = []
+        pesticides = [
+            str(item).strip()
+            for item in pesticides_raw
+            if str(item).strip()
+        ]
+
+        if pesticides:
+            if language == "ms":
+                return (
+                    f"Untuk {matched_name}, racun yang biasa digunakan ialah: {', '.join(pesticides)}. "
+                    "Mulakan semburan ikut kadar label produk dan semak semula gejala dalam 48 jam."
+                )
+
+            return (
+                f"For {matched_name}, commonly used pesticides are: {', '.join(pesticides)}. "
+                "Apply according to the product label rate and recheck symptoms after 48 hours."
+            )
+
+        if language == "ms":
+            return (
+                f"Saya tidak jumpa rekod pesticideCatalog untuk '{requested_pest_name}'. "
+                "Sila semak ejaan nama perosak atau buat imbasan gambar baharu."
+            )
+
+        return (
+            f"I could not find a pesticideCatalog record for '{requested_pest_name}'. "
+            "Please check the pest name spelling or run a new photo scan."
+        )
 
     @staticmethod
     def _references_existing_scan_context(user_prompt: str) -> bool:
@@ -472,6 +586,28 @@ class InteractionSupervisor:
             "user_id": user_id,
             "zone": zone,
         }
+
+        requested_pest_name = self._extract_catalog_pest_query(user_prompt)
+        if requested_pest_name:
+            catalog_recommendation = await self._load_pesticide_catalog_recommendation(
+                requested_pest_name=requested_pest_name,
+            )
+            draft_reply = self._build_catalog_pesticide_reply(
+                user_prompt=user_prompt,
+                requested_pest_name=requested_pest_name,
+                catalog_recommendation=catalog_recommendation,
+            )
+
+            return await self._finalize_response(
+                user_prompt=user_prompt,
+                draft_reply=draft_reply,
+                context={
+                    **validation_context_base,
+                    "catalog_requested_pest_name": requested_pest_name,
+                    "catalog_recommendation": catalog_recommendation,
+                },
+                validate=False,
+            )
 
         nodes: list[TaskNode] = []
 
@@ -1022,6 +1158,9 @@ class InteractionSupervisor:
             "severity": item.get("severity") or item.get("severityLevel"),
             "severityScore": item.get("severityScore"),
             "treatmentPlan": item.get("treatmentPlan") or item.get("treatment_plan"),
+            "recommendedPesticides": item.get("recommendedPesticides") or [],
+            "recommendationSource": item.get("recommendationSource"),
+            "matchedPestName": item.get("matchedPestName"),
             "survivalProb": item.get("survivalProb"),
             "confidence": item.get("confidence"),
             "lat": item.get("lat"),

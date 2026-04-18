@@ -338,6 +338,19 @@ def _confidence_to_percent(raw_result: dict[str, Any], fallback_score: float) ->
     return 35
 
 
+def _normalize_string_list(raw_value: Any) -> list[str]:
+    if not isinstance(raw_value, list):
+        return []
+
+    normalized: list[str] = []
+    for item in raw_value:
+        text = str(item or "").strip()
+        if text:
+            normalized.append(text)
+
+    return normalized
+
+
 def _spread_risk_from_severity(severity_percent: int) -> str:
     if severity_percent >= 70:
         return "High"
@@ -367,6 +380,9 @@ def _build_scan_result(raw_result: Any, bbox: BoundingBox, region_index: int) ->
             severityScore=0.0,
             treatmentPlan="None",
             survivalProb=0.0,
+            recommendedPesticides=[],
+            recommendationSource="error",
+            matchedPestName=None,
             bbox=bbox,
         )
 
@@ -378,6 +394,9 @@ def _build_scan_result(raw_result: Any, bbox: BoundingBox, region_index: int) ->
             severityScore=0.0,
             treatmentPlan="None",
             survivalProb=0.0,
+            recommendedPesticides=[],
+            recommendationSource="error",
+            matchedPestName=None,
             bbox=bbox,
         )
 
@@ -389,6 +408,11 @@ def _build_scan_result(raw_result: Any, bbox: BoundingBox, region_index: int) ->
         treatmentPlan=str(raw_result.get("treatmentPlan", "Consult Agrologist")),
         survivalProb=float(raw_result.get("survivalProb", 1.0)),
         is_abnormal=bool(raw_result.get("is_abnormal", False)),
+        recommendedPesticides=_normalize_string_list(raw_result.get("recommendedPesticides")),
+        recommendationSource=(
+            str(raw_result.get("recommendationSource", "")).strip() or None
+        ),
+        matchedPestName=(str(raw_result.get("matchedPestName", "")).strip() or None),
         bbox=bbox,
     )
 
@@ -413,6 +437,9 @@ async def _record_abnormal_scan(result: ScanResult, grid_id: str | None, user_id
             treatmentPlan=result.treatmentPlan,
             survivalProb=result.survivalProb,
             is_abnormal=result.is_abnormal,
+            recommended_pesticides=result.recommendedPesticides,
+            recommendation_source=result.recommendationSource,
+            matched_pest_name=result.matchedPestName,
         )
     except Exception as fs_err:
         logger.error("Firestore write failed: %s", fs_err)
@@ -459,6 +486,9 @@ def _to_http_scan_response(
         zone=grid_id,
         crop_type=result.cropType,
         treatment_plan=result.treatmentPlan,
+        recommended_pesticides=result.recommendedPesticides,
+        recommendation_source=result.recommendationSource,
+        matched_pest_name=result.matchedPestName,
     )
 
 
@@ -499,6 +529,9 @@ def _build_scan_reply_context(result: ScanResult, diagnosis: HttpScanResponse) -
         "treatmentPlan": result.treatmentPlan,
         "survivalProb": result.survivalProb,
         "is_abnormal": result.is_abnormal,
+        "recommendedPesticides": result.recommendedPesticides,
+        "recommendationSource": result.recommendationSource,
+        "matchedPestName": result.matchedPestName,
         "bbox": result.bbox.model_dump(),
         "confidence": diagnosis.confidence,
         "spread_risk": diagnosis.spread_risk,

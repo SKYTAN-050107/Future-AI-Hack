@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from datetime import datetime, timezone
 
 from google.cloud import firestore
@@ -32,6 +33,11 @@ class FirestoreService:
         self._report_col = settings.FIRESTORE_REPORT_COLLECTION
         self._grid_col = settings.FIRESTORE_GRID_COLLECTION
         self._candidate_col = settings.FIRESTORE_CANDIDATE_COLLECTION
+        self._pesticide_col = getattr(
+            settings,
+            "FIRESTORE_PESTICIDE_COLLECTION",
+            "pesticideCatalog",
+        )
 
     async def get_candidate_metadata_by_id(self, candidate_id: str) -> dict:
         """Read candidate metadata from Firestore using Vector Search candidate ID.
@@ -57,6 +63,9 @@ class FirestoreService:
         survivalProb: float,
         is_abnormal: bool,
         user_id: str | None = None,
+        recommended_pesticides: list[str] | None = None,
+        recommendation_source: str | None = None,
+        matched_pest_name: str | None = None,
     ) -> str:
         """Write a scan report to Firestore and update grid health.
 
@@ -83,6 +92,17 @@ class FirestoreService:
             "timestamp": datetime.now(timezone.utc),
         }
 
+        if recommended_pesticides:
+            doc_data["recommendedPesticides"] = [
+                item
+                for item in recommended_pesticides
+                if str(item).strip()
+            ]
+        if recommendation_source:
+            doc_data["recommendationSource"] = str(recommendation_source).strip()
+        if matched_pest_name:
+            doc_data["matchedPestName"] = str(matched_pest_name).strip()
+
         # Run synchronous Firestore writes in a thread to avoid blocking the event loop
         doc_id = await asyncio.to_thread(self._write_scan_report, doc_data)
 
@@ -99,6 +119,37 @@ class FirestoreService:
 
         return doc_id
 
+    async def get_pesticide_catalog_recommendation(self, pest_name: str) -> dict:
+        """Return pesticide recommendation metadata for a detected pest name.
+
+        Returns an empty dict when no catalog match exists.
+        """
+        if not str(pest_name or "").strip():
+            return {}
+
+        catalog_entry = await asyncio.to_thread(
+            self._read_pesticide_catalog_by_pest_name,
+            pest_name,
+        )
+        if not catalog_entry:
+            return {}
+
+        recommended = self._split_pesticide_list(
+            catalog_entry.get("mostCommonlyUsedPesticides"),
+        )
+        if not recommended:
+            return {}
+
+        matched_pest_name = str(catalog_entry.get("pestName") or pest_name).strip()
+        matched_doc_id = str(catalog_entry.get("_matchedDocId") or "").strip()
+
+        return {
+            "matchedPestName": matched_pest_name or str(pest_name).strip(),
+            "matchedDocId": matched_doc_id,
+            "recommendedPesticides": recommended,
+            "recommendationSource": "pesticideCatalog",
+        }
+
     # ── Internal synchronous Firestore operations ─────────────────────
 
     def _write_scan_report(self, doc_data: dict) -> str:
@@ -114,6 +165,115 @@ class FirestoreService:
             doc_data.get("abnormal"),
         )
         return doc_ref.id
+
+    def _read_pesticide_catalog_by_pest_name(self, pest_name: str) -> dict:
+        """Synchronous lookup from pesticide catalog by detected pest name."""
+        clean_name = str(pest_name or "").strip()
+        if not clean_name:
+            return {}
+
+        collection = self._db.collection(self._pesticide_col)
+        doc_id_candidates = self._build_catalog_doc_id_candidates(clean_name)
+
+        for doc_id in doc_id_candidates:
+            snapshot = collection.document(doc_id).get()
+            if snapshot.exists:
+                data = snapshot.to_dict() or {}
+                data["_matchedDocId"] = doc_id
+                logger.info(
+                    "Pesticide catalog hit by doc id: collection=%s id=%s",
+                    self._pesticide_col,
+                    doc_id,
+                )
+                return data
+
+        exact_matches = list(
+            collection.where("pestName", "==", clean_name).limit(1).stream(),
+        )
+        if exact_matches:
+            snapshot = exact_matches[0]
+            data = snapshot.to_dict() or {}
+            data["_matchedDocId"] = str(getattr(snapshot, "id", "")).strip()
+            logger.info(
+                "Pesticide catalog hit by exact pestName: collection=%s pestName=%s",
+                self._pesticide_col,
+                clean_name,
+            )
+            return data
+
+        # Final fallback for case/spacing variance: compare normalized pestName locally.
+        target_keys = set(doc_id_candidates)
+        snapshots = collection.limit(300).stream()
+        for snapshot in snapshots:
+            data = snapshot.to_dict() or {}
+            candidate_name = data.get("pestName")
+            if self._normalize_catalog_key(candidate_name) in target_keys:
+                data["_matchedDocId"] = str(getattr(snapshot, "id", "")).strip()
+                logger.info(
+                    "Pesticide catalog hit by normalized pestName scan: collection=%s pestName=%s",
+                    self._pesticide_col,
+                    clean_name,
+                )
+                return data
+
+        logger.info(
+            "Pesticide catalog miss: collection=%s pestName=%s",
+            self._pesticide_col,
+            clean_name,
+        )
+        return {}
+
+    @staticmethod
+    def _normalize_catalog_key(value: object) -> str:
+        normalized = re.sub(r"[^a-z0-9]+", "_", str(value or "").strip().lower())
+        normalized = normalized.strip("_")
+        return normalized or "unknown_pest"
+
+    @classmethod
+    def _build_catalog_doc_id_candidates(cls, pest_name: str) -> list[str]:
+        raw = str(pest_name or "").strip()
+        if not raw:
+            return []
+
+        candidates: list[str] = []
+
+        def add_candidate(text: str) -> None:
+            key = cls._normalize_catalog_key(text)
+            if key != "unknown_pest" and key not in candidates:
+                candidates.append(key)
+
+        add_candidate(raw)
+
+        no_parentheses = re.sub(r"\([^)]*\)", "", raw).strip()
+        if no_parentheses and no_parentheses != raw:
+            add_candidate(no_parentheses)
+
+        no_prefix = re.sub(r"^the\s+", "", raw, flags=re.IGNORECASE).strip()
+        if no_prefix and no_prefix != raw:
+            add_candidate(no_prefix)
+
+        return candidates
+
+    @staticmethod
+    def _split_pesticide_list(value: object) -> list[str]:
+        if isinstance(value, list):
+            raw_items = [str(item).strip() for item in value]
+        else:
+            text = str(value or "").replace("\n", ",")
+            raw_items = [segment.strip() for segment in re.split(r"[;,]", text)]
+
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for item in raw_items:
+            if not item:
+                continue
+            key = item.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            cleaned.append(item)
+
+        return cleaned
 
     def _read_candidate_metadata(self, candidate_id: str) -> dict:
         """Synchronous read from candidate metadata collection by document ID."""
