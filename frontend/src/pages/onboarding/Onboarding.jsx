@@ -1,5 +1,5 @@
 import { useLocation, useNavigate } from 'react-router-dom'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useSessionContext } from '../../hooks/useSessionContext'
 import { geocodeLocation } from '../../services/locationResolver'
 import { clearPostAuthPath, getPostAuthPath } from '../../utils/navigationState'
@@ -9,12 +9,6 @@ export default function Onboarding() {
   const navigate = useNavigate()
   const { completeOnboarding, profile } = useSessionContext()
   const fromProfile = Boolean(routerLocation.state?.fromProfile)
-  const initialStepRaw = Number(routerLocation.state?.initialStep)
-  const initialStep = Number.isFinite(initialStepRaw)
-    ? Math.max(0, Math.min(2, initialStepRaw))
-    : (fromProfile ? 1 : 0)
-  const editMode = String(routerLocation.state?.editMode || (fromProfile ? 'location' : '')).trim()
-  const [step, setStep] = useState(initialStep)
   const [farmName, setFarmName] = useState('')
   const [location, setLocation] = useState('')
   const [variety, setVariety] = useState('')
@@ -23,12 +17,10 @@ export default function Onboarding() {
   const [feedback, setFeedback] = useState('')
   const hydratedFromProfileRef = useRef(false)
 
-  const progress = useMemo(() => ((step + 1) / 3) * 100, [step])
-
-  const canProceed =
-    (step === 0 && farmName.trim().length > 2) ||
-    (step === 1 && location.trim().length > 5) ||
-    (step === 2 && variety.trim().length > 1)
+  const canSubmit =
+    farmName.trim().length > 2 &&
+    location.trim().length > 5 &&
+    language.trim().length > 0
 
   const saveOnboarding = async () => {
     setIsSaving(true)
@@ -84,18 +76,8 @@ export default function Onboarding() {
     hydratedFromProfileRef.current = true
   }, [profile?.onboarding])
 
-  const onNext = async () => {
-    if (!canProceed) {
-      return
-    }
-
-    if (fromProfile && editMode === 'location' && step === 1) {
-      await saveOnboarding()
-      return
-    }
-
-    if (step < 2) {
-      setStep((value) => value + 1)
+  const onSubmit = async () => {
+    if (!canSubmit) {
       return
     }
 
@@ -105,63 +87,38 @@ export default function Onboarding() {
   return (
     <div className="pg-public-screen">
       <section className="pg-auth-card">
-        <p className="pg-eyebrow">Step {step + 1} of 3</p>
         <h1 className="pg-title">Set up your farm</h1>
-        <p className="pg-copy">A few details help tailor tips to your field.</p>
-        <div className="pg-progress" role="progressbar" aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100}>
-          <span style={{ width: `${progress}%` }} />
-        </div>
+        <p className="pg-copy">Fill in your farm name, address, and language.</p>
 
-        {step === 0 ? (
-          <>
-            <label className="pg-field-label" htmlFor="farmName">Farm name</label>
-            <input
-              id="farmName"
-              className="pg-input"
-              placeholder="Kampung Seri Murni Plot"
-              value={farmName}
-              onChange={(event) => setFarmName(event.target.value)}
-            />
-          </>
-        ) : null}
+        <label className="pg-field-label" htmlFor="farmName">Farm name</label>
+        <input
+          id="farmName"
+          className="pg-input"
+          placeholder="Kampung Seri Murni Plot"
+          value={farmName}
+          onChange={(event) => setFarmName(event.target.value)}
+        />
 
-        {step === 1 ? (
-          <>
-            <label className="pg-field-label" htmlFor="location">Farm address</label>
-            <input
-              id="location"
-              className="pg-input"
-              placeholder="Lot, village, district, state"
-              value={location}
-              onChange={(event) => setLocation(event.target.value)}
-            />
-            <p className="pg-copy">Enter the most precise farm address you have. You can update it anytime from Profile.</p>
-          </>
-        ) : null}
+        <label className="pg-field-label" htmlFor="location">Farm address</label>
+        <input
+          id="location"
+          className="pg-input"
+          placeholder="Lot, village, district, state"
+          value={location}
+          onChange={(event) => setLocation(event.target.value)}
+        />
+        <p className="pg-copy">Enter the most precise farm address you have. You can update it anytime from Profile.</p>
 
-        {step === 2 ? (
-          <>
-            <label className="pg-field-label" htmlFor="variety">Padi type</label>
-            <input
-              id="variety"
-              className="pg-input"
-              placeholder="MR219"
-              value={variety}
-              onChange={(event) => setVariety(event.target.value)}
-            />
-
-            <label className="pg-field-label" htmlFor="language">Language</label>
-            <select
-              id="language"
-              className="pg-input"
-              value={language}
-              onChange={(event) => setLanguage(event.target.value)}
-            >
-              <option value="BM">Bahasa Melayu</option>
-              <option value="EN">English</option>
-            </select>
-          </>
-        ) : null}
+        <label className="pg-field-label" htmlFor="language">Language</label>
+        <select
+          id="language"
+          className="pg-input"
+          value={language}
+          onChange={(event) => setLanguage(event.target.value)}
+        >
+          <option value="BM">Bahasa Melayu</option>
+          <option value="EN">English</option>
+        </select>
 
         {feedback ? <p className="pg-copy">{feedback}</p> : null}
 
@@ -175,19 +132,8 @@ export default function Onboarding() {
               Back to profile
             </button>
           ) : null}
-          {step > 0 ? (
-            <button type="button" className="pg-btn pg-btn-ghost" onClick={() => setStep((value) => value - 1)}>
-              Back
-            </button>
-          ) : null}
-          <button type="button" className="pg-btn pg-btn-primary" onClick={onNext} disabled={!canProceed || isSaving}>
-            {isSaving
-              ? 'Saving…'
-              : fromProfile && editMode === 'location' && step === 1
-                ? 'Save address'
-                : step === 2
-                  ? 'Save and continue'
-                  : 'Next'}
+          <button type="button" className="pg-btn pg-btn-primary" onClick={onSubmit} disabled={!canSubmit || isSaving}>
+            {isSaving ? 'Saving…' : (fromProfile ? 'Save changes' : 'Save and continue')}
           </button>
         </div>
       </section>

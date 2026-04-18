@@ -440,6 +440,7 @@ export default function Dashboard() {
   return (
     <section className="pg-page pg-dashboard-page" aria-label="Financial and climate command center">
       <SectionHeader title="Home" align="center" />
+
       {loadError ? (
         <article className="pg-card">
           <p>{loadError}</p>

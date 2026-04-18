@@ -279,7 +279,7 @@ export default function Landing() {
       return
     }
     if (isIos) {
-      setInstallHint('On iPhone: tap Share, then Add to Home Screen to install PadiGuard AI.')
+      setInstallHint('On iPhone: tap Share, then Add to Home Screen to install AcreZen.')
       return
     }
     setInstallHint('Install prompt is unavailable right now. You can still continue in browser mode.')
@@ -307,7 +307,7 @@ export default function Landing() {
           >
             <span className="pg-landing-nav-logo-dot" aria-hidden="true" />
             <span className="pg-landing-nav-logo-text">
-              Padi<strong>Guard</strong> AI
+              Acre<strong>Zen</strong>
             </span>
           </button>
 
@@ -541,7 +541,7 @@ export default function Landing() {
           <div className="pg-landing-cta-buttons">
             <button type="button" className="pg-btn pg-btn-primary pg-btn-landing pg-btn-landing--primary" onClick={onInstall}>
               <IconDownload className="pg-icon pg-icon--btn" aria-hidden="true" />
-              Install PadiGuard AI
+              Install AcreZen
             </button>
             <button type="button" className="pg-btn pg-btn-ghost pg-btn-landing" onClick={goToAuth}>
               Sign in or sign up
@@ -552,9 +552,9 @@ export default function Landing() {
         {/* ── FOOTER ── */}
         <footer className="pg-landing-footer">
           <span className="pg-landing-footer-brand">
-            <span className="pg-landing-nav-logo-dot" aria-hidden="true" /> PadiGuard AI
+            <span className="pg-landing-nav-logo-dot" aria-hidden="true" /> AcreZen
           </span>
-          <span className="pg-landing-footer-copy">© 2026 — Crop help in your pocket</span>
+          <span className="pg-landing-footer-copy">© 2026 — Enterprise agronomy in your pocket</span>
         </footer>
       </main>
     </div>

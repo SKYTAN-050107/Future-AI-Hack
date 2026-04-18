@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { clearPostAuthPath, setLastAppPath } from '../../utils/navigationState'
 import BottomNav from '../BottomNav'
 import ThemeToggle from '../ui/ThemeToggle'
+import NotificationMenu from '../ui/NotificationMenu'
 
 function getPathRank(pathname) {
   if (pathname === '/app') {
@@ -51,7 +52,12 @@ export default function AppLayout() {
 
   return (
     <div className="pg-shell">
-      {!isScannerRoute ? <ThemeToggle className="pg-theme-toggle-app" /> : null}
+      {!isScannerRoute ? (
+        <div className="pg-top-actions">
+          <ThemeToggle />
+          <NotificationMenu />
+        </div>
+      ) : null}
       <main className={`pg-main-content ${isScannerRoute ? 'pg-main-content-scanner' : ''}`}>
         <div
           key={location.pathname}
