@@ -1,12 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import mapboxgl from 'mapbox-gl'
 import MapboxDraw from '@mapbox/mapbox-gl-draw'
 import * as turf from '@turf/turf'
+import { collection, deleteDoc, doc, getDocs, onSnapshot, query, where } from 'firebase/firestore'
 import 'mapbox-gl/dist/mapbox-gl.css'
 import '@mapbox/mapbox-gl-draw/dist/mapbox-gl-draw.css'
 import SectionHeader from '../../components/ui/SectionHeader'
+import { db } from '../../firebase'
 import { useOffline } from '../../hooks/useOffline'
 import { useGrids } from '../../hooks/useGrids'
+import { useSessionContext } from '../../hooks/useSessionContext'
 
 const DEFAULT_CENTER = [101.6958, 3.139]
 const HEALTH_COLORS = {
@@ -59,6 +62,146 @@ function createGridId() {
   return `GRID_${Math.random().toString(36).slice(2, 8).toUpperCase()}`
 }
 
+function extractMarkerPosition(value) {
+  if (!value) {
+    return null
+  }
+
+  if (Array.isArray(value) && value.length >= 2) {
+    const lng = Number(value[0])
+    const lat = Number(value[1])
+    if (Number.isFinite(lat) && Number.isFinite(lng)) {
+      return { lat, lng }
+    }
+    return null
+  }
+
+  const lat = Number(value?.lat ?? value?.latitude ?? value?._lat)
+  const lng = Number(value?.lng ?? value?.lon ?? value?.longitude ?? value?._long)
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return null
+  }
+
+  return { lat, lng }
+}
+
+function toMillis(value) {
+  if (!value) {
+    return 0
+  }
+
+  if (typeof value?.toMillis === 'function') {
+    return value.toMillis()
+  }
+
+  if (value instanceof Date) {
+    return value.getTime()
+  }
+
+  const parsed = Date.parse(String(value))
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function formatCapturedAt(value) {
+  const millis = toMillis(value)
+  if (millis <= 0) {
+    return ''
+  }
+
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      year: 'numeric',
+      month: 'short',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(new Date(millis))
+  } catch {
+    return new Date(millis).toISOString()
+  }
+}
+
+function toMarkerRecord(data, idHint, sourcePrefix) {
+  const markerPosition = extractMarkerPosition(data?.zonePosition || data?.zone_position)
+  if (!markerPosition) {
+    return null
+  }
+
+  const gridId = String(data?.gridId || data?.zone || '').trim() || 'Unlinked zone'
+  const captureId = String(data?.captureId || idHint || '').trim() || `${sourcePrefix}-${idHint}`
+  const capturedAtRaw = data?.capturedAt || data?.captureCapturedAt || data?.timestamp || data?.createdAt || null
+  const capturedAtMs = toMillis(capturedAtRaw)
+  const capturedAt = capturedAtMs > 0 ? new Date(capturedAtMs).toISOString() : ''
+  const diagnosisLabel = String(
+    data?.disease
+    || data?.diagnosis
+    || data?.result
+    || data?.resultLabel
+    || data?.matchedPestName
+    || data?.matched_pest_name
+    || data?.pestName
+    || data?.pest_name
+    || '',
+  ).trim()
+
+  return {
+    id: `${sourcePrefix}-${captureId}`,
+    captureId,
+    gridId,
+    lat: Number(markerPosition.lat),
+    lng: Number(markerPosition.lng),
+    capturedAt,
+    capturedAtMs,
+    capturedAtLabel: formatCapturedAt(capturedAtRaw),
+    diagnosisLabel,
+    zonePositionLabel: String(data?.zonePositionLabel || data?.zone_position_label || '').trim(),
+  }
+}
+
+function mergeMarkerRecords(...markerLists) {
+  const byCapture = new Map()
+
+  markerLists.flat().forEach((marker) => {
+    if (!marker) {
+      return
+    }
+
+    const key = String(marker.captureId || marker.id)
+    const existing = byCapture.get(key)
+    if (!existing || Number(marker.capturedAtMs || 0) >= Number(existing.capturedAtMs || 0)) {
+      byCapture.set(key, marker)
+    }
+  })
+
+  return Array.from(byCapture.values()).sort(
+    (left, right) => Number(right.capturedAtMs || 0) - Number(left.capturedAtMs || 0),
+  )
+}
+
+function createScanMarkerCollection(markers) {
+  return {
+    type: 'FeatureCollection',
+    features: markers
+      .filter((marker) => Number.isFinite(marker?.lat) && Number.isFinite(marker?.lng))
+      .map((marker) => ({
+        type: 'Feature',
+        id: marker.id,
+        properties: {
+          captureId: marker.captureId || '',
+          gridId: marker.gridId || 'Unlinked zone',
+          capturedAt: marker.capturedAt || '',
+          capturedAtLabel: marker.capturedAtLabel || '',
+          diagnosisLabel: marker.diagnosisLabel || null,
+          zonePositionLabel: marker.zonePositionLabel || '',
+        },
+        geometry: {
+          type: 'Point',
+          coordinates: [Number(marker.lng), Number(marker.lat)],
+        },
+      })),
+  }
+}
+
 export default function MapPage() {
   const mapContainerRef = useRef(null)
   const mapRef = useRef(null)
@@ -74,8 +217,12 @@ export default function MapPage() {
   const [isSavingPending, setIsSavingPending] = useState(false)
   const [deletingGridId, setDeletingGridId] = useState('')
   const [renamingGridId, setRenamingGridId] = useState('')
+  const [deletingMarkerCaptureId, setDeletingMarkerCaptureId] = useState('')
   const [lastSaveState, setLastSaveState] = useState('idle')
+  const [scanMarkers, setScanMarkers] = useState([])
+  const [markerLoadError, setMarkerLoadError] = useState('')
   const centroidTargetRef = useRef({ center: DEFAULT_CENTER, hasSaved: false })
+  const { user } = useSessionContext()
 
   const { isOnline } = useOffline()
   const {
@@ -90,6 +237,118 @@ export default function MapPage() {
 
   const mapboxToken = import.meta.env.VITE_MAPBOX_TOKEN
   const isMapboxConfigured = Boolean(mapboxToken && !mapboxToken.includes('YOUR_'))
+
+  useEffect(() => {
+    const uid = String(user?.uid || '').trim()
+    if (!db || !isFirebaseConfigured || !uid) {
+      setScanMarkers([])
+      setMarkerLoadError('')
+      return undefined
+    }
+
+    let captureMarkers = []
+    let ownerReportMarkers = []
+    let userReportMarkers = []
+
+    const pushMergedMarkers = () => {
+      setScanMarkers(
+        mergeMarkerRecords(captureMarkers, ownerReportMarkers, userReportMarkers),
+      )
+      setMarkerLoadError('')
+    }
+
+    const captureQuery = query(collection(db, 'users', uid, 'scanCaptures'))
+    const ownerReportQuery = query(collection(db, 'scanReports'), where('ownerUid', '==', uid))
+    const userReportQuery = query(collection(db, 'scanReports'), where('userId', '==', uid))
+
+    const unsubscribeCaptures = onSnapshot(
+      captureQuery,
+      (snapshot) => {
+        captureMarkers = snapshot.docs
+          .map((item) => toMarkerRecord(item.data() || {}, item.id, 'capture'))
+          .filter(Boolean)
+        pushMergedMarkers()
+      },
+      (snapshotError) => {
+        setMarkerLoadError(snapshotError?.message || 'Unable to load scan markers from captures.')
+      },
+    )
+
+    const unsubscribeOwnerReports = onSnapshot(
+      ownerReportQuery,
+      (snapshot) => {
+        ownerReportMarkers = snapshot.docs
+          .map((item) => toMarkerRecord(item.data() || {}, item.id, 'report-owner'))
+          .filter(Boolean)
+        pushMergedMarkers()
+      },
+      (snapshotError) => {
+        setMarkerLoadError(snapshotError?.message || 'Unable to load scan markers from reports.')
+      },
+    )
+
+    const unsubscribeUserReports = onSnapshot(
+      userReportQuery,
+      (snapshot) => {
+        userReportMarkers = snapshot.docs
+          .map((item) => toMarkerRecord(item.data() || {}, item.id, 'report-user'))
+          .filter(Boolean)
+        pushMergedMarkers()
+      },
+      (snapshotError) => {
+        setMarkerLoadError(snapshotError?.message || 'Unable to load scan markers from reports.')
+      },
+    )
+
+    return () => {
+      unsubscribeCaptures()
+      unsubscribeOwnerReports()
+      unsubscribeUserReports()
+    }
+  }, [isFirebaseConfigured, user?.uid])
+
+  const deleteMarkerByCaptureId = useCallback(async (captureId) => {
+    const uid = String(user?.uid || '').trim()
+    const safeCaptureId = String(captureId || '').trim()
+
+    if (!db || !isFirebaseConfigured) {
+      throw new Error('Marker delete requires Firebase configuration.')
+    }
+
+    if (!uid) {
+      throw new Error('Sign in is required to delete markers.')
+    }
+
+    if (!safeCaptureId) {
+      throw new Error('Missing capture ID for marker delete.')
+    }
+
+    const reportsSnapshot = await getDocs(
+      query(collection(db, 'scanReports'), where('captureId', '==', safeCaptureId)),
+    )
+
+    const ownedReportIds = new Set()
+    reportsSnapshot.docs.forEach((item) => {
+      const data = item.data() || {}
+      const isOwned = (
+        String(data?.ownerUid || '').trim() === uid
+        || String(data?.userId || '').trim() === uid
+        || String(data?.uid || '').trim() === uid
+      )
+      if (isOwned) {
+        ownedReportIds.add(String(item.id))
+      }
+    })
+
+    await deleteDoc(doc(db, 'users', uid, 'scanCaptures', safeCaptureId))
+    await Promise.all(
+      Array.from(ownedReportIds).map((reportId) => deleteDoc(doc(db, 'scanReports', reportId))),
+    )
+
+    return {
+      deletedReportCount: ownedReportIds.size,
+    }
+  }, [isFirebaseConfigured, user?.uid])
 
   const centroidTarget = useMemo(() => {
     const points = grids
@@ -387,6 +646,13 @@ export default function MapPage() {
         })
       }
 
+      if (!map.getSource('pg-scan-markers')) {
+        map.addSource('pg-scan-markers', {
+          type: 'geojson',
+          data: createScanMarkerCollection([]),
+        })
+      }
+
       map.addLayer({
         id: 'pg-grid-fill',
         type: 'fill',
@@ -438,6 +704,67 @@ export default function MapPage() {
         },
       })
 
+      map.addLayer({
+        id: 'pg-scan-marker-circle',
+        type: 'circle',
+        source: 'pg-scan-markers',
+        paint: {
+          'circle-radius': 6,
+          'circle-color': '#14B8A6',
+          'circle-stroke-color': '#E0F2FE',
+          'circle-stroke-width': 2,
+          'circle-opacity': 0.96,
+        },
+      })
+
+      map.addLayer({
+        id: 'pg-scan-marker-label',
+        type: 'symbol',
+        source: 'pg-scan-markers',
+        layout: {
+          'text-field': ['coalesce', ['get', 'diagnosisLabel'], ['get', 'gridId']],
+          'text-size': 11,
+          'text-offset': [0, 1.2],
+          'text-anchor': 'top',
+          'text-font': ['Open Sans Semibold', 'Arial Unicode MS Bold'],
+        },
+        paint: {
+          'text-color': '#F8FAFC',
+          'text-halo-color': '#0F172A',
+          'text-halo-width': 1.3,
+        },
+      })
+
+      map.on('click', 'pg-scan-marker-circle', (event) => {
+        const feature = event?.features?.[0]
+        if (!feature || feature.geometry?.type !== 'Point') {
+          return
+        }
+
+        const [lng, lat] = feature.geometry.coordinates || []
+        const diagnosisLabel = String(feature.properties?.diagnosisLabel || '').trim() || 'Pending diagnosis'
+        const capturedAt = String(feature.properties?.capturedAt || '').trim()
+        const capturedAtLabel = String(feature.properties?.capturedAtLabel || '').trim() || formatCapturedAt(capturedAt)
+
+        const header = `<strong>${diagnosisLabel}</strong>`
+        const timeLine = capturedAtLabel
+          ? `<div style="margin-top:4px;">拍照时间: ${capturedAtLabel}</div>`
+          : ''
+
+        new mapboxgl.Popup({ offset: 14 })
+          .setLngLat([Number(lng), Number(lat)])
+          .setHTML(`${header}${timeLine}`)
+          .addTo(map)
+      })
+
+      map.on('mouseenter', 'pg-scan-marker-circle', () => {
+        map.getCanvas().style.cursor = 'pointer'
+      })
+
+      map.on('mouseleave', 'pg-scan-marker-circle', () => {
+        map.getCanvas().style.cursor = ''
+      })
+
       fitToUserLocation()
       mapReadyRef.current = true
       setMapReady(true)
@@ -478,6 +805,17 @@ export default function MapPage() {
       bufferSource.setData(createBufferCollection(grids))
     }
   }, [grids, mapReady])
+
+  useEffect(() => {
+    if (!mapReady || !mapReadyRef.current || !mapRef.current) {
+      return
+    }
+
+    const markerSource = mapRef.current.getSource('pg-scan-markers')
+    if (markerSource) {
+      markerSource.setData(createScanMarkerCollection(scanMarkers))
+    }
+  }, [mapReady, scanMarkers])
 
   const onConfirmSave = async () => {
     if (!pendingFeature) {
@@ -541,6 +879,39 @@ export default function MapPage() {
       setLastSaveState('failed')
     } finally {
       setDeletingGridId('')
+    }
+  }
+
+  const handleDeleteScanMarker = async (marker) => {
+    const captureId = String(marker?.captureId || '').trim()
+    if (!captureId) {
+      setActionMessage('This marker cannot be deleted because capture ID is missing.')
+      setLastSaveState('failed')
+      return
+    }
+
+    if (!isFirebaseConfigured || !db) {
+      setActionMessage('Marker delete requires Firebase configuration and authenticated access.')
+      setLastSaveState('failed')
+      return
+    }
+
+    const diagnosisLabel = String(marker?.diagnosisLabel || marker?.gridId || captureId).trim()
+    const shouldDelete = window.confirm(`Delete marker "${diagnosisLabel}" and its saved scan records?`)
+    if (!shouldDelete) {
+      return
+    }
+
+    try {
+      setDeletingMarkerCaptureId(captureId)
+      const result = await deleteMarkerByCaptureId(captureId)
+      setActionMessage(`Deleted marker ${diagnosisLabel}. Removed ${result.deletedReportCount} linked reports.`)
+      setLastSaveState('saved')
+    } catch (deleteError) {
+      setActionMessage(deleteError?.message || 'Failed to delete scan marker.')
+      setLastSaveState('failed')
+    } finally {
+      setDeletingMarkerCaptureId('')
     }
   }
 
@@ -665,6 +1036,7 @@ export default function MapPage() {
             <p><strong>At-Risk</strong><span>{riskCount}</span></p>
             <p><strong>Infected</strong><span>{infectedCount}</span></p>
             <p><strong>Buffer zones</strong><span>{bufferedCount}</span></p>
+            <p><strong>Marked scans</strong><span>{scanMarkers.length}</span></p>
             <p><strong>Connection</strong><span>{isOnline ? 'Online' : 'Offline'}</span></p>
             <p><strong>Sync</strong><span>{syncStatusLabel}</span></p>
           </div>
@@ -673,6 +1045,53 @@ export default function MapPage() {
             <p className="pg-map-status" style={{ marginTop: 8 }}>
               <strong>Sync detail:</strong> {error}
             </p>
+          ) : null}
+
+          {markerLoadError ? (
+            <p className="pg-map-status" style={{ marginTop: 8 }}>
+              <strong>Marker sync detail:</strong> {markerLoadError}
+            </p>
+          ) : null}
+
+          {scanMarkers.length > 0 ? (
+            <article className="pg-card" style={{ marginTop: 12 }}>
+              <h3>Marked scan points</h3>
+              {scanMarkers.slice(0, 12).map((marker) => {
+                const markerName = String(marker?.diagnosisLabel || marker?.gridId || marker?.captureId || 'Unknown scan').trim()
+                const markerCaptureId = String(marker?.captureId || '')
+                const markerTime = String(marker?.capturedAtLabel || '').trim() || 'Unknown time'
+                return (
+                  <div
+                    key={marker.id}
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'flex-start',
+                      gap: 8,
+                      marginBottom: 8,
+                    }}
+                  >
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <small style={{ display: 'block', marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {markerName}
+                      </small>
+                      <small style={{ display: 'block', opacity: 0.78 }}>
+                        拍照时间: {markerTime}
+                      </small>
+                    </div>
+
+                    <button
+                      type="button"
+                      className="pg-btn"
+                      onClick={() => handleDeleteScanMarker(marker)}
+                      disabled={!markerCaptureId || deletingMarkerCaptureId === markerCaptureId}
+                    >
+                      {deletingMarkerCaptureId === markerCaptureId ? 'Deleting…' : 'Delete marker'}
+                    </button>
+                  </div>
+                )
+              })}
+            </article>
           ) : null}
 
           {grids.length > 0 ? (
