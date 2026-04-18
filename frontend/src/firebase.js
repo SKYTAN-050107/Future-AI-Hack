@@ -1,6 +1,7 @@
 import { getApp, getApps, initializeApp } from 'firebase/app'
 import { getAuth } from 'firebase/auth'
 import { enableIndexedDbPersistence, getFirestore } from 'firebase/firestore'
+import { getStorage } from 'firebase/storage'
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -22,11 +23,13 @@ export const isFirebaseConfigured = !hasMissingConfig && !hasPlaceholderValues
 let app = null
 let db = null
 let auth = null
+let storage = null
 
 if (isFirebaseConfigured) {
   app = getApps().length ? getApp() : initializeApp(firebaseConfig)
   db = getFirestore(app)
   auth = getAuth(app)
+  storage = getStorage(app)
 
   // Force local persistence to support offline-first grid editing.
   enableIndexedDbPersistence(db).catch((error) => {
@@ -40,4 +43,4 @@ if (isFirebaseConfigured) {
   )
 }
 
-export { app, db, auth }
+export { app, db, auth, storage }

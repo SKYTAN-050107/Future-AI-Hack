@@ -33,6 +33,10 @@ export function useScanReports() {
       gridId: report.gridId || null,
       zone: report.zone || null,
       note: report.note || null,
+      captureId: report.captureId || null,
+      captureDownloadURL: report.captureDownloadURL || null,
+      captureStoragePath: report.captureStoragePath || null,
+      captureCapturedAt: report.captureCapturedAt || null,
       createdAt: serverTimestamp(),
       lastUpdated: serverTimestamp(),
     }

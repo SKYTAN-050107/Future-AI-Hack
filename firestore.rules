@@ -33,6 +33,12 @@ service cloud.firestore {
       allow read, write: if signedIn() && request.auth.uid == userId;
     }
 
+    match /users/{userId}/scanCaptures/{captureId} {
+      allow read: if signedIn() && request.auth.uid == userId;
+      allow create, update: if signedIn() && request.auth.uid == userId && request.resource.data.ownerUid == userId;
+      allow delete: if signedIn() && request.auth.uid == userId;
+    }
+
     match /conversations/{conversationId} {
       allow create: if isLegacyConversationOwner(request.resource.data);
       allow read, delete: if isLegacyConversationOwner(resource.data);

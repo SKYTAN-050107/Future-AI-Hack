@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { IconArrowLeft, IconSparkles } from '../../components/icons/UiIcons'
+import { useSessionContext } from '../../hooks/useSessionContext'
+import { createScanCaptureId, persistUserScanCapture } from '../../services/scanCaptureStore'
 
 const PENDING_CAPTURE_KEY = 'pg_pending_scan_capture_v1'
 const LIVE_FRAME_INTERVAL_MS = 1300
@@ -57,6 +59,7 @@ function savePendingCapture(payload) {
 
 export default function Scanner() {
   const navigate = useNavigate()
+  const { user } = useSessionContext()
   const videoRef = useRef(null)
   const streamRef = useRef(null)
   const wsRef = useRef(null)
@@ -320,18 +323,43 @@ export default function Scanner() {
     setIsSubmitting(true)
     const capturedAt = new Date()
     setLastCaptureTime(formatCaptureTime(capturedAt))
-    setStatusMessage('Frame captured. Opening PadiGuard AI Assistant...')
+    setStatusMessage('Frame captured. Saving photo to your account...')
 
     try {
+      const captureId = createScanCaptureId()
+      const uid = String(user?.uid || '').trim()
       const base64Image = captureFrameAsDataUrl(videoRef.current)
+      let persistedCapture = { captureId, persisted: false, downloadURL: null, storagePath: null }
+
+      if (uid) {
+        try {
+          persistedCapture = await persistUserScanCapture({
+            uid,
+            captureId,
+            base64Image,
+            capturedAt: capturedAt.toISOString(),
+            source: 'camera',
+            userPrompt: 'I just took this photo. Please analyze it and tell me what to do next.',
+          })
+        } catch (captureError) {
+          console.warn('Failed to persist scanner capture:', captureError)
+        }
+      }
+
       savePendingCapture({
         source: 'camera',
+        captureId,
         base64Image,
         capturedAt: capturedAt.toISOString(),
         userPrompt: 'I just took this photo. Please analyze it and tell me what to do next.',
+        ownerUid: uid || null,
+        captureDownloadURL: persistedCapture.downloadURL || null,
+        captureStoragePath: persistedCapture.storagePath || null,
+        capturePersisted: Boolean(persistedCapture.persisted),
       })
 
-      navigate('/app/chatbot?fromScan=1')
+      setStatusMessage('Photo saved. Opening PadiGuard AI Assistant...')
+      navigate(`/app/chatbot?fromScan=1&captureId=${encodeURIComponent(captureId)}`)
     } catch (error) {
       setStatusMessage(error?.message || 'Capture failed. Please try again.')
     } finally {
@@ -394,6 +422,7 @@ export default function Scanner() {
         <div className="pg-scanner-top-actions">
           <button
             type="button"
+            disabled={isSubmitting}
             className="pg-scanner-overlay-btn pg-scanner-chatbot-btn"
             onClick={() => navigate('/app/chatbot')}
             aria-label="Open AI chatbot"
