@@ -3356,6 +3356,14 @@ body {
   color: var(--text-secondary);
 }
 
+.pg-profile-signout-btn {
+  color: #102027;
+}
+
+.dark .pg-profile-signout-btn {
+  color: var(--on-primary);
+}
+
 .pg-profile-details {
   margin-top: 12px;
   display: flex;
@@ -3389,6 +3397,16 @@ body {
   justify-content: space-between;
   align-items: center;
   min-width: 0;
+}
+
+.pg-profile-detail-actions {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(var(--border-rgb), 0.4);
+}
+
+.pg-profile-edit-address-btn {
+  width: 100%;
 }
 
 .pg-profile-detail-label {
@@ -3968,6 +3986,10 @@ body {
   animation: fade-in 0.3s forwards;
 }
 
+.dark .pg-modal-backdrop {
+  background: rgba(2, 6, 23, 0.7);
+}
+
 @keyframes fade-in {
   from { opacity: 0; }
   to { opacity: 1; }
@@ -4005,4 +4027,261 @@ body {
 
 .pg-modal-drawer .pg-field-label {
   margin-top: 12px;
+}
+
+/* ── Themed Modal Drawer — works in both light & dark ── */
+.pg-modal-drawer-themed {
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  color: var(--text-primary);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-bottom: none;
+}
+.dark .pg-modal-drawer-themed {
+  background: rgba(15, 23, 42, 0.92);
+  border-color: rgba(148, 163, 184, 0.34);
+  box-shadow: 0 -10px 34px rgba(0, 0, 0, 0.52);
+  color: #e2e8f0;
+}
+.dark .pg-modal-drawer-themed h2 {
+  color: #f8fafc;
+}
+.dark .pg-modal-drawer-themed p {
+  color: #d8e2ee;
+}
+.dark .pg-modal-drawer-themed .pg-field-label {
+  color: #b5c3d3;
+}
+.dark .pg-modal-drawer-themed .pg-input {
+  background: rgba(15, 23, 42, 0.84);
+  border-color: rgba(148, 163, 184, 0.42);
+  color: #f8fafc;
+}
+.dark .pg-modal-drawer-themed .pg-input::placeholder {
+  color: rgba(226, 232, 240, 0.52);
+}
+.dark .pg-modal-drawer-themed .pg-profile-detail-label {
+  color: #b5c3d3;
+}
+.dark .pg-modal-drawer-themed .pg-profile-detail-value {
+  color: #f8fafc;
+}
+.dark .pg-modal-drawer-themed .pg-profile-detail-row .pg-icon {
+  color: #6EE7B7;
+}
+
+.dark .pg-modal-drawer-themed .pg-btn-ghost {
+  color: #d1fae5;
+  border-color: rgba(110, 231, 183, 0.55);
+  background: rgba(16, 185, 129, 0.14);
+}
+
+.pg-btn-danger-soft {
+  background: rgba(var(--danger-rgb), 0.12);
+  color: var(--danger);
+  border: 1px solid rgba(var(--danger-rgb), 0.38);
+}
+
+.dark .pg-btn-danger-soft {
+  background: rgba(var(--danger-rgb), 0.22);
+  border-color: rgba(var(--danger-rgb), 0.58);
+  color: #fecaca;
+}
+
+/* ════════════════════════════════════════════════════════
+   MICRO-ANIMATIONS & HOVER EFFECTS — Global Overrides
+   ════════════════════════════════════════════════════════ */
+
+/* ── 1. Bottom Nav Bar Tabs ── */
+.pg-bottom-nav-tab {
+  transition: color 0.25s ease, background-color 0.25s ease, transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.pg-bottom-nav-tab:hover {
+  transform: translateY(-2px);
+  color: #0F766E;
+}
+.pg-bottom-nav-tab:active {
+  transform: translateY(0) scale(0.92);
+}
+.pg-bottom-nav-icon-wrap {
+  transition: background 0.25s ease, transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.pg-bottom-nav-tab:hover .pg-bottom-nav-icon-wrap {
+  background: rgba(16, 185, 129, 0.18);
+  transform: scale(1.15);
+}
+.pg-bottom-nav-label {
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+.pg-bottom-nav-tab:hover .pg-bottom-nav-label {
+  transform: translateY(-1px);
+}
+
+/* ── 2. Scanner FAB (center nav) ── */
+.pg-scan-fab {
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.3s ease !important;
+}
+.pg-scan-fab:hover {
+  transform: translate(-50%, -32%) scale(1.1);
+  box-shadow: 0 22px 40px rgba(5, 150, 105, 0.45);
+}
+
+/* ── 3. Theme Toggle & Notification Buttons (top-right) ── */
+.pg-theme-toggle {
+  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease !important;
+}
+.pg-theme-toggle:hover {
+  transform: scale(1.12);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+  border-color: rgba(16, 185, 129, 0.4);
+}
+.pg-theme-toggle:active {
+  transform: scale(0.9);
+}
+.pg-theme-toggle .pg-icon {
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.pg-theme-toggle:hover .pg-icon {
+  transform: rotate(25deg);
+}
+
+/* Notification bell button (same group) */
+.pg-top-actions button {
+  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s ease;
+}
+.pg-top-actions button:hover {
+  transform: scale(1.12);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+}
+.pg-top-actions button:active {
+  transform: scale(0.9);
+}
+
+/* ── 4. Dashboard Widget Cards ── */
+.pg-dashboard-card {
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.3s ease, border-color 0.3s ease !important;
+}
+.pg-dashboard-card:hover {
+  transform: translateY(-4px) scale(1.01);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.1);
+  border-color: rgba(16, 185, 129, 0.3);
+}
+.dark .pg-dashboard-card:hover {
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+}
+.pg-dashboard-card:active {
+  transform: scale(0.97) !important;
+}
+
+/* Dashboard card icons lift on hover */
+.pg-dashboard-card .pg-icon {
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.pg-dashboard-card:hover .pg-icon {
+  transform: scale(1.2) rotate(-5deg);
+}
+
+/* ── 5. Profile Page Cards ── */
+.pg-profile-card {
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.3s ease, border-color 0.3s ease !important;
+}
+.pg-profile-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.08);
+  border-color: rgba(16, 185, 129, 0.25);
+}
+.dark .pg-profile-card:hover {
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.3);
+}
+
+/* Profile detail rows get a subtle highlight */
+.pg-profile-detail-row {
+  transition: background 0.2s ease, padding-left 0.2s ease;
+  border-radius: 10px;
+  padding: 8px;
+  margin: -8px;
+  margin-bottom: 0;
+}
+.pg-profile-detail-row:hover {
+  background: rgba(16, 185, 129, 0.05);
+  padding-left: 14px;
+}
+.dark .pg-profile-detail-row:hover {
+  background: rgba(16, 185, 129, 0.08);
+}
+
+/* Profile hero glass avatar bounce */
+.pg-profile-hero-glass .pg-profile-avatar {
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.3s ease !important;
+}
+.pg-profile-hero-glass .pg-profile-avatar:hover {
+  transform: scale(1.08);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15) !important;
+}
+
+/* ── 6. Map Page Buttons ── */
+.pg-page-map .pg-btn {
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s ease, background 0.2s ease !important;
+}
+.pg-page-map .pg-btn:hover {
+  transform: translateY(-2px) scale(1.03);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+}
+.pg-page-map .pg-btn:active {
+  transform: scale(0.95);
+}
+
+/* ── 7. Inventory FAB ── */
+.pg-inventory-add-fab {
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.3s ease !important;
+}
+.pg-inventory-add-fab:hover {
+  transform: scale(1.12);
+  box-shadow: 0 20px 32px rgba(16, 185, 129, 0.4);
+}
+.pg-inventory-add-fab:active {
+  transform: scale(0.92);
+}
+.pg-inventory-add-fab .pg-icon {
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.pg-inventory-add-fab:hover .pg-icon {
+  transform: rotate(90deg);
+}
+
+/* ── 8. Generic .pg-card hover (used across profile, maps, etc.) ── */
+.pg-card {
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.25s ease;
+}
+.pg-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(var(--text-rgb), 0.1);
+}
+
+/* ── 9. Generic .pg-btn hover enhancements ── */
+.pg-btn {
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s ease, background 0.2s ease, opacity 0.2s ease !important;
+}
+.pg-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+.pg-btn:active:not(:disabled) {
+  transform: scale(0.96);
+}
+.pg-btn-primary:hover:not(:disabled) {
+  box-shadow: 0 6px 18px rgba(16, 185, 129, 0.35);
+}
+
+/* ── 10. Back button ── */
+.pg-back-btn {
+  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s ease !important;
+}
+.pg-back-btn:hover {
+  transform: scale(1.1);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1);
+}
+.pg-back-btn:active {
+  transform: scale(0.9);
 }

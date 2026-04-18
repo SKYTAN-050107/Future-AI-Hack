@@ -398,7 +398,7 @@ export default function Inventory() {
       {/* Add Item Modal */}
       {isAddingItem && (
         <div className="pg-modal-backdrop" onClick={closeAddModal}>
-          <div className="pg-modal-drawer" style={{ background: 'rgba(255, 255, 255, 0.85)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)' }} onClick={(e) => e.stopPropagation()}>
+          <div className="pg-modal-drawer pg-modal-drawer-themed" onClick={(e) => e.stopPropagation()}>
             <div className="pg-modal-close-bar" onClick={closeAddModal}></div>
             <h2 style={{ marginTop: 0, marginBottom: 16 }}>Add New Item</h2>
             {error && <p style={{ color: 'var(--danger)', marginBottom: 16 }}>{error}</p>}
@@ -431,7 +431,7 @@ export default function Inventory() {
       {/* Edit/Details Modal */}
       {editModalItem && (
         <div className="pg-modal-backdrop" onClick={closeEditModal}>
-          <div className="pg-modal-drawer" style={{ background: 'rgba(255, 255, 255, 0.85)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)' }} onClick={(e) => e.stopPropagation()}>
+          <div className="pg-modal-drawer pg-modal-drawer-themed" onClick={(e) => e.stopPropagation()}>
             <div className="pg-modal-close-bar" onClick={closeEditModal}></div>
             <h2 style={{ marginTop: 0, marginBottom: 16 }}>{editModalItem.name}</h2>
             {error && <p style={{ color: 'var(--danger)', marginBottom: 16 }}>{error}</p>}
@@ -456,8 +456,8 @@ export default function Inventory() {
                 </button>
                 <button 
                   type="button" 
-                  className="pg-btn" 
-                  style={{ width: '100%', background: 'rgba(var(--danger-rgb), 0.1)', color: 'var(--danger)', border: '1px solid rgba(var(--danger-rgb), 0.4)' }}
+                  className="pg-btn pg-btn-danger-soft"
+                  style={{ width: '100%' }}
                   onClick={handleRemoveInventory} 
                   disabled={isUpdatingItem || isRemovingItem}
                 >

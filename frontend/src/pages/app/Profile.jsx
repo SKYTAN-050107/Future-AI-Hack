@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useSessionContext } from '../../hooks/useSessionContext'
 import { getCrops } from '../../api/crops'
 import { getTreatmentPlan } from '../../api/treatment'
+import { geocodeLocation } from '../../services/locationResolver'
 import { saveActiveCropSelection } from '../../services/userProfile'
 import SectionHeader from '../../components/ui/SectionHeader'
 import { IconUser, IconMap, IconSprout, IconChart } from '../../components/icons/UiIcons'
@@ -40,12 +41,18 @@ function formatRoiLabel(plan) {
 
 export default function Profile() {
   const navigate = useNavigate()
-  const { logout, user, profile } = useSessionContext()
+  const { logout, user, profile, completeOnboarding } = useSessionContext()
   const [crops, setCrops] = useState([])
   const [selectedCropId, setSelectedCropId] = useState('')
   const [cropSummary, setCropSummary] = useState(null)
   const [isCropLoading, setIsCropLoading] = useState(false)
   const [cropError, setCropError] = useState('')
+  const [isEditAddressOpen, setIsEditAddressOpen] = useState(false)
+  const [editFarmName, setEditFarmName] = useState('')
+  const [editLocation, setEditLocation] = useState('')
+  const [editLanguage, setEditLanguage] = useState('BM')
+  const [isSavingFarmDetails, setIsSavingFarmDetails] = useState(false)
+  const [editFarmFeedback, setEditFarmFeedback] = useState('')
 
   const displayName = user?.displayName || user?.email?.split('@')[0] || 'Farmer'
   const email = user?.email || 'Not signed in'
@@ -59,6 +66,70 @@ export default function Profile() {
     () => crops.find((item) => item.id === selectedCropId) || null,
     [crops, selectedCropId],
   )
+
+  const canSaveFarmDetails =
+    editFarmName.trim().length > 2 &&
+    editLocation.trim().length > 5 &&
+    editLanguage.trim().length > 0
+
+  function openEditFarmDetailsModal() {
+    setEditFarmName(farmName === 'My Farm' ? '' : farmName)
+    setEditLocation(location === 'Not set' ? '' : location)
+    setEditLanguage(language)
+    setEditFarmFeedback('')
+    setIsEditAddressOpen(true)
+  }
+
+  function closeEditFarmDetailsModal() {
+    setIsEditAddressOpen(false)
+    setEditFarmFeedback('')
+  }
+
+  async function handleSaveFarmDetails(event) {
+    event.preventDefault()
+
+    if (!canSaveFarmDetails || isSavingFarmDetails) {
+      return
+    }
+
+    setIsSavingFarmDetails(true)
+    setEditFarmFeedback('')
+
+    try {
+      const trimmedLocation = editLocation.trim()
+      let resolvedLocation = null
+
+      if (trimmedLocation) {
+        try {
+          resolvedLocation = await geocodeLocation(trimmedLocation)
+        } catch {
+          resolvedLocation = null
+        }
+      }
+
+      const result = await completeOnboarding({
+        farmName: editFarmName.trim(),
+        location: trimmedLocation,
+        locationLabel: resolvedLocation?.label || trimmedLocation,
+        locationLat: resolvedLocation?.lat ?? null,
+        locationLng: resolvedLocation?.lng ?? null,
+        locationSource: resolvedLocation ? 'geocoded' : 'manual',
+        variety: String(profile?.onboarding?.variety || '').trim() || null,
+        language: editLanguage,
+      })
+
+      if (result?.persisted === false) {
+        setEditFarmFeedback('Saved locally. Cloud sync will retry when connection is ready.')
+        return
+      }
+
+      closeEditFarmDetailsModal()
+    } catch (error) {
+      setEditFarmFeedback(error?.message || 'Unable to save farm details right now. Please try again.')
+    } finally {
+      setIsSavingFarmDetails(false)
+    }
+  }
 
   useEffect(() => {
     let active = true
@@ -166,6 +237,18 @@ export default function Profile() {
         </div>
         <h2 className="pg-profile-name pg-glass-text">{displayName}</h2>
         <p className="pg-profile-email pg-glass-text">{email}</p>
+        <div className="pg-cta-row" style={{ marginTop: 12 }}>
+          <button
+            type="button"
+            className="pg-btn pg-btn-primary pg-btn-inline pg-profile-signout-btn"
+            onClick={async () => {
+              await logout()
+              navigate('/auth', { replace: true })
+            }}
+          >
+            Sign out
+          </button>
+        </div>
       </div>
 
       <article className="pg-card pg-glass-panel pg-profile-card">
@@ -192,6 +275,16 @@ export default function Profile() {
               <span className="pg-profile-detail-label">Language</span>
               <span className="pg-profile-detail-value">{language === 'BM' ? 'Bahasa Melayu' : language}</span>
             </div>
+          </div>
+
+          <div className="pg-profile-detail-actions">
+            <button
+              type="button"
+              className="pg-btn pg-btn-ghost pg-profile-edit-address-btn"
+              onClick={openEditFarmDetailsModal}
+            >
+              Edit farm details
+            </button>
           </div>
         </div>
       </article>
@@ -235,23 +328,74 @@ export default function Profile() {
         </div>
       </article>
 
-      <article className="pg-card pg-glass-panel pg-profile-card" style={{ marginBottom: 40 }}>
-        <h2>Account</h2>
-        <p style={{ marginTop: 0 }}>You can update your farm address anytime.</p>
-        <div className="pg-cta-row">
-          <button type="button" className="pg-btn pg-btn-ghost" onClick={() => {
-            navigate('/onboarding', { state: { fromProfile: true, initialStep: 1, editMode: 'location' } })
-          }}>
-            Edit farm address
-          </button>
-          <button type="button" className="pg-btn pg-btn-primary" onClick={async () => {
-            await logout()
-            navigate('/auth', { replace: true })
-          }}>
-            Sign out
-          </button>
+      {/* Edit Farm Details Slide-up Modal */}
+      {isEditAddressOpen && (
+        <div className="pg-modal-backdrop" onClick={closeEditFarmDetailsModal}>
+          <div className="pg-modal-drawer pg-modal-drawer-themed" onClick={(e) => e.stopPropagation()}>
+            <div className="pg-modal-close-bar" onClick={closeEditFarmDetailsModal}></div>
+            <h2 style={{ marginTop: 0, marginBottom: 8 }}>Edit Farm Details</h2>
+            <p style={{ margin: '0 0 20px', fontSize: '0.88rem', opacity: 0.7 }}>
+              Update your farm details here. Changes will be saved without leaving this page.
+            </p>
+
+            <form onSubmit={handleSaveFarmDetails}>
+              <label className="pg-field-label" htmlFor="pg-edit-farm-name">Farm Name</label>
+              <input
+                id="pg-edit-farm-name"
+                className="pg-input"
+                type="text"
+                value={editFarmName}
+                onChange={(event) => setEditFarmName(event.target.value)}
+                placeholder="Kampung Seri Murni Plot"
+              />
+
+              <label className="pg-field-label" htmlFor="pg-edit-farm-location">Farm address</label>
+              <input
+                id="pg-edit-farm-location"
+                className="pg-input"
+                type="text"
+                value={editLocation}
+                onChange={(event) => setEditLocation(event.target.value)}
+                placeholder="Lot, village, district, state"
+              />
+
+              <label className="pg-field-label" htmlFor="pg-edit-farm-language">Language</label>
+              <select
+                id="pg-edit-farm-language"
+                className="pg-input"
+                value={editLanguage}
+                onChange={(event) => setEditLanguage(event.target.value)}
+              >
+                <option value="BM">Bahasa Melayu</option>
+                <option value="EN">English</option>
+              </select>
+
+              {editFarmFeedback ? (
+                <p style={{ marginTop: 12, marginBottom: 0, color: 'var(--danger)' }}>{editFarmFeedback}</p>
+              ) : null}
+
+              <div className="pg-cta-row" style={{ flexDirection: 'column', gap: 12 }}>
+                <button
+                  type="submit"
+                  className="pg-btn pg-btn-primary"
+                  style={{ width: '100%' }}
+                  disabled={!canSaveFarmDetails || isSavingFarmDetails}
+                >
+                  {isSavingFarmDetails ? 'Saving...' : 'Save Farm Details'}
+                </button>
+                <button
+                  type="button"
+                  className="pg-btn pg-btn-ghost"
+                  style={{ width: '100%' }}
+                  onClick={closeEditFarmDetailsModal}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
-      </article>
+      )}
     </section>
   )
 }
