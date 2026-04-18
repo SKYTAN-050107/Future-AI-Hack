@@ -1,11 +1,13 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { IconArrowLeft, IconSparkles } from '../../components/icons/UiIcons'
+import { useGrids } from '../../hooks/useGrids'
 import { useSessionContext } from '../../hooks/useSessionContext'
 import { createScanCaptureId, persistUserScanCapture } from '../../services/scanCaptureStore'
 
 const PENDING_CAPTURE_KEY = 'pg_pending_scan_capture_v1'
 const LIVE_FRAME_INTERVAL_MS = 1300
+const DEFAULT_CAPTURE_PROMPT = 'I just took this photo. Please analyze it and tell me what to do next.'
 
 function resolveWsScanUrl() {
   if (typeof window === 'undefined') {
@@ -109,6 +111,7 @@ function savePendingCapture(payload) {
 export default function Scanner() {
   const navigate = useNavigate()
   const { user } = useSessionContext()
+  const { grids } = useGrids()
   const videoRef = useRef(null)
   const streamRef = useRef(null)
   const wsRef = useRef(null)
@@ -122,7 +125,117 @@ export default function Scanner() {
   const [lastCaptureTime, setLastCaptureTime] = useState('')
   const [isCaptureFlashVisible, setIsCaptureFlashVisible] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isFinalizingCapture, setIsFinalizingCapture] = useState(false)
   const [liveDetections, setLiveDetections] = useState([])
+  const [isZoneChoiceOpen, setIsZoneChoiceOpen] = useState(false)
+  const [selectedGridId, setSelectedGridId] = useState('')
+  const [zoneChoiceError, setZoneChoiceError] = useState('')
+  const [pendingCaptureDraft, setPendingCaptureDraft] = useState(null)
+
+  const zoneOptions = useMemo(() => {
+    const uniqueZones = new Map()
+
+    for (const grid of grids || []) {
+      const gridId = String(grid?.gridId || grid?.id || '').trim()
+      if (!gridId || uniqueZones.has(gridId)) {
+        continue
+      }
+
+      uniqueZones.set(gridId, {
+        value: gridId,
+        label: gridId,
+        healthState: String(grid?.healthState || 'Healthy'),
+        areaHectares: Number(grid?.areaHectares || 0),
+      })
+    }
+
+    return Array.from(uniqueZones.values())
+  }, [grids])
+
+  const resetZoneChoiceState = () => {
+    setIsZoneChoiceOpen(false)
+    setSelectedGridId('')
+    setZoneChoiceError('')
+    setPendingCaptureDraft(null)
+  }
+
+  const finalizeCaptureWithZone = async (gridId) => {
+    if (!pendingCaptureDraft) {
+      return
+    }
+
+    const resolvedGridId = String(gridId || '').trim() || null
+    const { captureId, uid, base64Image, capturedAtIso } = pendingCaptureDraft
+
+    setIsFinalizingCapture(true)
+    setStatusMessage('Saving photo to your account...')
+
+    try {
+      let persistedCapture = { captureId, persisted: false, downloadURL: null, storagePath: null }
+
+      if (uid) {
+        try {
+          persistedCapture = await persistUserScanCapture({
+            uid,
+            captureId,
+            base64Image,
+            capturedAt: capturedAtIso,
+            source: 'camera',
+            userPrompt: DEFAULT_CAPTURE_PROMPT,
+            gridId: resolvedGridId,
+          })
+        } catch (captureError) {
+          console.warn('Failed to persist scanner capture:', captureError)
+        }
+      }
+
+      savePendingCapture({
+        source: 'camera',
+        captureId,
+        base64Image,
+        capturedAt: capturedAtIso,
+        userPrompt: DEFAULT_CAPTURE_PROMPT,
+        ownerUid: uid || null,
+        gridId: resolvedGridId,
+        zoneAssignmentMode: resolvedGridId ? 'selected' : 'skipped',
+        captureDownloadURL: persistedCapture.downloadURL || null,
+        captureStoragePath: persistedCapture.storagePath || null,
+        capturePersisted: Boolean(persistedCapture.persisted),
+      })
+
+      resetZoneChoiceState()
+      setStatusMessage('Photo saved. Opening PadiGuard AI Assistant...')
+      navigate(`/app/chatbot?fromScan=1&captureId=${encodeURIComponent(captureId)}`)
+    } catch (error) {
+      setStatusMessage(error?.message || 'Capture failed. Please try again.')
+    } finally {
+      setIsFinalizingCapture(false)
+    }
+  }
+
+  const handleSkipZone = () => {
+    setZoneChoiceError('')
+    void finalizeCaptureWithZone(null)
+  }
+
+  const handleUseSelectedZone = () => {
+    if (!selectedGridId) {
+      setZoneChoiceError('Please select a zone or skip zone for photo-only diagnosis.')
+      return
+    }
+
+    setZoneChoiceError('')
+    void finalizeCaptureWithZone(selectedGridId)
+  }
+
+  const handleRetakeCapture = () => {
+    if (isFinalizingCapture) {
+      return
+    }
+
+    resetZoneChoiceState()
+    setStatusMessage('Capture discarded. Take another photo when ready.')
+  }
 
   const stopLiveLoop = () => {
     if (frameTimerRef.current) {
@@ -363,43 +476,28 @@ export default function Scanner() {
     setIsSubmitting(true)
     const capturedAt = new Date()
     setLastCaptureTime(formatCaptureTime(capturedAt))
-    setStatusMessage('Frame captured. Saving photo to your account...')
+    setStatusMessage('Frame captured. Preparing zone options...')
 
     try {
       const captureId = createScanCaptureId()
       const uid = String(user?.uid || '').trim()
       const base64Image = captureFrameAsDataUrl(videoRef.current)
-      let persistedCapture = { captureId, persisted: false, downloadURL: null, storagePath: null }
+      const capturedAtIso = capturedAt.toISOString()
 
-      if (uid) {
-        try {
-          persistedCapture = await persistUserScanCapture({
-            uid,
-            captureId,
-            base64Image,
-            capturedAt: capturedAt.toISOString(),
-            source: 'camera',
-            userPrompt: 'I just took this photo. Please analyze it and tell me what to do next.',
-          })
-        } catch (captureError) {
-          console.warn('Failed to persist scanner capture:', captureError)
-        }
-      }
-
-      savePendingCapture({
-        source: 'camera',
+      setPendingCaptureDraft({
         captureId,
+        uid,
         base64Image,
-        capturedAt: capturedAt.toISOString(),
-        userPrompt: 'I just took this photo. Please analyze it and tell me what to do next.',
-        ownerUid: uid || null,
-        captureDownloadURL: persistedCapture.downloadURL || null,
-        captureStoragePath: persistedCapture.storagePath || null,
-        capturePersisted: Boolean(persistedCapture.persisted),
+        capturedAtIso,
       })
-
-      setStatusMessage('Photo saved. Opening PadiGuard AI Assistant...')
-      navigate(`/app/chatbot?fromScan=1&captureId=${encodeURIComponent(captureId)}`)
+      setSelectedGridId('')
+      setZoneChoiceError('')
+      setIsZoneChoiceOpen(true)
+      setStatusMessage(
+        zoneOptions.length > 0
+          ? 'Photo captured. Select a zone or skip for photo-only diagnosis.'
+          : 'Photo captured. No saved zones found. Continue with photo-only diagnosis.',
+      )
     } catch (error) {
       setStatusMessage(error?.message || 'Capture failed. Please try again.')
     } finally {
@@ -469,7 +567,7 @@ export default function Scanner() {
         <div className="pg-scanner-top-actions">
           <button
             type="button"
-            disabled={isSubmitting}
+            disabled={isSubmitting || isFinalizingCapture || isZoneChoiceOpen}
             className="pg-scanner-overlay-btn pg-scanner-chatbot-btn"
             onClick={() => navigate('/app/chatbot')}
             aria-label="Open AI chatbot"
@@ -488,10 +586,93 @@ export default function Scanner() {
           type="button"
           className="pg-scanner-capture-btn"
           onClick={handleCapture}
-          disabled={isSubmitting}
+          disabled={isSubmitting || isFinalizingCapture || isZoneChoiceOpen}
           aria-label="Capture crop photo"
         />
       </footer>
+
+      {isZoneChoiceOpen && pendingCaptureDraft ? (
+        <div
+          className="pg-sheet-overlay pg-scanner-zone-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Optional zone selection"
+        >
+          <section className="pg-sheet pg-scanner-zone-sheet">
+            <span className="pg-sheet-handle" aria-hidden="true" />
+
+            <header className="pg-sheet-header pg-scanner-zone-header">
+              <h2>Zone selection</h2>
+              <button
+                type="button"
+                className="pg-btn pg-btn-ghost pg-btn-inline"
+                onClick={handleRetakeCapture}
+                disabled={isFinalizingCapture}
+              >
+                Retake
+              </button>
+            </header>
+
+            <div className="pg-sheet-body pg-scanner-zone-body">
+              <p className="pg-scanner-zone-hint">
+                Choose a zone for better report traceability, or skip zone to diagnose this photo directly.
+              </p>
+
+              <label className="pg-field-label" htmlFor="pg-scanner-zone-select">
+                Select zone (optional)
+              </label>
+              <select
+                id="pg-scanner-zone-select"
+                className="pg-input pg-scanner-zone-select"
+                value={selectedGridId}
+                onChange={(event) => {
+                  setSelectedGridId(event.target.value)
+                  if (zoneChoiceError) {
+                    setZoneChoiceError('')
+                  }
+                }}
+                disabled={isFinalizingCapture || zoneOptions.length === 0}
+              >
+                <option value="">
+                  {zoneOptions.length > 0 ? 'Choose one zone...' : 'No zone available'}
+                </option>
+                {zoneOptions.map((zone) => (
+                  <option key={zone.value} value={zone.value}>
+                    {zone.label} ({zone.healthState}, {zone.areaHectares.toFixed(2)} ha)
+                  </option>
+                ))}
+              </select>
+
+              {zoneOptions.length === 0 ? (
+                <p className="pg-scanner-zone-list-hint">
+                  No saved zones found yet. Continue with photo-only diagnosis.
+                </p>
+              ) : null}
+
+              {zoneChoiceError ? <p className="pg-scanner-zone-error">{zoneChoiceError}</p> : null}
+
+              <div className="pg-sheet-actions pg-scanner-zone-actions">
+                <button
+                  type="button"
+                  className="pg-btn pg-btn-primary"
+                  onClick={handleUseSelectedZone}
+                  disabled={isFinalizingCapture || zoneOptions.length === 0}
+                >
+                  Continue with selected zone
+                </button>
+                <button
+                  type="button"
+                  className="pg-btn pg-btn-ghost"
+                  onClick={handleSkipZone}
+                  disabled={isFinalizingCapture}
+                >
+                  Skip zone and diagnose photo
+                </button>
+              </div>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </section>
   )
 }
