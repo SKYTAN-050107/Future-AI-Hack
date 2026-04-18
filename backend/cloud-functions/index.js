@@ -112,6 +112,8 @@ exports.updateGridStatus = onDocumentWritten(
     await targetDoc.ref.set(
       {
         healthState: 'Infected',
+        predictedSpreadRadius: BUFFER_ZONE_KM,
+        riskLevel: 'high',
         lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
       },
       { merge: true },
@@ -149,6 +151,8 @@ exports.spatialPropagationAnalysis = onDocumentWritten(
         bufferZoneKm: BUFFER_ZONE_KM,
         bufferZoneReason: 'Preventive spray perimeter around infected section',
         bufferZoneAdvice: 'Prioritize preventive spray in nearby sections within this zone.',
+        predictedSpreadRadius: BUFFER_ZONE_KM,
+        riskLevel: 'high',
         lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
       },
       { merge: true },
@@ -184,6 +188,8 @@ exports.spatialPropagationAnalysis = onDocumentWritten(
             healthState: 'At-Risk',
             riskReason: 'Proximity to infected grid',
             riskDistanceKm: Number(distanceKm.toFixed(4)),
+            predictedSpreadRadius: BUFFER_ZONE_KM,
+            riskLevel: 'high',
             lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
           },
           { merge: true },

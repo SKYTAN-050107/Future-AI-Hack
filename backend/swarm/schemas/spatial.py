@@ -2,12 +2,15 @@
 
 from pydantic import BaseModel, Field
 
+from schemas.context import AgentContext
+
 
 class EpidemiologistInput(BaseModel):
     """Input for the spatial propagation agent."""
 
     lat: float = Field(..., description="Latitude of the infected grid")
     lng: float = Field(..., description="Longitude of the infected grid")
+    grid_id: str | None = Field(default=None, description="Grid document identifier")
     crop_type: str = Field(..., description="e.g., 'Rice', 'Oil Palm'")
     disease: str = Field(..., description="e.g., 'Rice Blast', 'Ganoderma'")
     severity_score: float = Field(
@@ -17,6 +20,9 @@ class EpidemiologistInput(BaseModel):
     wind_direction: str = Field(
         ..., description="Compass direction e.g., 'NE', 'SW'"
     )
+    humidity_percent: float | None = Field(default=None, ge=0.0, le=100.0)
+    grid_density: float | None = Field(default=None, ge=0.0, le=10.0)
+    context: AgentContext | None = None
 
 
 class PredictedBufferZone(BaseModel):
@@ -37,3 +43,13 @@ class PredictedBufferZone(BaseModel):
     advisory_message: str = Field(
         ..., description="Human-readable advisory for the farmer"
     )
+    predicted_spread_radius_km: float | None = Field(
+        default=None, gt=0, description="Estimated spread radius in kilometers"
+    )
+    at_risk_zones: list[str] = Field(default_factory=list)
+    risk_level: str | None = Field(default=None, description="low | medium | high")
+    disease_profile: str | None = None
+    severity_factor: float | None = None
+    humidity_factor: float | None = None
+    wind_factor: float | None = None
+    grid_density_factor: float | None = None

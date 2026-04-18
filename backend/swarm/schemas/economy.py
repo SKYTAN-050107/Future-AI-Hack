@@ -36,3 +36,7 @@ class ROIResult(BaseModel):
     )
     profitable: bool
     explanation: str
+    predicted_yield_kg: float | None = None
+    yield_loss_percent: float | None = None
+    yield_confidence: float | None = None
+    yield_source: str | None = None

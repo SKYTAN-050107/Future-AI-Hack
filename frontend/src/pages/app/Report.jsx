@@ -154,6 +154,8 @@ export default function Report() {
   }, [swarmRequest.error, swarmRequest.payload])
 
   const spatialRisk = swarmInsight?.spatial_risk
+  const yieldForecast = swarmInsight?.yield_forecast
+  const chatbotReply = swarmInsight?.chatbot_reply
 
   return (
     <section className="pg-page">
@@ -191,12 +193,26 @@ export default function Report() {
         <h2>Swarm Analysis</h2>
         {swarmInsight ? (
           <>
+            {chatbotReply ? <p>{chatbotReply}</p> : null}
             <p>{swarmInsight.weather}</p>
             <p>{swarmInsight.economy}</p>
             <p>{swarmInsight.resources}</p>
+            {yieldForecast ? (
+              <p>
+                Yield forecast: {Number(yieldForecast.predicted_yield_kg || 0).toFixed(0)} kg expected,
+                {" "}
+                {Number(yieldForecast.yield_loss_percent || 0).toFixed(1)}% loss,
+                {" "}
+                confidence {Number(yieldForecast.confidence || 0).toFixed(2)}.
+              </p>
+            ) : null}
             {spatialRisk ? (
               <p>
-                Spatial risk radius: {Number(spatialRisk.base_radius_meters || 0)}m, spread rate {Number(spatialRisk.spread_rate_meters_per_day || 0).toFixed(1)} m/day.
+                Spatial risk radius: {Number(spatialRisk.predicted_spread_radius_km || 0).toFixed(2)} km,
+                {" "}
+                spread rate {Number(spatialRisk.spread_rate_meters_per_day || 0).toFixed(1)} m/day,
+                {" "}
+                risk level {spatialRisk.risk_level || 'unknown'}.
               </p>
             ) : null}
           </>

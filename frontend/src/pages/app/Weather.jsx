@@ -247,6 +247,7 @@ export default function Weather() {
   /* ── Today snapshot from the response root ─────────────── */
   const today = weatherData || {}
   const safeToSpray = Boolean(today.safeToSpray)
+  const serviceWarning = String(today.serviceWarning || '').trim()
 
   return (
     <section className="pg-page pg-weather-page">
@@ -306,6 +307,12 @@ export default function Weather() {
               {safeToSpray ? 'SAFE TO SPRAY' : 'DELAY SPRAY'}
             </span>
           </div>
+
+          {serviceWarning ? (
+            <p style={{ marginTop: 12, fontSize: 12, lineHeight: 1.4, color: 'var(--pg-warning, #ffb454)' }}>
+              {serviceWarning}
+            </p>
+          ) : null}
 
           {today.best_spray_window ? (
             <div className="pg-weather-day-meta" style={{ padding: '0' }}>

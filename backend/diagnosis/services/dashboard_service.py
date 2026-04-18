@@ -70,6 +70,7 @@ class DashboardService:
                 "windKmh": weather["windKmh"],
                 "windDirection": weather["windDirection"],
                 "rainInHours": weather["rainInHours"],
+                "serviceWarning": weather.get("serviceWarning"),
             },
             "zoneHealthSummary": zone_health,
             "financialSummary": financial_summary,

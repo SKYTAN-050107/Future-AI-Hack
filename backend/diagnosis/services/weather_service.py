@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+from copy import deepcopy
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import logging
+from threading import Lock
+from typing import ClassVar
 
 import httpx
 
@@ -46,8 +50,22 @@ class WeatherSnapshot:
     advisory: str
 
 
+@dataclass(slots=True)
+class _WeatherCacheEntry:
+    payload: dict
+    fetched_at: datetime
+
+
 class WeatherService:
     """Fetch and normalize weather intelligence for frontend contracts."""
+
+    _cache: ClassVar[dict[str, _WeatherCacheEntry]] = {}
+    _rate_limit_cooldowns: ClassVar[dict[str, datetime]] = {}
+    _key_locks: ClassVar[dict[str, asyncio.Lock]] = {}
+    _state_lock: ClassVar[Lock] = Lock()
+    _cache_ttl_seconds: ClassVar[int] = 20 * 60
+    _stale_ttl_seconds: ClassVar[int] = 6 * 60 * 60
+    _default_retry_after_seconds: ClassVar[int] = 60
 
     def __init__(self) -> None:
         settings = get_settings()
@@ -71,13 +89,119 @@ class WeatherService:
 
         return self._llm
 
-    async def get_outlook(self, lat: float, lng: float, days: int = 7) -> dict:
-        if not self._api_key:
-            raise RuntimeError("TOMORROW_IO_API_KEY is missing")
-        if not self._base_url:
-            raise RuntimeError("TOMORROW_IO_BASE_URL is missing")
+    @staticmethod
+    def _cache_key(lat: float, lng: float) -> str:
+        return f"{lat:.4f}:{lng:.4f}"
 
-        payload = await self._fetch_weather_payload(lat=lat, lng=lng)
+    @classmethod
+    def _get_key_lock(cls, cache_key: str) -> asyncio.Lock:
+        with cls._state_lock:
+            lock = cls._key_locks.get(cache_key)
+            if lock is None:
+                lock = asyncio.Lock()
+                cls._key_locks[cache_key] = lock
+            return lock
+
+    @classmethod
+    def _get_cached_entry(cls, cache_key: str) -> _WeatherCacheEntry | None:
+        with cls._state_lock:
+            entry = cls._cache.get(cache_key)
+            if entry is None:
+                return None
+
+            age_seconds = (datetime.now(timezone.utc) - entry.fetched_at).total_seconds()
+            if age_seconds > cls._stale_ttl_seconds:
+                cls._cache.pop(cache_key, None)
+                cls._rate_limit_cooldowns.pop(cache_key, None)
+                return None
+
+            return entry
+
+    @classmethod
+    def _is_fresh(cls, entry: _WeatherCacheEntry) -> bool:
+        age_seconds = (datetime.now(timezone.utc) - entry.fetched_at).total_seconds()
+        return age_seconds <= cls._cache_ttl_seconds
+
+    @classmethod
+    def _store_cached_entry(cls, cache_key: str, payload: dict) -> None:
+        with cls._state_lock:
+            cls._cache[cache_key] = _WeatherCacheEntry(
+                payload=deepcopy(payload),
+                fetched_at=datetime.now(timezone.utc),
+            )
+            cls._rate_limit_cooldowns.pop(cache_key, None)
+
+    @classmethod
+    def _get_rate_limit_cooldown(cls, cache_key: str) -> datetime | None:
+        with cls._state_lock:
+            until = cls._rate_limit_cooldowns.get(cache_key)
+            if until is None:
+                return None
+
+            if until <= datetime.now(timezone.utc):
+                cls._rate_limit_cooldowns.pop(cache_key, None)
+                return None
+
+            return until
+
+    @classmethod
+    def _set_rate_limit_cooldown(cls, cache_key: str, seconds: int) -> None:
+        with cls._state_lock:
+            cls._rate_limit_cooldowns[cache_key] = datetime.now(timezone.utc) + timedelta(seconds=max(1, seconds))
+
+    @staticmethod
+    def _retry_after_seconds(response: httpx.Response) -> int:
+        raw_retry_after = str(response.headers.get("Retry-After") or "").strip()
+        if not raw_retry_after:
+            return WeatherService._default_retry_after_seconds
+
+        try:
+            return max(1, int(float(raw_retry_after)))
+        except (TypeError, ValueError):
+            return WeatherService._default_retry_after_seconds
+
+    @staticmethod
+    def _rate_limit_warning(
+        *,
+        cached_entry: _WeatherCacheEntry | None,
+        retry_after_seconds: int | None,
+    ) -> str:
+        if cached_entry is not None:
+            age_minutes = max(1, int((datetime.now(timezone.utc) - cached_entry.fetched_at).total_seconds() // 60))
+            return (
+                "Tomorrow.io is rate limited right now; showing cached weather data "
+                f"from about {age_minutes} minute(s) ago."
+            )
+
+        if retry_after_seconds is not None:
+            return (
+                "Tomorrow.io is rate limited right now; showing fallback weather data. "
+                f"Try again in about {retry_after_seconds} second(s)."
+            )
+
+        return "Tomorrow.io is rate limited right now; showing fallback weather data."
+
+    def _build_fallback_snapshot(self, warning: str) -> WeatherSnapshot:
+        return WeatherSnapshot(
+            condition="Weather service temporarily unavailable",
+            temperature_c=0,
+            humidity=0,
+            wind_kmh=0,
+            wind_direction="-",
+            rain_in_hours=None,
+            safe_to_spray=False,
+            rain_probability=0,
+            best_spray_window="Unavailable",
+            advisory=warning,
+        )
+
+    async def _assemble_outlook_response(
+        self,
+        *,
+        payload: dict,
+        days: int,
+        service_warning: str | None = None,
+    ) -> dict:
         timelines = payload.get("timelines") or {}
         hourly = timelines.get("hourly") or []
         daily = timelines.get("daily") or []
@@ -87,9 +211,12 @@ class WeatherService:
 
         snapshot = self._build_snapshot(hourly=hourly)
         forecast = self._build_forecast(daily=daily, hourly=hourly, days=days)
-        recommendation = await self._generate_recommendation(snapshot)
+        recommendation = snapshot.advisory
 
-        return {
+        if not service_warning:
+            recommendation = await self._generate_recommendation(snapshot)
+
+        result = {
             "rain_probability": snapshot.rain_probability,
             "best_spray_window": snapshot.best_spray_window,
             "advisory": snapshot.advisory,
@@ -104,12 +231,140 @@ class WeatherService:
             "forecast": forecast,
         }
 
+        if service_warning:
+            result["serviceWarning"] = service_warning
+
+        return result
+
+    def _build_fallback_outlook(self, warning: str) -> dict:
+        snapshot = self._build_fallback_snapshot(warning)
+        return {
+            "rain_probability": snapshot.rain_probability,
+            "best_spray_window": snapshot.best_spray_window,
+            "advisory": snapshot.advisory,
+            "recommendation": snapshot.advisory,
+            "condition": snapshot.condition,
+            "temperatureC": snapshot.temperature_c,
+            "humidity": snapshot.humidity,
+            "windKmh": snapshot.wind_kmh,
+            "windDirection": snapshot.wind_direction,
+            "rainInHours": snapshot.rain_in_hours,
+            "safeToSpray": snapshot.safe_to_spray,
+            "forecast": [],
+            "serviceWarning": warning,
+        }
+
+    async def get_outlook(self, lat: float, lng: float, days: int = 7) -> dict:
+        if not self._api_key:
+            raise RuntimeError("TOMORROW_IO_API_KEY is missing")
+        if not self._base_url:
+            raise RuntimeError("TOMORROW_IO_BASE_URL is missing")
+
+        cache_key = self._cache_key(lat=lat, lng=lng)
+        lock = self._get_key_lock(cache_key)
+
+        async with lock:
+            cached_entry = self._get_cached_entry(cache_key)
+            if cached_entry is not None and self._is_fresh(cached_entry):
+                return await self._assemble_outlook_response(
+                    payload=deepcopy(cached_entry.payload),
+                    days=days,
+                )
+
+            cooldown_until = self._get_rate_limit_cooldown(cache_key)
+            if cooldown_until is not None:
+                retry_after_seconds = max(1, int((cooldown_until - datetime.now(timezone.utc)).total_seconds()))
+                warning = self._rate_limit_warning(
+                    cached_entry=cached_entry,
+                    retry_after_seconds=retry_after_seconds,
+                )
+
+                if cached_entry is not None:
+                    return await self._assemble_outlook_response(
+                        payload=deepcopy(cached_entry.payload),
+                        days=days,
+                        service_warning=warning,
+                    )
+
+                return self._build_fallback_outlook(warning)
+
+            try:
+                payload = await self._fetch_weather_payload(lat=lat, lng=lng)
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code == 429:
+                    retry_after_seconds = self._retry_after_seconds(exc.response)
+                    self._set_rate_limit_cooldown(cache_key, retry_after_seconds)
+                    warning = self._rate_limit_warning(
+                        cached_entry=cached_entry,
+                        retry_after_seconds=retry_after_seconds,
+                    )
+
+                    if cached_entry is not None:
+                        return await self._assemble_outlook_response(
+                            payload=deepcopy(cached_entry.payload),
+                            days=days,
+                            service_warning=warning,
+                        )
+
+                    return self._build_fallback_outlook(warning)
+
+                if cached_entry is not None:
+                    warning = (
+                        "Weather lookup failed but a cached forecast is available; "
+                        f"using cached weather data ({exc.response.status_code})."
+                    )
+                    return await self._assemble_outlook_response(
+                        payload=deepcopy(cached_entry.payload),
+                        days=days,
+                        service_warning=warning,
+                    )
+
+                raise
+            except httpx.RequestError as exc:
+                if cached_entry is not None:
+                    warning = (
+                        "Weather lookup is temporarily unavailable; using cached weather data. "
+                        f"({exc.__class__.__name__})"
+                    )
+                    return await self._assemble_outlook_response(
+                        payload=deepcopy(cached_entry.payload),
+                        days=days,
+                        service_warning=warning,
+                    )
+
+                warning = (
+                    "Weather lookup is temporarily unavailable right now; showing fallback weather data."
+                )
+                return self._build_fallback_outlook(warning)
+
+            try:
+                outlook = await self._assemble_outlook_response(payload=payload, days=days)
+            except RuntimeError as exc:
+                if cached_entry is not None:
+                    warning = (
+                        "Weather lookup returned incomplete data; using cached weather data. "
+                        f"({exc})"
+                    )
+                    return await self._assemble_outlook_response(
+                        payload=deepcopy(cached_entry.payload),
+                        days=days,
+                        service_warning=warning,
+                    )
+
+                warning = (
+                    "Weather lookup returned incomplete data; showing fallback weather data."
+                )
+                return self._build_fallback_outlook(warning)
+
+            self._store_cached_entry(cache_key, payload)
+            return outlook
+
     async def get_outlook_v1(self, lat: float, lng: float, days: int = 7) -> dict:
         """Return simplified weather schema for v1 dashboard clients."""
         outlook = await self.get_outlook(lat=lat, lng=lng, days=days)
         humidity = int(outlook.get("humidity") or self._extract_humidity_from_forecast(outlook.get("forecast") or []))
 
-        return {
+        result = {
             "temperature": float(outlook.get("temperatureC") or 0.0),
             "humidity": humidity,
             "wind_speed": float(outlook.get("windKmh") or 0.0),
@@ -117,6 +372,12 @@ class WeatherService:
             "safe_to_spray": bool(outlook.get("safeToSpray")),
             "recommendation": str(outlook.get("recommendation") or outlook.get("advisory") or ""),
         }
+
+        service_warning = str(outlook.get("serviceWarning") or "").strip()
+        if service_warning:
+            result["serviceWarning"] = service_warning
+
+        return result
 
     async def _fetch_weather_payload(self, lat: float, lng: float) -> dict:
         params = {

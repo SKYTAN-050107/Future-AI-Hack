@@ -3,11 +3,33 @@
 from pydantic import BaseModel
 from genkit.ai import Genkit
 from config.llm import llm_generate
+from schemas.context import AgentContext, InventoryContext
+from schemas.resources import InventoryStatus, ResourceManagerResult, StockAlert
 
 
 class ResourceManagerInput(BaseModel):
     user_id: str
     treatment_plan: str
+    context: AgentContext | None = None
+
+
+def _build_inventory_summary(
+    *,
+    inventory_status: InventoryStatus,
+    alert_result: StockAlert | None,
+) -> str:
+    stock_note = (
+        "stock is sufficient"
+        if inventory_status.sufficient_for_treatment
+        else "stock is not sufficient"
+    )
+    alert_note = (
+        "alert sent" if alert_result and alert_result.alert_sent else "no alert sent"
+    )
+    return (
+        f"Inventory status: {inventory_status.quantity_in_stock} unit(s) of {inventory_status.treatment_plan}. "
+        f"{stock_note}. {alert_note}."
+    )
 
 
 def register_resource_manager_agent(ai: Genkit):
@@ -65,7 +87,33 @@ Provide:
 
 Keep the response short and actionable."""
 
-        response = await llm_generate(prompt)
-        return response
+        try:
+            response = await llm_generate(prompt)
+        except Exception:
+            response = _build_inventory_summary(
+                inventory_status=InventoryStatus(**inventory_status),
+                alert_result=StockAlert(**alert_result) if isinstance(alert_result, dict) else None,
+            )
+
+        result = ResourceManagerResult(
+            summary=response,
+            inventory_status=InventoryStatus(**inventory_status),
+            alert_result=StockAlert(**alert_result) if isinstance(alert_result, dict) else None,
+        )
+
+        if input_data.context is not None:
+            alert_model = result.alert_result
+            input_data.context.inventory = InventoryContext(
+                treatment_plan=input_data.treatment_plan,
+                quantity_in_stock=result.inventory_status.quantity_in_stock,
+                low_stock=result.inventory_status.low_stock,
+                sufficient_for_treatment=result.inventory_status.sufficient_for_treatment,
+                alert_sent=alert_model.alert_sent if alert_model is not None else None,
+                alert_message=alert_model.message if alert_model is not None else None,
+                summary=result.summary,
+                items=[result.inventory_status.model_dump()],
+            )
+
+        return result.model_dump()
 
     return resource_manager_flow

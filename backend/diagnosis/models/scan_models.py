@@ -164,6 +164,7 @@ class WeatherOutlookResponse(BaseModel):
     rainInHours: float | None = None
     safeToSpray: bool
     forecast: list[WeatherForecastEntry] = Field(default_factory=list)
+    serviceWarning: str | None = None
 
 
 class WeatherV1Response(BaseModel):
@@ -175,6 +176,7 @@ class WeatherV1Response(BaseModel):
     rain_probability: int = Field(..., ge=0, le=100)
     safe_to_spray: bool
     recommendation: str
+    serviceWarning: str | None = None
 
 
 class TreatmentPlanRequest(BaseModel):
@@ -419,6 +421,7 @@ class DashboardWeatherSnapshot(BaseModel):
     windKmh: int
     windDirection: str
     rainInHours: float | None = None
+    serviceWarning: str | None = None
 
 
 class DashboardZoneHealthSummary(BaseModel):

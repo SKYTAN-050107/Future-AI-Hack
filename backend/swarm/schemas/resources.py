@@ -23,3 +23,11 @@ class StockAlert(BaseModel):
     current_stock: int
     alert_sent: bool
     message: Optional[str] = None
+
+
+class ResourceManagerResult(BaseModel):
+    """Structured return value for the Resource Manager Agent."""
+
+    summary: str
+    inventory_status: InventoryStatus
+    alert_result: Optional[StockAlert] = None
