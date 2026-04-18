@@ -121,17 +121,74 @@ function formatCapturedAt(value) {
   }
 }
 
+function mergeSourceRefs(...refLists) {
+  const seen = new Set()
+  const merged = []
+
+  refLists.flat().forEach((ref) => {
+    if (!ref) {
+      return
+    }
+
+    const sourceType = String(ref?.sourceType || '').trim()
+    const sourceDocId = String(ref?.sourceDocId || '').trim()
+    if (!sourceType || !sourceDocId) {
+      return
+    }
+
+    const key = `${sourceType}:${sourceDocId}`
+    if (seen.has(key)) {
+      return
+    }
+
+    seen.add(key)
+    merged.push({
+      sourceType,
+      sourceDocId,
+    })
+  })
+
+  return merged
+}
+
+function resolveMarkerDeleteKey(marker) {
+  const captureId = String(marker?.captureId || '').trim()
+  if (captureId) {
+    return captureId
+  }
+
+  const sourceRefs = Array.isArray(marker?.sourceRefs) ? marker.sourceRefs : []
+  const primaryRef = sourceRefs[0]
+  if (primaryRef) {
+    return `${String(primaryRef.sourceType || '').trim()}:${String(primaryRef.sourceDocId || '').trim()}`
+  }
+
+  return String(marker?.id || '').trim()
+}
+
 function toMarkerRecord(data, idHint, sourcePrefix) {
   const markerPosition = extractMarkerPosition(data?.zonePosition || data?.zone_position)
   if (!markerPosition) {
     return null
   }
 
+  const sourceType = String(sourcePrefix || '').trim() || 'unknown'
+  const sourceDocId = String(idHint || '').trim()
+  const captureIdFromData = String(data?.captureId || '').trim()
   const gridId = String(data?.gridId || data?.zone || '').trim() || 'Unlinked zone'
-  const captureId = String(data?.captureId || idHint || '').trim() || `${sourcePrefix}-${idHint}`
+  const captureId = captureIdFromData || sourceDocId || `${sourceType}-${Math.random().toString(36).slice(2, 8)}`
   const capturedAtRaw = data?.capturedAt || data?.captureCapturedAt || data?.timestamp || data?.createdAt || null
   const capturedAtMs = toMillis(capturedAtRaw)
   const capturedAt = capturedAtMs > 0 ? new Date(capturedAtMs).toISOString() : ''
+  const captureImageUrl = String(
+    data?.captureDownloadURL
+    || data?.capture_download_url
+    || data?.downloadURL
+    || data?.download_url
+    || data?.imageUrl
+    || data?.image_url
+    || '',
+  ).trim()
   const diagnosisLabel = String(
     data?.disease
     || data?.diagnosis
@@ -153,8 +210,10 @@ function toMarkerRecord(data, idHint, sourcePrefix) {
     capturedAt,
     capturedAtMs,
     capturedAtLabel: formatCapturedAt(capturedAtRaw),
+    captureImageUrl,
     diagnosisLabel,
     zonePositionLabel: String(data?.zonePositionLabel || data?.zone_position_label || '').trim(),
+    sourceRefs: mergeSourceRefs({ sourceType, sourceDocId }),
   }
 }
 
@@ -168,9 +227,25 @@ function mergeMarkerRecords(...markerLists) {
 
     const key = String(marker.captureId || marker.id)
     const existing = byCapture.get(key)
-    if (!existing || Number(marker.capturedAtMs || 0) >= Number(existing.capturedAtMs || 0)) {
+    if (!existing) {
       byCapture.set(key, marker)
+      return
     }
+
+    const existingMs = Number(existing.capturedAtMs || 0)
+    const incomingMs = Number(marker.capturedAtMs || 0)
+    const primary = incomingMs >= existingMs ? marker : existing
+    const secondary = incomingMs >= existingMs ? existing : marker
+
+    byCapture.set(key, {
+      ...primary,
+      gridId: String(primary.gridId || secondary.gridId || '').trim() || 'Unlinked zone',
+      capturedAtLabel: String(primary.capturedAtLabel || secondary.capturedAtLabel || '').trim(),
+      captureImageUrl: String(primary.captureImageUrl || secondary.captureImageUrl || '').trim(),
+      diagnosisLabel: String(primary.diagnosisLabel || secondary.diagnosisLabel || '').trim(),
+      zonePositionLabel: String(primary.zonePositionLabel || secondary.zonePositionLabel || '').trim(),
+      sourceRefs: mergeSourceRefs(primary.sourceRefs, secondary.sourceRefs),
+    })
   })
 
   return Array.from(byCapture.values()).sort(
@@ -191,6 +266,7 @@ function createScanMarkerCollection(markers) {
           gridId: marker.gridId || 'Unlinked zone',
           capturedAt: marker.capturedAt || '',
           capturedAtLabel: marker.capturedAtLabel || '',
+          captureImageUrl: marker.captureImageUrl || '',
           diagnosisLabel: marker.diagnosisLabel || null,
           zonePositionLabel: marker.zonePositionLabel || '',
         },
@@ -217,7 +293,7 @@ export default function MapPage() {
   const [isSavingPending, setIsSavingPending] = useState(false)
   const [deletingGridId, setDeletingGridId] = useState('')
   const [renamingGridId, setRenamingGridId] = useState('')
-  const [deletingMarkerCaptureId, setDeletingMarkerCaptureId] = useState('')
+  const [deletingMarkerKey, setDeletingMarkerKey] = useState('')
   const [lastSaveState, setLastSaveState] = useState('idle')
   const [scanMarkers, setScanMarkers] = useState([])
   const [markerLoadError, setMarkerLoadError] = useState('')
@@ -307,9 +383,10 @@ export default function MapPage() {
     }
   }, [isFirebaseConfigured, user?.uid])
 
-  const deleteMarkerByCaptureId = useCallback(async (captureId) => {
+  const deleteMarkerRecord = useCallback(async (marker) => {
     const uid = String(user?.uid || '').trim()
-    const safeCaptureId = String(captureId || '').trim()
+    const safeCaptureId = String(marker?.captureId || '').trim()
+    const sourceRefs = mergeSourceRefs(marker?.sourceRefs)
 
     if (!db || !isFirebaseConfigured) {
       throw new Error('Marker delete requires Firebase configuration.')
@@ -319,34 +396,63 @@ export default function MapPage() {
       throw new Error('Sign in is required to delete markers.')
     }
 
-    if (!safeCaptureId) {
-      throw new Error('Missing capture ID for marker delete.')
+    if (!safeCaptureId && sourceRefs.length === 0) {
+      throw new Error('Missing marker source for delete.')
     }
 
-    const reportsSnapshot = await getDocs(
-      query(collection(db, 'scanReports'), where('captureId', '==', safeCaptureId)),
-    )
+    let deletedCapture = false
+    const deletedReportIds = new Set()
 
-    const ownedReportIds = new Set()
-    reportsSnapshot.docs.forEach((item) => {
-      const data = item.data() || {}
-      const isOwned = (
-        String(data?.ownerUid || '').trim() === uid
-        || String(data?.userId || '').trim() === uid
-        || String(data?.uid || '').trim() === uid
-      )
-      if (isOwned) {
-        ownedReportIds.add(String(item.id))
+    await Promise.all(sourceRefs.map(async (ref) => {
+      if (ref.sourceType === 'capture') {
+        await deleteDoc(doc(db, 'users', uid, 'scanCaptures', ref.sourceDocId))
+        deletedCapture = true
+        return
       }
-    })
 
-    await deleteDoc(doc(db, 'users', uid, 'scanCaptures', safeCaptureId))
-    await Promise.all(
-      Array.from(ownedReportIds).map((reportId) => deleteDoc(doc(db, 'scanReports', reportId))),
-    )
+      if (ref.sourceType === 'report-owner' || ref.sourceType === 'report-user') {
+        await deleteDoc(doc(db, 'scanReports', ref.sourceDocId))
+        deletedReportIds.add(ref.sourceDocId)
+      }
+    }))
+
+    if (safeCaptureId) {
+      await deleteDoc(doc(db, 'users', uid, 'scanCaptures', safeCaptureId))
+      deletedCapture = true
+    }
+
+    if (safeCaptureId) {
+      const reportsSnapshot = await getDocs(
+        query(collection(db, 'scanReports'), where('captureId', '==', safeCaptureId)),
+      )
+
+      const ownedReportIds = new Set()
+      reportsSnapshot.docs.forEach((item) => {
+        const data = item.data() || {}
+        const isOwned = (
+          String(data?.ownerUid || '').trim() === uid
+          || String(data?.userId || '').trim() === uid
+          || String(data?.uid || '').trim() === uid
+        )
+        if (isOwned) {
+          ownedReportIds.add(String(item.id))
+        }
+      })
+
+      await Promise.all(
+        Array.from(ownedReportIds)
+          .filter((reportId) => !deletedReportIds.has(reportId))
+          .map((reportId) => deleteDoc(doc(db, 'scanReports', reportId))),
+      )
+
+      ownedReportIds.forEach((reportId) => {
+        deletedReportIds.add(reportId)
+      })
+    }
 
     return {
-      deletedReportCount: ownedReportIds.size,
+      deletedReportCount: deletedReportIds.size,
+      deletedCapture,
     }
   }, [isFirebaseConfigured, user?.uid])
 
@@ -745,15 +851,54 @@ export default function MapPage() {
         const diagnosisLabel = String(feature.properties?.diagnosisLabel || '').trim() || 'Pending diagnosis'
         const capturedAt = String(feature.properties?.capturedAt || '').trim()
         const capturedAtLabel = String(feature.properties?.capturedAtLabel || '').trim() || formatCapturedAt(capturedAt)
+        const captureImageUrl = String(feature.properties?.captureImageUrl || '').trim()
 
-        const header = `<strong>${diagnosisLabel}</strong>`
-        const timeLine = capturedAtLabel
-          ? `<div style="margin-top:4px;">拍照时间: ${capturedAtLabel}</div>`
-          : ''
+        const popupContainer = document.createElement('div')
+        popupContainer.style.maxWidth = '280px'
+
+        const titleNode = document.createElement('strong')
+        titleNode.textContent = diagnosisLabel
+        popupContainer.appendChild(titleNode)
+
+        if (capturedAtLabel) {
+          const timeNode = document.createElement('div')
+          timeNode.style.marginTop = '4px'
+          timeNode.textContent = `拍照时间: ${capturedAtLabel}`
+          popupContainer.appendChild(timeNode)
+        }
+
+        if (captureImageUrl) {
+          const imageWrap = document.createElement('div')
+          imageWrap.style.marginTop = '8px'
+          imageWrap.style.borderRadius = '8px'
+          imageWrap.style.overflow = 'hidden'
+          imageWrap.style.border = '1px solid rgba(148, 163, 184, 0.35)'
+
+          const imageNode = document.createElement('img')
+          imageNode.src = captureImageUrl
+          imageNode.alt = `${diagnosisLabel} capture`
+          imageNode.style.display = 'block'
+          imageNode.style.width = '100%'
+          imageNode.style.maxHeight = '180px'
+          imageNode.style.objectFit = 'cover'
+
+          imageNode.addEventListener('error', () => {
+            imageWrap.innerHTML = ''
+            const fallback = document.createElement('div')
+            fallback.style.padding = '8px'
+            fallback.style.fontSize = '12px'
+            fallback.style.opacity = '0.85'
+            fallback.textContent = '图片已失效，请重新拍照获取最新记录。'
+            imageWrap.appendChild(fallback)
+          }, { once: true })
+
+          imageWrap.appendChild(imageNode)
+          popupContainer.appendChild(imageWrap)
+        }
 
         new mapboxgl.Popup({ offset: 14 })
           .setLngLat([Number(lng), Number(lat)])
-          .setHTML(`${header}${timeLine}`)
+          .setDOMContent(popupContainer)
           .addTo(map)
       })
 
@@ -884,11 +1029,7 @@ export default function MapPage() {
 
   const handleDeleteScanMarker = async (marker) => {
     const captureId = String(marker?.captureId || '').trim()
-    if (!captureId) {
-      setActionMessage('This marker cannot be deleted because capture ID is missing.')
-      setLastSaveState('failed')
-      return
-    }
+    const markerDeleteKey = resolveMarkerDeleteKey(marker)
 
     if (!isFirebaseConfigured || !db) {
       setActionMessage('Marker delete requires Firebase configuration and authenticated access.')
@@ -903,15 +1044,15 @@ export default function MapPage() {
     }
 
     try {
-      setDeletingMarkerCaptureId(captureId)
-      const result = await deleteMarkerByCaptureId(captureId)
-      setActionMessage(`Deleted marker ${diagnosisLabel}. Removed ${result.deletedReportCount} linked reports.`)
+      setDeletingMarkerKey(markerDeleteKey)
+      const result = await deleteMarkerRecord(marker)
+      setActionMessage(`Deleted marker ${diagnosisLabel}. Removed ${result.deletedReportCount} linked reports${result.deletedCapture ? ' and capture record' : ''}.`)
       setLastSaveState('saved')
     } catch (deleteError) {
       setActionMessage(deleteError?.message || 'Failed to delete scan marker.')
       setLastSaveState('failed')
     } finally {
-      setDeletingMarkerCaptureId('')
+      setDeletingMarkerKey('')
     }
   }
 
@@ -1058,7 +1199,7 @@ export default function MapPage() {
               <h3>Marked scan points</h3>
               {scanMarkers.slice(0, 12).map((marker) => {
                 const markerName = String(marker?.diagnosisLabel || marker?.gridId || marker?.captureId || 'Unknown scan').trim()
-                const markerCaptureId = String(marker?.captureId || '')
+                const markerDeleteKey = resolveMarkerDeleteKey(marker)
                 const markerTime = String(marker?.capturedAtLabel || '').trim() || 'Unknown time'
                 return (
                   <div
@@ -1084,9 +1225,9 @@ export default function MapPage() {
                       type="button"
                       className="pg-btn"
                       onClick={() => handleDeleteScanMarker(marker)}
-                      disabled={!markerCaptureId || deletingMarkerCaptureId === markerCaptureId}
+                      disabled={!markerDeleteKey || deletingMarkerKey === markerDeleteKey}
                     >
-                      {deletingMarkerCaptureId === markerCaptureId ? 'Deleting…' : 'Delete marker'}
+                      {deletingMarkerKey === markerDeleteKey ? 'Deleting…' : 'Delete marker'}
                     </button>
                   </div>
                 )
