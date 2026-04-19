@@ -61,3 +61,6 @@ __pycache__/
 *.pyc
 *.pyo
 *.egg-info/
+
+# Genkit local runtime metadata
+backend/swarm/.genkit/runtimes/

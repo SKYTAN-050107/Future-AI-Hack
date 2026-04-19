@@ -330,7 +330,7 @@ export const gateway = {
     })
   },
 
-  updateInventoryItem: async (itemId, { userId, liters, description, unitCostRm }) => {
+  updateInventoryItem: async (itemId, { userId, name, liters, description, unitCostRm, category }) => {
     const safeItemId = String(itemId || '').trim()
     const safeUserId = String(userId || '').trim()
     const safeLiters = toFiniteNumber(liters)
@@ -359,6 +359,16 @@ export const gateway = {
       body.unit_cost_rm = safeUnitCost
     }
 
+    const safeName = name !== undefined && name !== null ? String(name).trim() : null
+    if (safeName) {
+      body.name = safeName
+    }
+
+    const safeCategory = category !== undefined && category !== null ? String(category).trim() : null
+    if (safeCategory) {
+      body.category = safeCategory
+    }
+
     return requestJson(`/api/inventory/${encodeURIComponent(safeItemId)}`, {
       method: 'PATCH',
       body: JSON.stringify(body),
@@ -378,7 +388,7 @@ export const gateway = {
     })
   },
 
-  createInventoryItem: async ({ userId, name, quantity, usage, unit, costPerUnitRm }) => {
+  createInventoryItem: async ({ userId, name, quantity, usage, unit, costPerUnitRm, description }) => {
     const safeUserId = String(userId || '').trim()
     const safeName = String(name || '').trim()
     const safeUsage = String(usage || '').trim()
@@ -395,6 +405,8 @@ export const gateway = {
 
     const safeCostPerUnit = toFiniteNumber(costPerUnitRm)
 
+    const safeDescription = description !== undefined && description !== null ? String(description).trim() : ''
+
     return requestJson('/api/inventory', {
       method: 'POST',
       body: JSON.stringify({
@@ -404,6 +416,7 @@ export const gateway = {
         usage: safeUsage,
         unit: safeUnit,
         cost_per_unit_rm: safeCostPerUnit !== null && safeCostPerUnit >= 0 ? safeCostPerUnit : 0,
+        description: safeDescription,
       }),
     })
   },

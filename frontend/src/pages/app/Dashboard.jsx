@@ -4,8 +4,7 @@ import { IconCloud, IconSun } from '../../components/icons/UiIcons'
 import SectionHeader from '../../components/ui/SectionHeader'
 import { sendAssistantMessage } from '../../api/assistant'
 import { getCrops } from '../../api/crops'
-import { getDashboardSummary } from '../../api/dashboard'
-import { getWeatherOutlook } from '../../api/weather'
+import { getCachedDashboardSummary, getDashboardSummary } from '../../api/dashboard'
 import { useSessionContext } from '../../hooks/useSessionContext'
 import { useGrids } from '../../hooks/useGrids'
 import { useScanHistory } from '../../hooks/useScanHistory'
@@ -262,6 +261,90 @@ function buildZoneHealthSummaryFromGrids(grids, latestSeverityByZone = new Map()
   }
 }
 
+/* ── Skeleton placeholder components ──────────────────── */
+
+function SkeletonLine({ className = '' }) {
+  return <div className={`pg-skeleton pg-skeleton-text ${className}`} />
+}
+
+function WeatherCardSkeleton() {
+  return (
+    <>
+      <header className="pg-dashboard-card-header">
+        <span className="pg-dashboard-card-title">Weather Intelligence</span>
+        <div className="pg-skeleton" style={{ width: 22, height: 22, borderRadius: '50%' }} />
+      </header>
+      <div className="pg-weather-primary">
+        <div className="pg-skeleton pg-skeleton-heading" style={{ width: '45%' }} />
+        <SkeletonLine className="is-short" />
+      </div>
+      <SkeletonLine className="is-wide" />
+      <div style={{ marginTop: 8 }}>
+        <small style={{ opacity: 0.85, display: 'block', marginBottom: 6 }}>Next 6h</small>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+            gap: 6,
+          }}
+        >
+          {[0, 1, 2].map((i) => (
+            <div
+              key={i}
+              className="pg-skeleton pg-skeleton-box"
+              style={{ height: 52, borderRadius: 10 }}
+            />
+          ))}
+        </div>
+      </div>
+      <div className="pg-skeleton pg-skeleton-badge" style={{ marginTop: 'auto' }} />
+    </>
+  )
+}
+
+function ZoneCardSkeleton() {
+  return (
+    <>
+      <header className="pg-dashboard-card-header">
+        <span className="pg-dashboard-card-title">Zone Health Summary</span>
+      </header>
+      <SkeletonLine className="is-wide" />
+      <div className="pg-skeleton pg-skeleton-box" style={{ height: 36 }} />
+      <SkeletonLine />
+      <div className="pg-skeleton pg-skeleton-bar" />
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 4 }}>
+        <SkeletonLine className="is-short" />
+        <SkeletonLine className="is-short" />
+        <SkeletonLine className="is-short" />
+      </div>
+      <SkeletonLine className="is-wide" />
+      <SkeletonLine />
+    </>
+  )
+}
+
+function FinanceCardSkeleton() {
+  return (
+    <>
+      <header className="pg-dashboard-card-header">
+        <span className="pg-dashboard-card-title">Financial Command Center</span>
+      </header>
+      <div className="pg-finance-hero">
+        <SkeletonLine className="is-short" />
+        <div className="pg-skeleton pg-skeleton-heading" style={{ width: '65%', height: '2em' }} />
+        <SkeletonLine />
+      </div>
+      <div className="pg-finance-breakdown" aria-label="Cost versus benefit">
+        <div className="pg-skeleton pg-skeleton-box" />
+        <div className="pg-skeleton pg-skeleton-box" />
+      </div>
+      <div className="pg-skeleton pg-skeleton-badge" style={{ marginTop: 'auto' }} />
+    </>
+  )
+}
+
+/* ── Main Dashboard ───────────────────────────────────── */
+
 export default function Dashboard() {
   const navigate = useNavigate()
   const { user, profile } = useSessionContext()
@@ -269,15 +352,16 @@ export default function Dashboard() {
   const { reports, latestReport } = useScanHistory()
   const [summary, setSummary] = useState(null)
   const [loadError, setLoadError] = useState('')
+  const [isDashboardLoading, setIsDashboardLoading] = useState(true)
   const [weatherData, setWeatherData] = useState(null)
   const [weatherError, setWeatherError] = useState('')
-  const [isWeatherLoading, setIsWeatherLoading] = useState(false)
+  const [isWeatherLoading, setIsWeatherLoading] = useState(true)
   const [selectedZoneName, setSelectedZoneName] = useState('')
   const [zoneQuickReview, setZoneQuickReview] = useState('')
   const [zoneQuickReviewError, setZoneQuickReviewError] = useState('')
   const [isZoneQuickReviewLoading, setIsZoneQuickReviewLoading] = useState(false)
   const [cropCount, setCropCount] = useState(0)
-  const [isCropLoading, setIsCropLoading] = useState(false)
+  const [isCropLoading, setIsCropLoading] = useState(true)
   const [savedFinancialSummary, setSavedFinancialSummary] = useState(null)
 
   const firstGridWithCentroid = useMemo(
@@ -387,10 +471,30 @@ export default function Dashboard() {
     if (!requestBuild.payload) {
       setSummary(null)
       setLoadError(requestBuild.error)
+      setWeatherData(null)
+      setWeatherError(requestBuild.error)
+      setIsWeatherLoading(false)
+      setIsDashboardLoading(false)
       return undefined
     }
 
-    setLoadError('')
+    // Show cached data immediately for instant re-navigation
+    const cached = getCachedDashboardSummary(requestBuild.payload)
+    if (cached) {
+      setSummary(cached)
+      if (cached.weatherSnapshot) {
+        setWeatherData(cached.weatherSnapshot)
+        setWeatherError('')
+      }
+      setIsWeatherLoading(false)
+      setIsDashboardLoading(false)
+      setLoadError('')
+    } else {
+      setIsWeatherLoading(true)
+      setIsDashboardLoading(true)
+      setWeatherError('')
+      setLoadError('')
+    }
 
     getDashboardSummary(requestBuild.payload)
       .then((response) => {
@@ -398,74 +502,31 @@ export default function Dashboard() {
           return
         }
         setSummary(response)
+        if (response?.weatherSnapshot) {
+          setWeatherData(response.weatherSnapshot)
+          setWeatherError('')
+        }
+        setIsWeatherLoading(false)
+        setIsDashboardLoading(false)
       })
       .catch((error) => {
         if (!active) {
           return
         }
-
-        setSummary(null)
+        if (!cached) {
+          setSummary(null)
+          setWeatherData(null)
+          setWeatherError(error?.message || 'Unable to load weather outlook')
+        }
         setLoadError(error?.message || 'Unable to load dashboard summary')
+        setIsWeatherLoading(false)
+        setIsDashboardLoading(false)
       })
 
     return () => {
       active = false
     }
   }, [requestBuild.error, requestBuild.payload])
-
-  useEffect(() => {
-    let active = true
-    const userId = String(user?.uid || '').trim()
-
-    if (!userId) {
-      setWeatherData(null)
-      setWeatherError('Sign in to load weather outlook.')
-      setIsWeatherLoading(false)
-      return undefined
-    }
-
-    if (!hasCoords) {
-      setWeatherData(null)
-      if (locationResolutionError) {
-        setWeatherError(locationResolutionError)
-      } else if (!farmLocation) {
-        setWeatherError('Set your farm location in Settings or add a farm grid centroid to load weather outlook.')
-      } else {
-        setWeatherError('')
-      }
-      setIsWeatherLoading(false)
-      return undefined
-    }
-
-    setIsWeatherLoading(true)
-    setWeatherError('')
-
-    getWeatherOutlook({ lat, lng, days: 1 })
-      .then((response) => {
-        if (!active) {
-          return
-        }
-
-        setWeatherData(response)
-      })
-      .catch((error) => {
-        if (!active) {
-          return
-        }
-
-        setWeatherData(null)
-        setWeatherError(error?.message || 'Unable to load weather outlook')
-      })
-      .finally(() => {
-        if (active) {
-          setIsWeatherLoading(false)
-        }
-      })
-
-    return () => {
-      active = false
-    }
-  }, [farmLocation, hasCoords, lat, lng, locationResolutionError, user?.uid])
 
   useEffect(() => {
     if (zoneOptions.length === 0) {
@@ -593,6 +654,7 @@ export default function Dashboard() {
   const weatherSnapshot = weatherData || {}
   const financialSummary = savedFinancialSummary || summary?.financialSummary || {}
   const weatherServiceWarning = String(weatherSnapshot.serviceWarning || '').trim()
+  const hasFinancialData = !!(savedFinancialSummary || summary?.financialSummary)
 
   const hourlyForecast6h = useMemo(() => {
     const firstDay = Array.isArray(weatherSnapshot?.forecast)
@@ -606,22 +668,13 @@ export default function Dashboard() {
     return hourly.slice(0, 6)
   }, [weatherSnapshot])
 
-  if (!summary && !loadError && !savedFinancialSummary) {
-    return (
-      <section className="pg-page pg-dashboard-page" aria-label="Financial and climate command center">
-        <SectionHeader title="Home" align="center" />
-        <article className="pg-card">
-          <p>Loading dashboard summary...</p>
-        </article>
-      </section>
-    )
-  }
-
+  // Derived weather values – safe to compute even when data is absent
   const rainInHours = safeNumber(weatherSnapshot.rainInHours, -1)
   const safeToSpray = typeof weatherSnapshot?.safeToSpray === 'boolean'
     ? weatherSnapshot.safeToSpray
     : rainInHours < 0 || rainInHours >= 4
   const WeatherIcon = safeToSpray ? IconSun : IconCloud
+  const hasWeatherData = !!weatherData
 
   return (
     <section className="pg-page pg-dashboard-page" aria-label="Financial and climate command center">
@@ -644,173 +697,194 @@ export default function Dashboard() {
       ) : null}
 
       <div className="pg-dashboard-grid">
+        {/* ── Weather Widget ──────────────────────────── */}
         <button
           type="button"
           className="pg-dashboard-card pg-weather-card"
           onClick={() => navigate('/app/weather')}
           aria-label="Open 7-day weather intelligence"
         >
-          <header className="pg-dashboard-card-header">
-            <span className="pg-dashboard-card-title">Weather Intelligence</span>
-            <WeatherIcon className="pg-icon" />
-          </header>
+          {isWeatherLoading && !hasWeatherData ? (
+            <WeatherCardSkeleton />
+          ) : (
+            <>
+              <header className="pg-dashboard-card-header">
+                <span className="pg-dashboard-card-title">Weather Intelligence</span>
+                <WeatherIcon className="pg-icon" />
+              </header>
 
-          <div className="pg-weather-primary">
-            <strong>{safeNumber(weatherSnapshot.temperatureC)} deg C</strong>
-            <span>{weatherSnapshot.condition || 'N/A'}</span>
-          </div>
+              <div className="pg-weather-primary">
+                <strong>{safeNumber(weatherSnapshot.temperatureC)} deg C</strong>
+                <span>{weatherSnapshot.condition || 'N/A'}</span>
+              </div>
 
-          <p className="pg-weather-wind">
-            Wind {safeNumber(weatherSnapshot.windKmh)} km/h {weatherSnapshot.windDirection || '-'}
-          </p>
+              <p className="pg-weather-wind">
+                Wind {safeNumber(weatherSnapshot.windKmh)} km/h {weatherSnapshot.windDirection || '-'}
+              </p>
 
-          {weatherServiceWarning ? (
-            <p style={{ marginTop: 8, fontSize: 12, lineHeight: 1.4, color: 'var(--pg-warning, #ffb454)' }}>
-              {weatherServiceWarning}
-            </p>
-          ) : null}
+              {weatherServiceWarning ? (
+                <p style={{ marginTop: 8, fontSize: 12, lineHeight: 1.4, color: 'var(--pg-warning, #ffb454)' }}>
+                  {weatherServiceWarning}
+                </p>
+              ) : null}
 
-          <div style={{ marginTop: 8 }}>
-            <small style={{ opacity: 0.85, display: 'block', marginBottom: 6 }}>Next 6h</small>
-            {isWeatherLoading ? (
-              <small>Loading 6-hour forecast...</small>
-            ) : weatherError ? (
-              <small>{weatherError}</small>
-            ) : hourlyForecast6h.length === 0 ? (
-              <small>No hourly forecast available.</small>
-            ) : (
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
-                  gap: 6,
-                }}
-              >
-                {hourlyForecast6h.map((slot, index) => (
+              <div style={{ marginTop: 8 }}>
+                <small style={{ opacity: 0.85, display: 'block', marginBottom: 6 }}>Next 6h</small>
+                {isWeatherLoading ? (
+                  <small>Loading 6-hour forecast...</small>
+                ) : weatherError ? (
+                  <small>{weatherError}</small>
+                ) : hourlyForecast6h.length === 0 ? (
+                  <small>No hourly forecast available.</small>
+                ) : (
                   <div
-                    key={`${slot.time || 'slot'}-${index}`}
                     style={{
-                      border: '1px solid rgba(255,255,255,0.2)',
-                      borderRadius: 10,
-                      padding: '6px 8px',
-                      fontSize: 11,
-                      lineHeight: 1.2,
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                      gap: 6,
                     }}
                   >
-                    <strong style={{ display: 'block' }}>{slot.time || '--'}</strong>
-                    <span>{safeNumber(slot.temperature_c)} deg C</span>
-                    <br />
-                    <span>Rain {safeNumber(slot.rain_chance)}%</span>
+                    {hourlyForecast6h.map((slot, index) => (
+                      <div
+                        key={`${slot.time || 'slot'}-${index}`}
+                        style={{
+                          border: '1px solid rgba(255,255,255,0.2)',
+                          borderRadius: 10,
+                          padding: '6px 8px',
+                          fontSize: 11,
+                          lineHeight: 1.2,
+                        }}
+                      >
+                        <strong style={{ display: 'block' }}>{slot.time || '--'}</strong>
+                        <span>{safeNumber(slot.temperature_c)} deg C</span>
+                        <br />
+                        <span>Rain {safeNumber(slot.rain_chance)}%</span>
+                      </div>
+                    ))}
                   </div>
-                ))}
+                )}
               </div>
-            )}
-          </div>
 
-          <span className={`pg-weather-badge ${safeToSpray ? 'is-clear' : 'is-delay'}`}>
-            {safeToSpray ? 'CLEAR' : 'DELAY'}
-          </span>
+              <span className={`pg-weather-badge ${safeToSpray ? 'is-clear' : 'is-delay'}`}>
+                {safeToSpray ? 'CLEAR' : 'DELAY'}
+              </span>
+            </>
+          )}
         </button>
 
+        {/* ── Zone Health Widget ──────────────────────── */}
         <article className="pg-dashboard-card pg-zone-card" aria-label="Zone health summary">
-          <header className="pg-dashboard-card-header">
-            <span className="pg-dashboard-card-title">Zone Health Summary</span>
-          </header>
+          {isDashboardLoading && !summary ? (
+            <ZoneCardSkeleton />
+          ) : (
+            <>
+              <header className="pg-dashboard-card-header">
+                <span className="pg-dashboard-card-title">Zone Health Summary</span>
+              </header>
 
-          <label htmlFor="pg-dashboard-zone-select" className="pg-field-label" style={{ marginBottom: 8 }}>
-            Area quick review
-          </label>
-          <select
-            id="pg-dashboard-zone-select"
-            className="pg-input"
-            value={selectedZoneName}
-            onChange={(event) => setSelectedZoneName(event.target.value)}
-            disabled={zoneOptions.length === 0}
-            style={{ marginBottom: 10 }}
-          >
-            {zoneOptions.length === 0 ? (
-              <option value="">No area available</option>
-            ) : (
-              zoneOptions.map((zoneName) => (
-                <option key={zoneName} value={zoneName}>{zoneName}</option>
-              ))
-            )}
-          </select>
+              <label htmlFor="pg-dashboard-zone-select" className="pg-field-label" style={{ marginBottom: 8 }}>
+                Area quick review
+              </label>
+              <select
+                id="pg-dashboard-zone-select"
+                className="pg-input"
+                value={selectedZoneName}
+                onChange={(event) => setSelectedZoneName(event.target.value)}
+                disabled={zoneOptions.length === 0}
+                style={{ marginBottom: 10 }}
+              >
+                {zoneOptions.length === 0 ? (
+                  <option value="">No area available</option>
+                ) : (
+                  zoneOptions.map((zoneName) => (
+                    <option key={zoneName} value={zoneName}>{zoneName}</option>
+                  ))
+                )}
+              </select>
 
-          <p className="pg-zone-area">Total Area Scanned: {safeNumber(zoneHealthSummary.totalAreaHectares).toFixed(1)} ha</p>
+              <p className="pg-zone-area">Total Area Scanned: {safeNumber(zoneHealthSummary.totalAreaHectares).toFixed(1)} ha</p>
 
-          <div
-            className="pg-zone-stack"
-            role="img"
-            aria-label={`Healthy ${safeNumber(zoneHealthSummary.healthy)} percent, At-Risk ${safeNumber(zoneHealthSummary.atRisk)} percent, Infected ${safeNumber(zoneHealthSummary.infected)} percent`}
-          >
-            <span className="is-healthy" style={{ width: `${safeNumber(zoneHealthSummary.healthy)}%` }} />
-            <span className="is-at-risk" style={{ width: `${safeNumber(zoneHealthSummary.atRisk)}%` }} />
-            <span className="is-infected" style={{ width: `${safeNumber(zoneHealthSummary.infected)}%` }} />
-          </div>
+              <div
+                className="pg-zone-stack"
+                role="img"
+                aria-label={`Healthy ${safeNumber(zoneHealthSummary.healthy)} percent, At-Risk ${safeNumber(zoneHealthSummary.atRisk)} percent, Infected ${safeNumber(zoneHealthSummary.infected)} percent`}
+              >
+                <span className="is-healthy" style={{ width: `${safeNumber(zoneHealthSummary.healthy)}%` }} />
+                <span className="is-at-risk" style={{ width: `${safeNumber(zoneHealthSummary.atRisk)}%` }} />
+                <span className="is-infected" style={{ width: `${safeNumber(zoneHealthSummary.infected)}%` }} />
+              </div>
 
-          <div className="pg-zone-legend" aria-hidden="true">
-            <span className="is-healthy">Healthy {safeNumber(zoneHealthSummary.healthy)}%</span>
-            <span className="is-at-risk">At-Risk {safeNumber(zoneHealthSummary.atRisk)}%</span>
-            <span className="is-infected">Infected {safeNumber(zoneHealthSummary.infected)}%</span>
-          </div>
+              <div className="pg-zone-legend" aria-hidden="true">
+                <span className="is-healthy">Healthy {safeNumber(zoneHealthSummary.healthy)}%</span>
+                <span className="is-at-risk">At-Risk {safeNumber(zoneHealthSummary.atRisk)}%</span>
+                <span className="is-infected">Infected {safeNumber(zoneHealthSummary.infected)}%</span>
+              </div>
 
-          <p className="pg-zone-alert">{safeNumber(zoneHealthSummary.zonesNeedingAttention)} Zones Require Attention</p>
+              <p className="pg-zone-alert">{safeNumber(zoneHealthSummary.zonesNeedingAttention)} Zones Require Attention</p>
 
-          <p className="pg-zone-alert" style={{ marginTop: 8 }}>
-            {isZoneQuickReviewLoading
-              ? 'Generating quick AI review...'
-              : zoneQuickReviewError
-                ? zoneQuickReviewError
-                : zoneQuickReview || 'Select an area to generate a quick AI review.'}
-          </p>
+              <p className="pg-zone-alert" style={{ marginTop: 8 }}>
+                {isZoneQuickReviewLoading
+                  ? 'Generating quick AI review...'
+                  : zoneQuickReviewError
+                    ? zoneQuickReviewError
+                    : zoneQuickReview || 'Select an area to generate a quick AI review.'}
+              </p>
 
-          <button
-            type="button"
-            className="pg-btn pg-btn-inline"
-            onClick={() => navigate('/app/map')}
-            style={{ marginTop: 8 }}
-          >
-            Open map
-          </button>
+              <button
+                type="button"
+                className="pg-btn pg-btn-inline"
+                onClick={() => navigate('/app/map')}
+                style={{ marginTop: 8 }}
+              >
+                Open map
+              </button>
+            </>
+          )}
         </article>
 
+        {/* ── Financial / ROI Widget ──────────────────── */}
         <button
           type="button"
           className="pg-dashboard-card pg-finance-card"
           onClick={() => navigate('/app/treatment')}
           aria-label="Open treatment plan and ROI"
         >
-          <header className="pg-dashboard-card-header">
-            <span className="pg-dashboard-card-title">Financial Command Center</span>
-          </header>
+          {isDashboardLoading && !hasFinancialData ? (
+            <FinanceCardSkeleton />
+          ) : (
+            <>
+              <header className="pg-dashboard-card-header">
+                <span className="pg-dashboard-card-title">Financial Command Center</span>
+              </header>
 
-          <div className="pg-finance-hero">
-            <p className="pg-finance-kicker">Total Expected ROI</p>
-            <h2>{formatCurrency(financialSummary.projectedRoiValueRm)}</h2>
-            <p className="pg-finance-percent">
-              {`${safeNumber(financialSummary.roiPercent) >= 0 ? '+' : ''}${safeNumber(financialSummary.roiPercent).toFixed(2)}% account-wide`}
-            </p>
-          </div>
+              <div className="pg-finance-hero">
+                <p className="pg-finance-kicker">Total Expected ROI</p>
+                <h2>{formatCurrency(financialSummary.projectedRoiValueRm)}</h2>
+                <p className="pg-finance-percent">
+                  {`${safeNumber(financialSummary.roiPercent) >= 0 ? '+' : ''}${safeNumber(financialSummary.roiPercent).toFixed(2)}% account-wide`}
+                </p>
+              </div>
 
-          <div className="pg-finance-breakdown" aria-label="Cost versus benefit">
-            <div>
-              <span>Total Expected Revenue</span>
-              <strong>{formatCurrency(financialSummary.projectedYieldGainRm)}</strong>
-            </div>
-            <div>
-              <span>Total Treatment Cost</span>
-              <strong>{formatCurrency(financialSummary.treatmentCostRm)}</strong>
-            </div>
-          </div>
+              <div className="pg-finance-breakdown" aria-label="Cost versus benefit">
+                <div>
+                  <span>Total Expected Revenue</span>
+                  <strong>{formatCurrency(financialSummary.projectedYieldGainRm)}</strong>
+                </div>
+                <div>
+                  <span>Total Treatment Cost</span>
+                  <strong>{formatCurrency(financialSummary.treatmentCostRm)}</strong>
+                </div>
+              </div>
 
-          {safeNumber(financialSummary.lowStockLiters, 999) < 5 ? (
-            <p className="pg-finance-alert">
-              Low stock alert: {financialSummary.lowStockItem || 'Item'} only {safeNumber(financialSummary.lowStockLiters).toFixed(1)}L left.
-            </p>
-          ) : null}
+              {safeNumber(financialSummary.lowStockLiters, 999) < 5 ? (
+                <p className="pg-finance-alert">
+                  Low stock alert: {financialSummary.lowStockItem || 'Item'} only {safeNumber(financialSummary.lowStockLiters).toFixed(1)}L left.
+                </p>
+              ) : null}
 
-          <span className="pg-finance-cta">View Treatment Plan</span>
+              <span className="pg-finance-cta">View Treatment Plan</span>
+            </>
+          )}
         </button>
       </div>
     </section>

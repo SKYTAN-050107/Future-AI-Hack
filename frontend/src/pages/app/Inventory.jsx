@@ -16,6 +16,7 @@ import {
 import { useSessionContext } from '../../hooks/useSessionContext'
 
 const FILTERS = ['All', 'Pesticides', 'Fungicides', 'Fertilizers']
+const CATEGORY_OPTIONS = ['Pesticides', 'Fungicides', 'Fertilizers']
 
 function normalizeInventoryItem(rawItem) {
   const liters = Number(rawItem?.liters)
@@ -103,12 +104,17 @@ export default function Inventory() {
   // Add Item form state
   const [addName, setAddName] = useState('')
   const [addLiters, setAddLiters] = useState('')
-  const [addUsage, setAddUsage] = useState('')
+  const [addCategory, setAddCategory] = useState('Pesticides')
+  const [addCustomCategory, setAddCustomCategory] = useState('')
+  const [addDesc, setAddDesc] = useState('')
   const [addUnit, setAddUnit] = useState('liters')
   const [addCost, setAddCost] = useState('')
 
   // Edit form state
+  const [editName, setEditName] = useState('')
   const [editLiters, setEditLiters] = useState('')
+  const [editCategory, setEditCategory] = useState('Pesticides')
+  const [editCustomCategory, setEditCustomCategory] = useState('')
   const [editDesc, setEditDesc] = useState('')
   const [editCost, setEditCost] = useState('')
 
@@ -176,14 +182,19 @@ export default function Inventory() {
     setIsCreatingItem(true)
     setError('')
 
+    const resolvedCategory = addCategory === 'Other'
+      ? (addCustomCategory.trim() || 'Uncategorized')
+      : addCategory
+
     try {
       await createInventoryItem({
         userId,
         name: addName || 'Unnamed Item',
         quantity,
-        usage: addUsage || 'general',
+        usage: resolvedCategory,
         unit: addUnit || 'liters',
         costPerUnitRm,
+        description: addDesc.trim() || '',
       })
       await refreshInventory(userId)
       closeAddModal()
@@ -197,9 +208,18 @@ export default function Inventory() {
   // EDIT ITEM
   function openEditModal(item) {
     setEditModalItem(item)
+    setEditName(item.name || '')
     setEditLiters(String(item.liters))
     setEditDesc(item.description || '')
     setEditCost(String(item.unitCostRm || 0))
+    // Set category dropdown
+    if (CATEGORY_OPTIONS.includes(item.category)) {
+      setEditCategory(item.category)
+      setEditCustomCategory('')
+    } else {
+      setEditCategory('Other')
+      setEditCustomCategory(item.category || '')
+    }
     setError('')
   }
 
@@ -211,7 +231,9 @@ export default function Inventory() {
     setIsAddingItem(false)
     setAddName('')
     setAddLiters('')
-    setAddUsage('')
+    setAddCategory('Pesticides')
+    setAddCustomCategory('')
+    setAddDesc('')
     setAddUnit('liters')
     setAddCost('')
   }
@@ -236,15 +258,21 @@ export default function Inventory() {
       return
     }
 
+    const resolvedEditCategory = editCategory === 'Other'
+      ? (editCustomCategory.trim() || 'Uncategorized')
+      : editCategory
+
     setIsUpdatingItem(true)
     setError('')
 
     try {
       await updateInventoryItem(editModalItem.id, {
         userId,
+        name: editName.trim() || editModalItem.name,
         liters,
         description: editDesc,
         unitCostRm,
+        category: resolvedEditCategory,
       })
       await refreshInventory(userId)
       closeEditModal()
@@ -406,17 +434,31 @@ export default function Inventory() {
               <label className="pg-field-label">Item Name</label>
               <input required className="pg-input" type="text" value={addName} onChange={e => setAddName(e.target.value)} placeholder="e.g. NPK Fertilizer" />
               
+              <label className="pg-field-label">Category</label>
+              <select className="pg-input pg-select" value={addCategory} onChange={e => setAddCategory(e.target.value)}>
+                {CATEGORY_OPTIONS.map(cat => (
+                  <option key={cat} value={cat}>{cat}</option>
+                ))}
+                <option value="Other">Other</option>
+              </select>
+              {addCategory === 'Other' && (
+                <>
+                  <label className="pg-field-label" style={{ marginTop: 8 }}>Custom Category</label>
+                  <input required className="pg-input" type="text" value={addCustomCategory} onChange={e => setAddCustomCategory(e.target.value)} placeholder="Enter custom category" />
+                </>
+              )}
+              
               <label className="pg-field-label">Quantity</label>
               <input required className="pg-input" type="number" step="0.1" min="0" value={addLiters} onChange={e => setAddLiters(e.target.value)} placeholder="e.g. 10.5" />
-              
-              <label className="pg-field-label">Category / Usage</label>
-              <input required className="pg-input" type="text" value={addUsage} onChange={e => setAddUsage(e.target.value)} placeholder="e.g. fertilizer or pesticide" />
               
               <label className="pg-field-label">Unit Code</label>
               <input required className="pg-input" type="text" value={addUnit} onChange={e => setAddUnit(e.target.value)} placeholder="e.g. liters or kg" />
               
               <label className="pg-field-label">Cost Per Unit (RM)</label>
               <input required className="pg-input" type="number" step="0.01" min="0" value={addCost} onChange={e => setAddCost(e.target.value)} placeholder="e.g. 45.00" />
+              
+              <label className="pg-field-label">Description (Optional)</label>
+              <input className="pg-input" type="text" value={addDesc} onChange={e => setAddDesc(e.target.value)} placeholder="e.g. Usage notes or details" />
               
               <div className="pg-cta-row" style={{ marginTop: 24 }}>
                 <button type="submit" className="pg-btn pg-btn-primary" disabled={isCreatingItem}>
@@ -437,9 +479,22 @@ export default function Inventory() {
             {error && <p style={{ color: 'var(--danger)', marginBottom: 16 }}>{error}</p>}
 
             <form onSubmit={handleEditInventory}>
-              <p style={{ margin: '0 0 16px', opacity: 0.8, fontSize: '0.9rem' }}>
-                Category: <strong>{editModalItem.category}</strong>
-              </p>
+              <label className="pg-field-label">Item Name</label>
+              <input required className="pg-input" type="text" value={editName} onChange={e => setEditName(e.target.value)} placeholder="e.g. NPK Fertilizer" />
+
+              <label className="pg-field-label">Category</label>
+              <select className="pg-input pg-select" value={editCategory} onChange={e => setEditCategory(e.target.value)}>
+                {CATEGORY_OPTIONS.map(cat => (
+                  <option key={cat} value={cat}>{cat}</option>
+                ))}
+                <option value="Other">Other</option>
+              </select>
+              {editCategory === 'Other' && (
+                <>
+                  <label className="pg-field-label" style={{ marginTop: 8 }}>Custom Category</label>
+                  <input required className="pg-input" type="text" value={editCustomCategory} onChange={e => setEditCustomCategory(e.target.value)} placeholder="Enter custom category" />
+                </>
+              )}
 
               <label className="pg-field-label">Stock Quantity (Liters/Kg)</label>
               <input required className="pg-input" type="number" step="0.1" min="0" value={editLiters} onChange={e => setEditLiters(e.target.value)} />
