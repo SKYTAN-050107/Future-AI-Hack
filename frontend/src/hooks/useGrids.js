@@ -17,6 +17,7 @@ import { auth, db, isFirebaseConfigured } from '../firebase'
 
 const USERS_COLLECTION = 'users'
 const GRID_COLLECTION = 'grids'
+const GRID_STREAM_LOADING_TIMEOUT_MS = 12000
 
 const healthStateWeight = {
   Infected: 3,
@@ -153,25 +154,32 @@ export function useGrids() {
 
     let unsubscribe = () => {}
     let cancelled = false
+    let hasResolvedInitialSnapshot = false
+    let loadingTimeoutId = null
 
     const connectGridStream = async () => {
       setIsLoading(true)
 
-      try {
-        await migrateLegacyGridsForUser(authUser.uid)
-      } catch (migrationError) {
-        console.warn('Legacy grid migration skipped:', migrationError)
-      }
-
-      if (cancelled) {
-        return
-      }
-
       const gridsRef = getUserGridCollection(db, authUser.uid)
       const gridsQuery = query(gridsRef)
+
+      loadingTimeoutId = window.setTimeout(() => {
+        if (cancelled || hasResolvedInitialSnapshot) {
+          return
+        }
+
+        setIsLoading(false)
+      }, GRID_STREAM_LOADING_TIMEOUT_MS)
+
       unsubscribe = onSnapshot(
         gridsQuery,
         (snapshot) => {
+          hasResolvedInitialSnapshot = true
+          if (loadingTimeoutId) {
+            window.clearTimeout(loadingTimeoutId)
+            loadingTimeoutId = null
+          }
+
           const nextGrids = snapshot.docs.map((item) => {
             const data = item.data()
 
@@ -189,16 +197,29 @@ export function useGrids() {
           setError(null)
         },
         (snapshotError) => {
+          hasResolvedInitialSnapshot = true
+          if (loadingTimeoutId) {
+            window.clearTimeout(loadingTimeoutId)
+            loadingTimeoutId = null
+          }
+
           setError(toFriendlyFirestoreError(snapshotError, 'Failed to stream farm grids'))
           setIsLoading(false)
         },
       )
+
+      void migrateLegacyGridsForUser(authUser.uid).catch((migrationError) => {
+        console.warn('Legacy grid migration skipped:', migrationError)
+      })
     }
 
     connectGridStream()
 
     return () => {
       cancelled = true
+      if (loadingTimeoutId) {
+        window.clearTimeout(loadingTimeoutId)
+      }
       unsubscribe()
     }
   }, [authStateReady, authUser, migrateLegacyGridsForUser])

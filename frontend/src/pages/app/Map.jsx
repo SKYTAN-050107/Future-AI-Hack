@@ -19,6 +19,7 @@ const HEALTH_COLORS = {
 }
 const MIN_GRID_AREA_HECTARES = 0.01
 const MAX_GRID_AREA_HECTARES = 200
+const EMPTY_GRID_HOLD_MS = 9000
 
 function createBufferCollection(grids) {
   return {
@@ -632,6 +633,8 @@ export default function MapPage() {
   const gridCollection = useMemo(() => createFeatureCollection(grids), [grids])
   const lastStableGridCollectionRef = useRef({ type: 'FeatureCollection', features: [] })
   const lastStableSpreadCollectionRef = useRef({ type: 'FeatureCollection', features: [] })
+  const emptyGridHoldUntilRef = useRef(0)
+  const [gridHoldTick, setGridHoldTick] = useState(0)
 
   const hasSpreadContext = useMemo(
     () => (
@@ -647,12 +650,31 @@ export default function MapPage() {
       ? lastStableGridCollectionRef.current.features.length
       : 0
 
+    if (nextCount > 0) {
+      emptyGridHoldUntilRef.current = 0
+      return gridCollection
+    }
+
     if (grids.length > 0 && nextCount === 0 && previousCount > 0) {
       return lastStableGridCollectionRef.current
     }
 
+    if (grids.length === 0 && nextCount === 0 && previousCount > 0) {
+      const now = Date.now()
+      if (emptyGridHoldUntilRef.current === 0) {
+        emptyGridHoldUntilRef.current = now + EMPTY_GRID_HOLD_MS
+      }
+
+      const holdActive = now < emptyGridHoldUntilRef.current
+      if (holdActive || isLoading || Boolean(error)) {
+        return lastStableGridCollectionRef.current
+      }
+
+      emptyGridHoldUntilRef.current = 0
+    }
+
     return gridCollection
-  }, [gridCollection, grids.length])
+  }, [error, gridCollection, gridHoldTick, grids.length, isLoading])
 
   const effectiveSpreadCollection = useMemo(() => {
     const nextCount = Array.isArray(spreadCollection?.features) ? spreadCollection.features.length : 0
@@ -668,11 +690,36 @@ export default function MapPage() {
   }, [hasSpreadContext, spreadCollection])
 
   useEffect(() => {
+    const holdUntil = emptyGridHoldUntilRef.current
+    if (!holdUntil) {
+      return undefined
+    }
+
+    const waitMs = holdUntil - Date.now()
+    if (waitMs <= 0) {
+      return undefined
+    }
+
+    const timerId = window.setTimeout(() => {
+      setGridHoldTick((value) => value + 1)
+    }, waitMs + 40)
+
+    return () => {
+      window.clearTimeout(timerId)
+    }
+  }, [error, gridHoldTick, grids.length, isLoading])
+
+  useEffect(() => {
     const nextCount = Array.isArray(effectiveGridCollection?.features) ? effectiveGridCollection.features.length : 0
-    if (nextCount > 0 || grids.length === 0) {
+    if (nextCount > 0) {
+      lastStableGridCollectionRef.current = effectiveGridCollection
+      return
+    }
+
+    if (grids.length === 0 && emptyGridHoldUntilRef.current === 0 && !isLoading && !error) {
       lastStableGridCollectionRef.current = effectiveGridCollection
     }
-  }, [effectiveGridCollection, grids.length])
+  }, [effectiveGridCollection, error, grids.length, isLoading])
 
   useEffect(() => {
     const nextCount = Array.isArray(effectiveSpreadCollection?.features) ? effectiveSpreadCollection.features.length : 0
@@ -1183,21 +1230,36 @@ export default function MapPage() {
         ],
       ]
 
+      const spreadFillOpacityExpression = [
+        'case',
+        ['boolean', ['coalesce', ['get', 'spreadFromMarker'], false], false],
+        [
+          'interpolate',
+          ['linear'],
+          ['to-number', ['coalesce', ['get', 'spreadSeverityScore'], 0]],
+          0,
+          0.16,
+          100,
+          0.36,
+        ],
+        [
+          'interpolate',
+          ['linear'],
+          ['to-number', ['coalesce', ['get', 'spreadSeverityScore'], 0]],
+          0,
+          0.08,
+          100,
+          0.28,
+        ],
+      ]
+
       map.addLayer({
         id: 'pg-grid-spread-fill',
         type: 'fill',
         source: 'pg-grid-spread',
         paint: {
           'fill-color': spreadColorExpression,
-          'fill-opacity': [
-            'interpolate',
-            ['linear'],
-            ['to-number', ['coalesce', ['get', 'spreadSeverityScore'], 0]],
-            0,
-            0.08,
-            100,
-            0.28,
-          ],
+          'fill-opacity': spreadFillOpacityExpression,
         },
       })
 
@@ -1326,14 +1388,32 @@ export default function MapPage() {
     drawRef.current = draw
 
     return () => {
-      map.off('draw.create', onDrawCreate)
-      map.off('draw.update', onDrawUpdate)
-      map.off('draw.delete', onDrawDelete)
-      map.remove()
-      mapRef.current = null
-      drawRef.current = null
       mapReadyRef.current = false
       setMapReady(false)
+
+      // Detach refs first so downstream effects never touch a disposing map instance.
+      mapRef.current = null
+      drawRef.current = null
+
+      try {
+        map.off('draw.create', onDrawCreate)
+        map.off('draw.update', onDrawUpdate)
+        map.off('draw.delete', onDrawDelete)
+      } catch (listenerCleanupError) {
+        console.warn('Map listener cleanup skipped:', listenerCleanupError)
+      }
+
+      try {
+        map.getCanvas().style.cursor = ''
+      } catch {
+        // Cursor reset is best-effort only.
+      }
+
+      try {
+        map.remove()
+      } catch (mapCleanupError) {
+        console.warn('Map instance cleanup failed:', mapCleanupError)
+      }
     }
   }, [deleteGrid, isFirebaseConfigured, isMapboxConfigured, mapboxToken, saveOrUpdateGridByFeature])
 
