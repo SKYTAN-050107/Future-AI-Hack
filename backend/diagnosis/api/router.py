@@ -969,6 +969,8 @@ async def inventory_update(item_id: str, payload: InventoryUpdateRequest) -> Inv
             liters=payload.liters,
             description=payload.description,
             unit_cost_rm=payload.unit_cost_rm,
+            name=payload.name,
+            category=payload.category,
         )
     except ValueError as exc:
         return _error_response(400, str(exc))

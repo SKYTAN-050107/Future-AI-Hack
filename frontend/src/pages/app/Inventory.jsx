@@ -15,7 +15,6 @@ import {
 } from '../../api/inventory'
 import { useSessionContext } from '../../hooks/useSessionContext'
 
-const FILTERS = ['All', 'Pesticides', 'Fungicides', 'Fertilizers']
 const CATEGORY_OPTIONS = ['Pesticides', 'Fungicides', 'Fertilizers']
 
 function normalizeInventoryItem(rawItem) {
@@ -63,15 +62,33 @@ function getStockTone(liters) {
 }
 
 function getCategoryIcon(category) {
-  if (category === 'Pesticides') {
-    return IconBug
-  }
-
-  if (category === 'Fungicides') {
-    return IconShieldLeaf
-  }
-
+  const lc = (category || '').toLowerCase()
+  if (lc.includes('pesticide')) return IconBug
+  if (lc.includes('fungicide')) return IconShieldLeaf
   return IconSprout
+}
+
+function getCategoryColor(category) {
+  const lc = (category || '').toLowerCase()
+  if (lc.includes('pesticide')) return { bg: 'rgba(239, 68, 68, 0.12)', border: 'rgba(239, 68, 68, 0.25)', color: '#DC2626', darkColor: '#FCA5A5' }
+  if (lc.includes('fungicide')) return { bg: 'rgba(99, 102, 241, 0.12)', border: 'rgba(99, 102, 241, 0.25)', color: '#4F46E5', darkColor: '#A5B4FC' }
+  return { bg: 'rgba(16, 185, 129, 0.12)', border: 'rgba(16, 185, 129, 0.25)', color: '#059669', darkColor: '#6EE7B7' }
+}
+
+function fuzzyMatchCategory(category, query) {
+  if (!query.trim()) return true
+  const cat = (category || '').toLowerCase()
+  const q = query.trim().toLowerCase()
+  if (cat.includes(q)) return true
+  // token-based: every word in query must appear in category
+  return q.split(/\s+/).every(token => cat.includes(token))
+}
+
+function matchesFilter(itemCategory, filter) {
+  if (filter === 'All') return true
+  const itemLc = (itemCategory || '').toLowerCase()
+  const filterLc = filter.toLowerCase()
+  return itemLc === filterLc || itemLc.includes(filterLc.replace(/s$/, ''))
 }
 
 function parseInventoryResponse(response) {
@@ -88,6 +105,7 @@ function parseInventoryResponse(response) {
 export default function Inventory() {
   const { user } = useSessionContext()
   const [activeFilter, setActiveFilter] = useState('All')
+  const [categorySearch, setCategorySearch] = useState('')
   const [items, setItems] = useState([])
   const [lastUpdatedLabel, setLastUpdatedLabel] = useState('Unknown')
   const [error, setError] = useState('')
@@ -310,120 +328,168 @@ export default function Inventory() {
     [items],
   )
 
-  const visibleItems = useMemo(
-    () => (activeFilter === 'All'
-      ? items
-      : items.filter((item) => item.category === activeFilter)),
-    [activeFilter, items],
+  const totalValue = useMemo(
+    () => items.reduce((sum, item) => sum + item.liters * item.unitCostRm, 0),
+    [items],
   )
 
+  const visibleItems = useMemo(
+    () => items
+      .filter((item) => activeFilter === 'All' || matchesFilter(item.category, activeFilter))
+      .filter((item) => fuzzyMatchCategory(item.category, categorySearch)),
+    [activeFilter, categorySearch, items],
+  )
+
+  const FILTERS = useMemo(() => {
+    const base = ['All', 'Pesticides', 'Fungicides', 'Fertilizers']
+    // Add any extra categories that exist in items but aren't in the base list
+    const extra = items
+      .map(i => i.category)
+      .filter(cat => cat && !base.some(b => matchesFilter(cat, b)))
+      .filter((cat, idx, arr) => arr.indexOf(cat) === idx)
+    return [...base, ...extra]
+  }, [items])
+
   return (
-    <section className="pg-page pg-inventory-page" aria-label="Chemical inventory">
+    <section className="pg-page pg-inv" aria-label="Chemical inventory">
       <SectionHeader title="Inventory" align="center" />
 
       {error && !editModalItem && !isAddingItem ? (
-        <article className="pg-card" style={{ background: 'rgba(var(--danger-rgb), 0.1)', color: 'var(--danger)' }}>
+        <div className="pg-inv-error">
           <p>{error}</p>
-        </article>
+        </div>
       ) : null}
 
-      <div className="pg-inventory-stat-row" aria-label="Inventory quick statistics">
-        <span className="pg-inventory-stat-chip">Total Items: {items.length}</span>
-        <span className="pg-inventory-stat-chip pg-inventory-stat-chip-alert">Low Stock: {lowStockCount}</span>
-        <span className="pg-inventory-stat-chip">Last Updated: {lastUpdatedLabel}</span>
+      {/* ── Summary Cards ── */}
+      <div className="pg-inv-summary">
+        <div className="pg-inv-summary-card">
+          <span className="pg-inv-summary-value">{items.length}</span>
+          <span className="pg-inv-summary-label">Total Items</span>
+        </div>
+        <div className={`pg-inv-summary-card ${lowStockCount > 0 ? 'is-alert' : ''}`}>
+          <span className="pg-inv-summary-value">{lowStockCount}</span>
+          <span className="pg-inv-summary-label">Low Stock</span>
+        </div>
+        <div className="pg-inv-summary-card">
+          <span className="pg-inv-summary-value">RM {totalValue.toFixed(0)}</span>
+          <span className="pg-inv-summary-label">Total Value</span>
+        </div>
       </div>
 
-      <div className="pg-inventory-filter-row" role="tablist" aria-label="Filter inventory category">
+      {/* ── Category Search ── */}
+      <div className="pg-inv-search-wrap">
+        <input
+          className="pg-input pg-inv-search"
+          type="search"
+          placeholder="Search category..."
+          value={categorySearch}
+          onChange={(e) => setCategorySearch(e.target.value)}
+          aria-label="Search inventory by category"
+        />
+      </div>
+
+      {/* ── Filter Pills ── */}
+      <div className="pg-inv-filters" role="tablist" aria-label="Filter inventory category">
         {FILTERS.map((filter) => (
           <button
             key={filter}
             type="button"
-            className={`pg-inventory-filter-pill ${filter === activeFilter ? 'is-active' : ''}`}
+            className={`pg-inv-filter ${filter === activeFilter ? 'is-active' : ''}`}
             onClick={() => setActiveFilter(filter)}
             role="tab"
             aria-selected={filter === activeFilter}
           >
             {filter}
+            {filter !== 'All' && (
+              <span className="pg-inv-filter-count">
+                {items.filter((item) => matchesFilter(item.category, filter)).length}
+              </span>
+            )}
           </button>
         ))}
       </div>
 
-      <p className="pg-inventory-selected-note" aria-live="polite">
-        Select any item below to view details and edit stock.
-      </p>
-
-      <div className="pg-inventory-list" aria-live="polite">
+      {/* ── Item List ── */}
+      <div className="pg-inv-list" aria-live="polite">
         {visibleItems.length === 0 ? (
-          <article className="pg-card">
-            <p>{error ? 'Inventory unavailable.' : 'No inventory items found.'}</p>
-          </article>
+          <div className="pg-inv-empty">
+            <IconSprout className="pg-icon" style={{ width: 40, height: 40, opacity: 0.3 }} />
+            <p>{error ? 'Inventory unavailable.' : 'No items in this category.'}</p>
+            {!error && (
+              <button type="button" className="pg-inv-empty-action" onClick={() => setIsAddingItem(true)}>
+                <IconPlus className="pg-icon" style={{ width: 16, height: 16 }} />
+                Add your first item
+              </button>
+            )}
+          </div>
         ) : null}
 
         {visibleItems.map((item) => {
           const stockTone = getStockTone(item.liters)
           const ItemIcon = getCategoryIcon(item.category)
+          const catColor = getCategoryColor(item.category)
           const isLowStock = item.liters < 5
+          const stockPercent = Math.min(100, (item.liters / 10) * 100)
 
           return (
             <button
               key={item.id}
               type="button"
-              className="pg-inventory-item"
+              className="pg-inv-card"
               aria-label={`${item.name}, ${item.liters.toFixed(1)} liters`}
               onClick={() => openEditModal(item)}
             >
-              <span className="pg-inventory-item-icon" aria-hidden="true">
+              <div className="pg-inv-card-icon" style={{ background: catColor.bg, borderColor: catColor.border }}>
                 <ItemIcon className="pg-icon" />
-              </span>
+              </div>
 
-              <div className="pg-inventory-item-content">
-                <div className="pg-inventory-item-header">
-                  <p className="pg-inventory-item-name">{item.name}</p>
-                  <span className={`pg-inventory-status-badge ${isLowStock ? 'is-low' : 'is-ok'}`}>
-                    {isLowStock ? 'Low Stock' : 'In Stock'}
+              <div className="pg-inv-card-body">
+                <div className="pg-inv-card-top">
+                  <h3 className="pg-inv-card-name">{item.name}</h3>
+                  <span className={`pg-inv-badge ${isLowStock ? 'is-low' : 'is-ok'}`}>
+                    {isLowStock ? 'Low' : 'In Stock'}
                   </span>
                 </div>
 
                 {item.description ? (
-                  <p className="pg-inventory-item-description">{item.description}</p>
+                  <p className="pg-inv-card-desc">{item.description}</p>
                 ) : null}
 
-                <div className="pg-inventory-progress" role="img" aria-label={`Stock ${item.liters.toFixed(1)} liters out of 10`}>
-                  <span
-                    className={`pg-inventory-progress-fill is-${stockTone}`}
-                    style={{ width: `${Math.min(100, (item.liters / 10) * 100)}%` }}
+                <div className="pg-inv-card-bar">
+                  <div
+                    className={`pg-inv-card-bar-fill is-${stockTone}`}
+                    style={{ width: `${stockPercent}%` }}
                   />
                 </div>
 
-                <div className="pg-inventory-item-meta">
-                  <span>{item.liters.toFixed(1)} Liters</span>
-                  <span>{item.category}</span>
-                  <span>RM {item.unitCostRm.toFixed(2)}/L</span>
+                <div className="pg-inv-card-meta">
+                  <span className="pg-inv-card-qty">{item.liters.toFixed(1)} L</span>
+                  <span className="pg-inv-card-cat">{item.category}</span>
+                  <span className="pg-inv-card-cost">RM {item.unitCostRm.toFixed(2)}/L</span>
                 </div>
               </div>
 
-              <IconChevronRight className="pg-icon pg-inventory-chevron" />
+              <IconChevronRight className="pg-icon pg-inv-card-chevron" />
             </button>
           )
         })}
       </div>
 
-      {/* Floating Action Button purely for ADDING items */}
+      {/* ── Updated info ── */}
+      <p className="pg-inv-updated">Last updated: {lastUpdatedLabel}</p>
+
+      {/* ── FAB ── */}
       <button
         type="button"
-        className="pg-inventory-add-fab pg-inventory-add-fab-main"
+        className="pg-inv-fab"
         aria-label="Add new inventory item"
         onClick={() => setIsAddingItem(true)}
         disabled={isActionBusy}
-        style={{ position: 'fixed', bottom: 90, right: 20, zIndex: 90 }}
       >
-        <span className="pg-inventory-add-fab-label"></span>
         <IconPlus className="pg-icon" />
       </button>
 
-      {/* ── Slide-up Modals ── */}
-
-      {/* Add Item Modal */}
+      {/* ═══════════════════ Add Item Modal ═══════════════════ */}
       {isAddingItem && (
         <div className="pg-modal-backdrop" onClick={closeAddModal}>
           <div className="pg-modal-drawer pg-modal-drawer-themed" onClick={(e) => e.stopPropagation()}>
@@ -470,7 +536,7 @@ export default function Inventory() {
         </div>
       )}
 
-      {/* Edit/Details Modal */}
+      {/* ═══════════════════ Edit/Details Modal ═══════════════════ */}
       {editModalItem && (
         <div className="pg-modal-backdrop" onClick={closeEditModal}>
           <div className="pg-modal-drawer pg-modal-drawer-themed" onClick={(e) => e.stopPropagation()}>

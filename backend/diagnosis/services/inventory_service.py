@@ -32,6 +32,8 @@ class InventoryService:
         liters: float,
         description: str | None = None,
         unit_cost_rm: float | None = None,
+        name: str | None = None,
+        category: str | None = None,
     ) -> dict:
         if not user_id:
             raise ValueError("user_id is required")
@@ -47,6 +49,8 @@ class InventoryService:
             liters,
             description,
             unit_cost_rm,
+            name,
+            category,
         )
 
     async def create_item_v1(
@@ -264,6 +268,8 @@ class InventoryService:
         liters: float,
         description: str | None = None,
         unit_cost_rm: float | None = None,
+        name: str | None = None,
+        category: str | None = None,
     ) -> dict:
         ref = (
             self._db.collection("users")
@@ -290,6 +296,17 @@ class InventoryService:
             safe_cost = max(0.0, float(unit_cost_rm))
             payload["cost_per_unit_rm"] = safe_cost
             payload["unit_cost_rm"] = safe_cost
+
+        if name is not None:
+            safe_name = name.strip()
+            if safe_name:
+                payload["name"] = safe_name
+
+        if category is not None:
+            safe_category = category.strip()
+            if safe_category:
+                payload["category"] = safe_category
+                payload["usage"] = safe_category
 
         ref.set(payload, merge=True)
 

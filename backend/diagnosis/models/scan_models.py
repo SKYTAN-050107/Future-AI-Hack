@@ -262,6 +262,8 @@ class InventoryUpdateRequest(BaseModel):
     liters: float = Field(..., ge=0.0)
     description: str | None = None
     unit_cost_rm: float | None = Field(default=None, ge=0.0)
+    name: str | None = None
+    category: str | None = None
 
 
 class InventoryUpdateResponse(BaseModel):
