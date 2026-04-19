@@ -31,6 +31,22 @@ function conditionIcon(condition) {
   return CONDITION_ICONS[condition] || '🌡️'
 }
 
+function weatherHeroVariant(condition) {
+  const value = String(condition || '').trim().toLowerCase()
+
+  if (value === 'clear' || value === 'mostly clear') return 'is-clear'
+  if (value === 'partly cloudy') return 'is-partly-cloudy'
+  if (value === 'cloudy' || value === 'mostly cloudy') return 'is-cloudy'
+  if (value === 'fog' || value === 'light fog') return 'is-fog'
+  if (value === 'drizzle') return 'is-drizzle'
+  if (value === 'rain' || value === 'light rain') return 'is-rain'
+  if (value === 'heavy rain') return 'is-heavy-rain'
+  if (value === 'thunderstorm') return 'is-thunderstorm'
+  if (value === 'snow' || value === 'light snow') return 'is-snow'
+  if (value === 'heavy snow') return 'is-snow-heavy'
+  return 'is-unknown'
+}
+
 function normalizeForecastEntry(entry, index) {
   const day = String(entry?.day || '').trim()
   const condition = String(entry?.condition || '').trim()
@@ -327,6 +343,7 @@ export default function Weather() {
   const serviceWarning = String(today.serviceWarning || '').trim()
   const advisoryAge = advisoryAgeMinutes(advisoryFetchedAt)
   const advisoryCooldown = advisoryCacheRemainingMinutes(advisoryFetchedAt)
+  const heroVariant = weatherHeroVariant(today.condition)
 
   return (
     <section className="pg-page pg-weather-page">
@@ -352,7 +369,7 @@ export default function Weather() {
 
       {/* ── Today Hero Card ─────────────────────────────── */}
       {weatherData ? (
-        <div className="pg-weather-hero" id="weather-hero-today">
+        <div className={`pg-weather-hero ${heroVariant}`} id="weather-hero-today">
           <div className="pg-weather-hero-top">
             <div>
               <div className="pg-weather-hero-temp">{today.temperatureC}°C</div>
@@ -388,13 +405,13 @@ export default function Weather() {
           </div>
 
           {serviceWarning ? (
-            <p style={{ marginTop: 12, fontSize: 12, lineHeight: 1.4, color: 'var(--pg-warning, #ffb454)' }}>
+            <p className="pg-weather-service-warning">
               {serviceWarning}
             </p>
           ) : null}
 
           {today.best_spray_window ? (
-            <div className="pg-weather-day-meta" style={{ padding: '0' }}>
+            <div className="pg-weather-day-meta pg-weather-best-window-meta">
               <span>🕐</span>
               <span className="pg-weather-day-spray-window">Best Window: {today.best_spray_window}</span>
             </div>
@@ -419,7 +436,7 @@ export default function Weather() {
             </button>
           </div>
 
-          <p style={{ margin: 0, fontSize: 12, lineHeight: 1.45, color: 'rgba(255,255,255,0.72)' }}>
+          <p className="pg-weather-ai-cache-note">
             AI advisory is cached locally for 15 minutes to reduce repeated calls.
             {advisoryAge !== null ? ` Last updated ${advisoryAge} minute(s) ago.` : ''}
             {advisoryCooldown !== null ? ` Refreshes reuse the cache for about ${advisoryCooldown} more minute(s).` : ''}

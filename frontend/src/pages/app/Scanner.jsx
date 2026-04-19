@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import mapboxgl from 'mapbox-gl'
 import * as turf from '@turf/turf'
@@ -859,63 +860,64 @@ export default function Scanner() {
         />
       </footer>
 
-      {isZoneChoiceOpen && pendingCaptureDraft ? (
-        <div
-          className="pg-sheet-overlay pg-scanner-zone-overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Optional zone selection"
-        >
-          <section className="pg-sheet pg-scanner-zone-sheet">
-            <span className="pg-sheet-handle" aria-hidden="true" />
+      {isZoneChoiceOpen && pendingCaptureDraft && typeof document !== 'undefined'
+        ? createPortal(
+            <div
+              className="pg-scanner-zone-overlay"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Optional zone selection"
+            >
+              <section className="pg-sheet pg-scanner-zone-sheet">
+                <span className="pg-sheet-handle" aria-hidden="true" />
 
-            <header className="pg-sheet-header pg-scanner-zone-header">
-              <h2>Zone selection</h2>
-              <button
-                type="button"
-                className="pg-btn pg-btn-ghost pg-btn-inline"
-                onClick={handleRetakeCapture}
-                disabled={isFinalizingCapture}
-              >
-                Retake
-              </button>
-            </header>
+                <header className="pg-sheet-header pg-scanner-zone-header">
+                  <h2>Zone selection</h2>
+                  <button
+                    type="button"
+                    className="pg-btn pg-btn-ghost pg-btn-inline"
+                    onClick={handleRetakeCapture}
+                    disabled={isFinalizingCapture}
+                  >
+                    Retake
+                  </button>
+                </header>
 
-            <div className="pg-sheet-body pg-scanner-zone-body">
-              <p className="pg-scanner-zone-hint">
-                Choose a zone for better report traceability, or skip zone to diagnose this photo directly.
-              </p>
+                <div className="pg-sheet-body pg-scanner-zone-body">
+                  <p className="pg-scanner-zone-hint">
+                    Choose a zone for better report traceability, or skip zone to diagnose this photo directly.
+                  </p>
 
-              <label className="pg-field-label" htmlFor="pg-scanner-zone-select">
-                Select zone (optional)
-              </label>
-              <select
-                id="pg-scanner-zone-select"
-                className="pg-input pg-scanner-zone-select"
-                value={selectedGridId}
-                onChange={(event) => {
-                  setSelectedGridId(event.target.value)
-                  if (zoneChoiceError) {
-                    setZoneChoiceError('')
-                  }
-                }}
-                disabled={isFinalizingCapture || zoneOptions.length === 0}
-              >
-                <option value="">
-                  {zoneOptions.length > 0 ? 'Choose one zone...' : 'No zone available'}
-                </option>
-                {zoneOptions.map((zone) => (
-                  <option key={zone.value} value={zone.value} disabled={!zone.hasGeometry}>
-                    {zone.label} ({zone.healthState}, {zone.areaHectares.toFixed(2)} ha{zone.hasGeometry ? '' : ', no boundary'})
-                  </option>
-                ))}
-              </select>
+                  <label className="pg-field-label" htmlFor="pg-scanner-zone-select">
+                    Select zone (optional)
+                  </label>
+                  <select
+                    id="pg-scanner-zone-select"
+                    className="pg-input pg-scanner-zone-select"
+                    value={selectedGridId}
+                    onChange={(event) => {
+                      setSelectedGridId(event.target.value)
+                      if (zoneChoiceError) {
+                        setZoneChoiceError('')
+                      }
+                    }}
+                    disabled={isFinalizingCapture || zoneOptions.length === 0}
+                  >
+                    <option value="">
+                      {zoneOptions.length > 0 ? 'Choose one zone...' : 'No zone available'}
+                    </option>
+                    {zoneOptions.map((zone) => (
+                      <option key={zone.value} value={zone.value} disabled={!zone.hasGeometry}>
+                        {zone.label} ({zone.healthState}, {zone.areaHectares.toFixed(2)} ha{zone.hasGeometry ? '' : ', no boundary'})
+                      </option>
+                    ))}
+                  </select>
 
-              {zoneOptions.length === 0 ? (
-                <p className="pg-scanner-zone-list-hint">
-                  No saved zones found yet. Continue with photo-only diagnosis.
-                </p>
-              ) : null}
+                  {zoneOptions.length === 0 ? (
+                    <p className="pg-scanner-zone-list-hint">
+                      No saved zones found yet. Continue with photo-only diagnosis.
+                    </p>
+                  ) : null}
 
               {selectedGridId && selectedZone?.hasGeometry ? (
                 <>
@@ -940,30 +942,32 @@ export default function Scanner() {
                 </>
               ) : null}
 
-              {zoneChoiceError ? <p className="pg-scanner-zone-error">{zoneChoiceError}</p> : null}
+                  {zoneChoiceError ? <p className="pg-scanner-zone-error">{zoneChoiceError}</p> : null}
 
-              <div className="pg-sheet-actions pg-scanner-zone-actions">
-                <button
-                  type="button"
-                  className="pg-btn pg-btn-primary"
-                  onClick={handleUseSelectedZone}
-                  disabled={isFinalizingCapture || zoneOptions.length === 0}
-                >
-                  Continue with selected zone
-                </button>
-                <button
-                  type="button"
-                  className="pg-btn pg-btn-ghost"
-                  onClick={handleSkipZone}
-                  disabled={isFinalizingCapture}
-                >
-                  Skip zone and diagnose photo
-                </button>
-              </div>
-            </div>
-          </section>
-        </div>
-      ) : null}
+                  <div className="pg-sheet-actions pg-scanner-zone-actions">
+                    <button
+                      type="button"
+                      className="pg-btn pg-btn-primary"
+                      onClick={handleUseSelectedZone}
+                      disabled={isFinalizingCapture || zoneOptions.length === 0}
+                    >
+                      Continue with selected zone
+                    </button>
+                    <button
+                      type="button"
+                      className="pg-btn pg-btn-ghost"
+                      onClick={handleSkipZone}
+                      disabled={isFinalizingCapture}
+                    >
+                      Skip zone and diagnose photo
+                    </button>
+                  </div>
+                </div>
+              </section>
+            </div>,
+            document.body,
+          )
+        : null}
     </section>
   )
 }
