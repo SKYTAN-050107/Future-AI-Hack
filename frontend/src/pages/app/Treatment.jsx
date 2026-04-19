@@ -4,7 +4,9 @@ import SectionHeader from '../../components/ui/SectionHeader'
 import MetricTile from '../../components/ui/MetricTile'
 import BackButton from '../../components/navigation/BackButton'
 import { getCropById, getCrops } from '../../api/crops'
+import { runSwarmOrchestrator } from '../../api/swarm'
 import { getTreatmentPlan } from '../../api/treatment'
+import { getTreatmentFormSnapshot, saveTreatmentFormSnapshot, saveTreatmentRoiSnapshot } from '../../utils/treatmentRoiCache'
 import { useSessionContext } from '../../hooks/useSessionContext'
 import { useScanHistory } from '../../hooks/useScanHistory'
 import { useGrids } from '../../hooks/useGrids'
@@ -18,6 +20,7 @@ function normalizeCrop(rawCrop) {
   return {
     id: String(rawCrop?.id || ''),
     name: String(rawCrop?.name || 'Unnamed Crop'),
+    areaHectares: toSafeNumber(rawCrop?.area_hectares ?? rawCrop?.areaHectares, 0),
     expectedYieldKg: toSafeNumber(rawCrop?.expected_yield_kg, 0),
     laborCostRm: toSafeNumber(rawCrop?.labor_cost_rm, 0),
     otherCostsRm: toSafeNumber(rawCrop?.other_costs_rm, 0),
@@ -49,6 +52,33 @@ function formatRoi(plan) {
   return '--'
 }
 
+function severityLabel(value) {
+  if (value >= 70) {
+    return 'High'
+  }
+
+  if (value >= 40) {
+    return 'Medium'
+  }
+
+  return 'Low'
+}
+
+function deriveSurvivalProbability(report) {
+  const explicitValue = Number(report?.survivalProb ?? report?.survival_prob)
+  if (Number.isFinite(explicitValue)) {
+    return Math.max(0, Math.min(1, explicitValue))
+  }
+
+  const severity = Number(report?.severity)
+  if (!Number.isFinite(severity)) {
+    return null
+  }
+
+  const inferred = 1 - (severity / 100)
+  return Math.max(0.05, Math.min(0.95, inferred))
+}
+
 export default function Treatment() {
   const navigate = useNavigate()
   const { user, profile } = useSessionContext()
@@ -62,9 +92,15 @@ export default function Treatment() {
   const [actualSoldKg, setActualSoldKg] = useState(0)
   const [laborCostRm, setLaborCostRm] = useState(0)
   const [otherCostsRm, setOtherCostsRm] = useState(0)
+  const [hasManualYieldInput, setHasManualYieldInput] = useState(false)
+  const [hasManualActualSoldInput, setHasManualActualSoldInput] = useState(false)
   const [sellingChannel, setSellingChannel] = useState('middleman')
   const [marketCondition, setMarketCondition] = useState('normal')
   const [manualPriceOverride, setManualPriceOverride] = useState('')
+  const [yieldForecast, setYieldForecast] = useState(null)
+  const [yieldForecastError, setYieldForecastError] = useState('')
+  const [isYieldForecastLoading, setIsYieldForecastLoading] = useState(false)
+  const [calculationInput, setCalculationInput] = useState(null)
   const [plan, setPlan] = useState(null)
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -77,10 +113,45 @@ export default function Treatment() {
     [grids],
   )
 
+  const totalAreaHectares = useMemo(
+    () => grids.reduce((sum, grid) => sum + toSafeNumber(grid?.areaHectares, 0), 0),
+    [grids],
+  )
+
+  const resolvedFarmSizeHectares = useMemo(() => {
+    const cropArea = toSafeNumber(cropDetail?.areaHectares, 0)
+    if (cropArea > 0) {
+      return cropArea
+    }
+
+    return totalAreaHectares > 0 ? totalAreaHectares : null
+  }, [cropDetail?.areaHectares, totalAreaHectares])
+
+  const predictedYieldKg = toSafeNumber(yieldForecast?.predicted_yield_kg, 0)
+  const forecastConfidence = toSafeNumber(yieldForecast?.confidence, 0)
+  const forecastLossPercent = toSafeNumber(yieldForecast?.yield_loss_percent, 0)
+
+  const yieldInputSourceLabel = useMemo(() => {
+    if (hasManualYieldInput) {
+      return 'manual input'
+    }
+
+    if (predictedYieldKg > 0) {
+      return 'swarm yield forecast'
+    }
+
+    return 'crop profile'
+  }, [hasManualYieldInput, predictedYieldKg])
+
   const maxYield = useMemo(() => {
-    const base = Math.max(0, toSafeNumber(cropDetail?.expectedYieldKg, 0))
+    const base = Math.max(
+      0,
+      toSafeNumber(cropDetail?.expectedYieldKg, 0),
+      toSafeNumber(yieldKg, 0),
+      predictedYieldKg,
+    )
     return Math.max(100, Math.ceil(base * 2))
-  }, [cropDetail?.expectedYieldKg])
+  }, [cropDetail?.expectedYieldKg, predictedYieldKg, yieldKg])
 
   useEffect(() => {
     let active = true
@@ -105,6 +176,12 @@ export default function Treatment() {
           : []
 
         setCrops(nextCrops)
+
+        const cachedSelection = String(getTreatmentFormSnapshot(userId)?.selectedCropId || '').trim()
+        if (cachedSelection && nextCrops.some((item) => item.id === cachedSelection)) {
+          setSelectedCropId(cachedSelection)
+          return
+        }
 
         const preferredCropId = String(profile?.activeCropId || '').trim()
         if (preferredCropId && nextCrops.some((item) => item.id === preferredCropId)) {
@@ -151,10 +228,32 @@ export default function Treatment() {
 
         const normalized = normalizeCrop(response)
         setCropDetail(normalized)
+
+        const cachedForm = getTreatmentFormSnapshot(userId, selectedCropId)?.values
+        if (cachedForm) {
+          setYieldKg(toSafeNumber(cachedForm.yieldKg, normalized.expectedYieldKg))
+          setActualSoldKg(toSafeNumber(cachedForm.actualSoldKg, normalized.expectedYieldKg))
+          setLaborCostRm(toSafeNumber(cachedForm.laborCostRm, normalized.laborCostRm))
+          setOtherCostsRm(toSafeNumber(cachedForm.otherCostsRm, normalized.otherCostsRm))
+          setSellingChannel(String(cachedForm.sellingChannel || 'middleman').trim().toLowerCase() || 'middleman')
+          setMarketCondition(String(cachedForm.marketCondition || 'normal').trim().toLowerCase() || 'normal')
+          setManualPriceOverride(String(cachedForm.manualPriceOverride ?? ''))
+          setHasManualYieldInput(true)
+          setHasManualActualSoldInput(true)
+          setPlan(cachedForm.plan && typeof cachedForm.plan === 'object' ? cachedForm.plan : null)
+          return
+        }
+
+        setPlan(null)
         setYieldKg(normalized.expectedYieldKg)
         setActualSoldKg(normalized.expectedYieldKg)
+        setHasManualYieldInput(false)
+        setHasManualActualSoldInput(false)
         setLaborCostRm(normalized.laborCostRm)
         setOtherCostsRm(normalized.otherCostsRm)
+        setSellingChannel('middleman')
+        setMarketCondition('normal')
+        setManualPriceOverride('')
       })
       .catch((loadError) => {
         if (!active) {
@@ -171,80 +270,235 @@ export default function Treatment() {
     }
   }, [selectedCropId, userId])
 
+  const yieldForecastRequest = useMemo(() => {
+    const gridId = String(latestReport?.gridId || latestReport?.zone || firstGridWithCentroid?.id || '').trim()
+    const cropType = String(cropDetail?.name || '').trim()
+    const treatmentPlan = String(
+      latestReport?.treatmentPlan
+      || latestReport?.treatment_plan
+      || 'recommended treatment',
+    ).trim()
+    const disease = String(latestReport?.disease || '').trim()
+    const lat = Number(firstGridWithCentroid?.centroid?.lat)
+    const lng = Number(firstGridWithCentroid?.centroid?.lng)
+    const survivalProb = deriveSurvivalProbability(latestReport)
+
+    if (!userId || !gridId || !cropType || !Number.isFinite(lat) || !Number.isFinite(lng)) {
+      return {
+        payload: null,
+        error: 'Yield forecast needs signed-in user, mapped grid centroid, and selected crop.',
+      }
+    }
+
+    if (!disease) {
+      return {
+        payload: null,
+        error: 'Yield forecast is waiting for a diagnosis result from your latest scan.',
+      }
+    }
+
+    if (!resolvedFarmSizeHectares || resolvedFarmSizeHectares <= 0) {
+      return {
+        payload: null,
+        error: 'Yield forecast needs farm size from crop profile or mapped grids.',
+      }
+    }
+
+    if (survivalProb === null) {
+      return {
+        payload: null,
+        error: 'Yield forecast needs survival probability from the latest scan.',
+      }
+    }
+
+    const severityPercent = Number(latestReport?.severity)
+    const severityScore = Number.isFinite(Number(latestReport?.severityScore))
+      ? Math.max(0, Math.min(1, Number(latestReport?.severityScore)))
+      : Math.max(0, Math.min(1, (Number.isFinite(severityPercent) ? severityPercent : 0) / 100))
+
+    return {
+      payload: {
+        user_id: userId,
+        grid_id: gridId,
+        lat,
+        lng,
+        crop_type: cropType,
+        disease,
+        severity: severityLabel(severityPercent),
+        severity_score: severityScore,
+        survival_prob: survivalProb,
+        farm_size: resolvedFarmSizeHectares,
+        treatment_plan: treatmentPlan,
+        growth_stage: String(cropDetail?.status || '').trim() || null,
+        wind_speed_kmh: 0,
+        wind_direction: 'N',
+      },
+      error: '',
+    }
+  }, [
+    cropDetail?.name,
+    cropDetail?.status,
+    firstGridWithCentroid?.centroid?.lat,
+    firstGridWithCentroid?.centroid?.lng,
+    firstGridWithCentroid?.id,
+    latestReport,
+    resolvedFarmSizeHectares,
+    userId,
+  ])
+
   useEffect(() => {
-    if (!userId || !selectedCropId || !cropDetail) {
+    let active = true
+
+    if (!yieldForecastRequest.payload) {
+      setYieldForecast(null)
+      setYieldForecastError(yieldForecastRequest.error)
+      setIsYieldForecastLoading(false)
       return undefined
+    }
+
+    setIsYieldForecastLoading(true)
+    setYieldForecastError('')
+
+    runSwarmOrchestrator(yieldForecastRequest.payload)
+      .then((response) => {
+        if (!active) {
+          return
+        }
+
+        const forecast = response?.yield_forecast && typeof response.yield_forecast === 'object'
+          ? response.yield_forecast
+          : null
+
+        if (!forecast) {
+          setYieldForecast(null)
+          setYieldForecastError('Yield forecast is unavailable in the current swarm response.')
+          return
+        }
+
+        setYieldForecast(forecast)
+
+        const predicted = toSafeNumber(forecast?.predicted_yield_kg, 0)
+        if (predicted > 0 && !hasManualYieldInput) {
+          setYieldKg(predicted)
+        }
+
+        if (predicted > 0 && !hasManualActualSoldInput) {
+          setActualSoldKg(predicted)
+        }
+      })
+      .catch((loadError) => {
+        if (!active) {
+          return
+        }
+
+        setYieldForecast(null)
+        setYieldForecastError(loadError?.message || 'Unable to fetch yield forecast from swarm.')
+      })
+      .finally(() => {
+        if (active) {
+          setIsYieldForecastLoading(false)
+        }
+      })
+
+    return () => {
+      active = false
+    }
+  }, [
+    hasManualActualSoldInput,
+    hasManualYieldInput,
+    yieldForecastRequest.error,
+    yieldForecastRequest.payload,
+  ])
+
+  useEffect(() => {
+    if (!calculationInput) {
+      return undefined
+    }
+
+    let active = true
+    setIsLoading(true)
+    setError('')
+
+    getTreatmentPlan(calculationInput)
+      .then((response) => {
+        if (!active) {
+          return
+        }
+
+        setPlan(response)
+        saveTreatmentRoiSnapshot({ userId: calculationInput.userId, plan: response })
+        saveTreatmentFormSnapshot({
+          userId: calculationInput.userId,
+          cropId: calculationInput.cropId,
+          values: {
+            yieldKg: calculationInput.yieldKg,
+            actualSoldKg: calculationInput.actualSoldKg,
+            laborCostRm: calculationInput.laborCostRm,
+            otherCostsRm: calculationInput.otherCostsRm,
+            sellingChannel: calculationInput.sellingChannel,
+            marketCondition: calculationInput.marketCondition,
+            manualPriceOverride: calculationInput.manualPriceOverrideInput,
+            hasManualYieldInput: calculationInput.hasManualYieldInput,
+            hasManualActualSoldInput: calculationInput.hasManualActualSoldInput,
+          },
+          plan: response,
+        })
+      })
+      .catch((loadError) => {
+        if (!active) {
+          return
+        }
+
+        setPlan(null)
+        setError(loadError?.message || 'Unable to calculate ROI')
+      })
+      .finally(() => {
+        if (active) {
+          setIsLoading(false)
+        }
+      })
+
+    return () => {
+      active = false
+    }
+  }, [calculationInput])
+
+  const handleSaveAndCalculate = () => {
+    if (!userId || !selectedCropId || !cropDetail) {
+      setPlan(null)
+      setError('Select a crop before calculating ROI.')
+      return
     }
 
     if (sellingChannel === 'contract' && Number(manualPriceOverride) <= 0) {
       setPlan(null)
       setError('Contract selling requires manual price override (RM/kg).')
-      return undefined
+      return
     }
 
-    let active = true
-    const timeout = window.setTimeout(() => {
-      setIsLoading(true)
-      setError('')
-
-      getTreatmentPlan({
-        userId,
-        cropId: selectedCropId,
-        sellingChannel,
-        marketCondition,
-        manualPriceOverride: manualPriceOverride === '' ? null : Number(manualPriceOverride),
-        yieldKg,
-        actualSoldKg,
-        laborCostRm,
-        otherCostsRm,
-        disease: String(latestReport?.disease || 'Crop disease risk').trim(),
-        treatmentPlan: String(latestReport?.treatmentPlan || latestReport?.treatment_plan || 'recommended treatment').trim(),
-        lat: firstGridWithCentroid?.centroid?.lat,
-        lng: firstGridWithCentroid?.centroid?.lng,
-      })
-        .then((response) => {
-          if (!active) {
-            return
-          }
-
-          setPlan(response)
-        })
-        .catch((loadError) => {
-          if (!active) {
-            return
-          }
-
-          setPlan(null)
-          setError(loadError?.message || 'Unable to calculate ROI')
-        })
-        .finally(() => {
-          if (active) {
-            setIsLoading(false)
-          }
-        })
-    }, 220)
-
-    return () => {
-      active = false
-      window.clearTimeout(timeout)
-    }
-  }, [
-    actualSoldKg,
-    cropDetail,
-    firstGridWithCentroid?.centroid?.lat,
-    firstGridWithCentroid?.centroid?.lng,
-    laborCostRm,
-    latestReport?.disease,
-    latestReport?.treatmentPlan,
-    latestReport?.treatment_plan,
-    manualPriceOverride,
-    marketCondition,
-    otherCostsRm,
-    selectedCropId,
-    sellingChannel,
-    userId,
-    yieldKg,
-  ])
+    setError('')
+    setCalculationInput({
+      userId,
+      cropId: selectedCropId,
+      cropType: cropDetail?.name,
+      sellingChannel,
+      marketCondition,
+      manualPriceOverride: manualPriceOverride === '' ? null : Number(manualPriceOverride),
+      manualPriceOverrideInput: manualPriceOverride,
+      farmSizeHectares: resolvedFarmSizeHectares,
+      survivalProb: deriveSurvivalProbability(latestReport) ?? 1,
+      yieldKg,
+      actualSoldKg,
+      laborCostRm,
+      otherCostsRm,
+      hasManualYieldInput,
+      hasManualActualSoldInput,
+      disease: String(latestReport?.disease || 'Crop disease risk').trim(),
+      treatmentPlan: String(latestReport?.treatmentPlan || latestReport?.treatment_plan || 'recommended treatment').trim(),
+      lat: firstGridWithCentroid?.centroid?.lat,
+      lng: firstGridWithCentroid?.centroid?.lng,
+    })
+  }
 
   if (isLoadingCrops) {
     return (
@@ -308,9 +562,22 @@ export default function Treatment() {
               max={maxYield}
               step="1"
               value={toSafeNumber(yieldKg)}
-              onChange={(event) => setYieldKg(toSafeNumber(event.target.value, 0))}
+              onChange={(event) => {
+                setHasManualYieldInput(true)
+                setYieldKg(toSafeNumber(event.target.value, 0))
+              }}
               style={{ width: '100%' }}
             />
+
+            <small style={{ display: 'block', marginTop: 4, opacity: 0.82 }}>
+              {isYieldForecastLoading
+                ? 'Syncing yield forecast from swarm...'
+                : hasManualYieldInput
+                  ? 'Yield source: manual input (forecast auto-fill paused).'
+                  : predictedYieldKg > 0
+                    ? `Yield source: swarm forecast (${predictedYieldKg.toFixed(1)} kg, confidence ${forecastConfidence.toFixed(2)}, loss ${forecastLossPercent.toFixed(1)}%).`
+                    : yieldForecastError || 'Yield source: crop profile expected yield.'}
+            </small>
 
             <label className="pg-field-label" htmlFor="pg-treatment-actual">Actual sold (kg)</label>
             <input
@@ -320,7 +587,10 @@ export default function Treatment() {
               min="0"
               step="0.1"
               value={actualSoldKg}
-              onChange={(event) => setActualSoldKg(toSafeNumber(event.target.value, 0))}
+              onChange={(event) => {
+                setHasManualActualSoldInput(true)
+                setActualSoldKg(toSafeNumber(event.target.value, 0))
+              }}
             />
 
             <label className="pg-field-label" htmlFor="pg-treatment-channel">Selling channel</label>
@@ -383,6 +653,20 @@ export default function Treatment() {
               value={otherCostsRm}
               onChange={(event) => setOtherCostsRm(toSafeNumber(event.target.value, 0))}
             />
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 10 }}>
+              <button
+                type="button"
+                className="pg-btn pg-btn-primary"
+                onClick={handleSaveAndCalculate}
+                disabled={!selectedCropId || !cropDetail || isLoading}
+              >
+                {isLoading ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+            <small style={{ display: 'block', marginTop: 6, opacity: 0.82 }}>
+              ROI recalculates only after you click Save.
+            </small>
           </article>
 
           <div className="pg-tile-grid">
@@ -400,7 +684,7 @@ export default function Treatment() {
             <MetricTile
               label="ROI"
               value={plan ? formatRoi(plan) : '...'}
-              helper={plan?.roi_note ? `ROI ${plan.roi_note}` : 'live updated'}
+              helper={plan?.roi_note ? `ROI ${plan.roi_note}` : 'updated on save'}
               tone="success"
             />
           </div>
@@ -414,6 +698,12 @@ export default function Treatment() {
                 <p>Retail price: RM {formatMoney(plan.retail_price_rm_per_kg)}/kg</p>
                 <p>Farm price: RM {formatMoney(plan.farm_price_rm_per_kg)}/kg</p>
                 <p>Price date: {plan.price_date || 'N/A'}</p>
+                <p>Yield source: {yieldInputSourceLabel}</p>
+                {yieldForecast && !hasManualYieldInput ? (
+                  <p>
+                    Forecast context: confidence {forecastConfidence.toFixed(2)}, projected loss {forecastLossPercent.toFixed(1)}%.
+                  </p>
+                ) : null}
                 <p>Inventory cost: RM {formatMoney(plan.inventory_cost_rm)}</p>
                 <p>Labor cost: RM {formatMoney(plan.labor_cost_rm)}</p>
                 <p>Other costs: RM {formatMoney(plan.other_costs_rm)}</p>
@@ -441,7 +731,7 @@ export default function Treatment() {
                 </article>
               </>
             ) : (
-              <p>Select a crop and adjust values to see live ROI.</p>
+              <p>Select a crop, adjust values, then click Save to calculate ROI.</p>
             )}
           </article>
         </>

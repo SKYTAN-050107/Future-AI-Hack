@@ -10,6 +10,7 @@ import { useSessionContext } from '../../hooks/useSessionContext'
 import { useGrids } from '../../hooks/useGrids'
 import { useScanHistory } from '../../hooks/useScanHistory'
 import { useFarmLocationCoordinates } from '../../hooks/useFarmLocationCoordinates'
+import { getTreatmentRoiSnapshot, TREATMENT_ROI_CACHE_UPDATED_EVENT } from '../../utils/treatmentRoiCache'
 
 function safeNumber(value, fallback = 0) {
   if (value === null || value === undefined || value === '') {
@@ -129,6 +130,7 @@ export default function Dashboard() {
   const [isZoneQuickReviewLoading, setIsZoneQuickReviewLoading] = useState(false)
   const [cropCount, setCropCount] = useState(0)
   const [isCropLoading, setIsCropLoading] = useState(false)
+  const [savedFinancialSummary, setSavedFinancialSummary] = useState(null)
 
   const firstGridWithCentroid = useMemo(
     () => grids.find((grid) => Number.isFinite(grid?.centroid?.lat) && Number.isFinite(grid?.centroid?.lng)),
@@ -360,6 +362,30 @@ export default function Dashboard() {
   }, [user?.uid])
 
   useEffect(() => {
+    const safeUserId = String(user?.uid || '').trim()
+    if (!safeUserId) {
+      setSavedFinancialSummary(null)
+      return undefined
+    }
+
+    const refreshSnapshot = () => {
+      setSavedFinancialSummary(getTreatmentRoiSnapshot(safeUserId))
+    }
+
+    refreshSnapshot()
+
+    const handleCacheUpdated = () => {
+      refreshSnapshot()
+    }
+
+    window.addEventListener(TREATMENT_ROI_CACHE_UPDATED_EVENT, handleCacheUpdated)
+
+    return () => {
+      window.removeEventListener(TREATMENT_ROI_CACHE_UPDATED_EVENT, handleCacheUpdated)
+    }
+  }, [user?.uid])
+
+  useEffect(() => {
     const userId = String(user?.uid || '').trim()
     if (!selectedZoneName || !userId) {
       setZoneQuickReview('')
@@ -405,7 +431,7 @@ export default function Dashboard() {
   }, [selectedZoneName, user?.uid])
 
   const weatherSnapshot = weatherData || {}
-  const financialSummary = summary?.financialSummary || {}
+  const financialSummary = savedFinancialSummary || summary?.financialSummary || {}
   const weatherServiceWarning = String(weatherSnapshot.serviceWarning || '').trim()
 
   const hourlyForecast6h = useMemo(() => {
@@ -420,7 +446,7 @@ export default function Dashboard() {
     return hourly.slice(0, 6)
   }, [weatherSnapshot])
 
-  if (!summary && !loadError) {
+  if (!summary && !loadError && !savedFinancialSummary) {
     return (
       <section className="pg-page pg-dashboard-page" aria-label="Financial and climate command center">
         <SectionHeader title="Home" align="center" />
