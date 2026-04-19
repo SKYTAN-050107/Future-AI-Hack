@@ -180,6 +180,7 @@ export function useGrids() {
               ...data,
               polygon: deserializeGeometry(data.polygon),
               bufferZone: deserializeGeometry(data.bufferZone),
+              spreadGeometry: deserializeGeometry(data.spreadGeometry),
             }
           })
 
