@@ -10,6 +10,7 @@ import { useSessionContext } from '../../hooks/useSessionContext'
 import { useGrids } from '../../hooks/useGrids'
 import { useScanHistory } from '../../hooks/useScanHistory'
 import { useFarmLocationCoordinates } from '../../hooks/useFarmLocationCoordinates'
+import { getTreatmentRoiSnapshot, TREATMENT_ROI_CACHE_UPDATED_EVENT } from '../../utils/treatmentRoiCache'
 
 function safeNumber(value, fallback = 0) {
   if (value === null || value === undefined || value === '') {
@@ -43,7 +44,151 @@ function formatCurrency(value) {
   }).format(safeNumber(value))
 }
 
-function buildZoneHealthSummaryFromGrids(grids) {
+function toMillis(value) {
+  if (!value) {
+    return 0
+  }
+
+  if (typeof value?.toMillis === 'function') {
+    return value.toMillis()
+  }
+
+  if (value instanceof Date) {
+    return value.getTime()
+  }
+
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function resolveZoneKey(value) {
+  return String(value || '').trim().toLowerCase()
+}
+
+function normalizeSeverityScore(value) {
+  const raw = Number(value)
+  if (!Number.isFinite(raw)) {
+    return null
+  }
+
+  const normalized = raw >= 0 && raw <= 1 ? raw * 100 : raw
+  return Math.max(0, Math.min(100, normalized))
+}
+
+function resolveHealthBucketFromState(grid) {
+  const state = String(grid?.healthState || grid?.healthStatus || 'Healthy').trim().toLowerCase()
+
+  if (state === 'infected') {
+    return 'infected'
+  }
+
+  if (state === 'at-risk' || state === 'at_risk' || state === 'risk' || state === 'warning') {
+    return 'atRisk'
+  }
+
+  return 'healthy'
+}
+
+function resolveHealthBucketFromSeverity(grid, severityOverride = null) {
+  const severityCandidates = [
+    severityOverride,
+    grid?.spreadSeverityScore,
+    grid?.severityScore,
+    grid?.severity,
+    grid?.riskScore,
+  ]
+
+  const severityScore = severityCandidates
+    .map((value) => normalizeSeverityScore(value))
+    .find((value) => Number.isFinite(value))
+
+  if (!Number.isFinite(severityScore)) {
+    return null
+  }
+
+  if (severityScore >= 70) {
+    return 'infected'
+  }
+
+  if (severityScore >= 40) {
+    return 'atRisk'
+  }
+
+  return 'healthy'
+}
+
+function resolveZoneHealthBucket(grid, severityOverride = null) {
+  const rank = {
+    healthy: 0,
+    atRisk: 1,
+    infected: 2,
+  }
+
+  const bucketFromState = resolveHealthBucketFromState(grid)
+  const bucketFromSeverity = resolveHealthBucketFromSeverity(grid, severityOverride)
+
+  if (!bucketFromSeverity) {
+    return bucketFromState
+  }
+
+  return rank[bucketFromSeverity] >= rank[bucketFromState]
+    ? bucketFromSeverity
+    : bucketFromState
+}
+
+function buildLatestSeverityByZone(reports, userId) {
+  const safeReports = Array.isArray(reports) ? reports : []
+  const safeUserId = String(userId || '').trim()
+
+  if (!safeUserId || safeReports.length === 0) {
+    return new Map()
+  }
+
+  const latestByZone = new Map()
+
+  safeReports.forEach((report) => {
+    const reportOwner = String(report?.ownerUid || report?.userId || report?.uid || '').trim()
+    if (reportOwner !== safeUserId) {
+      return
+    }
+
+    const zoneKey = resolveZoneKey(report?.gridId || report?.zone)
+    if (!zoneKey) {
+      return
+    }
+
+    const severityScore = [
+      report?.severityScore,
+      report?.severity_score,
+      report?.severity,
+    ]
+      .map((value) => normalizeSeverityScore(value))
+      .find((value) => Number.isFinite(value))
+
+    if (!Number.isFinite(severityScore)) {
+      return
+    }
+
+    const reportTimestamp = Math.max(
+      toMillis(report?.createdAt),
+      toMillis(report?.lastUpdated),
+      toMillis(report?.updatedAt),
+      toMillis(report?.captureCapturedAt),
+    )
+
+    const existing = latestByZone.get(zoneKey)
+    if (!existing || reportTimestamp >= existing.timestamp) {
+      latestByZone.set(zoneKey, {
+        severityScore,
+        timestamp: reportTimestamp,
+      })
+    }
+  })
+
+  return latestByZone
+}
+
+function buildZoneHealthSummaryFromGrids(grids, latestSeverityByZone = new Map()) {
   const safeGrids = Array.isArray(grids) ? grids : []
   if (safeGrids.length === 0) {
     return {
@@ -69,15 +214,19 @@ function buildZoneHealthSummaryFromGrids(grids) {
   safeGrids.forEach((grid) => {
     const area = Number(grid?.areaHectares)
     const weight = useAreaWeights ? (Number.isFinite(area) && area > 0 ? area : 0) : 1
-    const state = String(grid?.healthState || grid?.healthStatus || 'Healthy').trim().toLowerCase()
+    const zoneKey = resolveZoneKey(grid?.gridId || grid?.id)
+    const severityOverride = zoneKey
+      ? latestSeverityByZone.get(zoneKey)?.severityScore
+      : null
+    const bucket = resolveZoneHealthBucket(grid, severityOverride)
 
-    if (state === 'infected') {
+    if (bucket === 'infected') {
       infectedWeight += weight
       zonesNeedingAttention += 1
       return
     }
 
-    if (state === 'at-risk' || state === 'at_risk' || state === 'risk' || state === 'warning') {
+    if (bucket === 'atRisk') {
       atRiskWeight += weight
       zonesNeedingAttention += 1
       return
@@ -117,7 +266,7 @@ export default function Dashboard() {
   const navigate = useNavigate()
   const { user, profile } = useSessionContext()
   const { grids } = useGrids()
-  const { latestReport } = useScanHistory()
+  const { reports, latestReport } = useScanHistory()
   const [summary, setSummary] = useState(null)
   const [loadError, setLoadError] = useState('')
   const [weatherData, setWeatherData] = useState(null)
@@ -129,6 +278,7 @@ export default function Dashboard() {
   const [isZoneQuickReviewLoading, setIsZoneQuickReviewLoading] = useState(false)
   const [cropCount, setCropCount] = useState(0)
   const [isCropLoading, setIsCropLoading] = useState(false)
+  const [savedFinancialSummary, setSavedFinancialSummary] = useState(null)
 
   const firstGridWithCentroid = useMemo(
     () => grids.find((grid) => Number.isFinite(grid?.centroid?.lat) && Number.isFinite(grid?.centroid?.lng)),
@@ -156,9 +306,14 @@ export default function Dashboard() {
     [grids],
   )
 
+  const latestSeverityByZone = useMemo(
+    () => buildLatestSeverityByZone(reports, user?.uid),
+    [reports, user?.uid],
+  )
+
   const zoneHealthSummary = useMemo(
-    () => buildZoneHealthSummaryFromGrids(grids),
-    [grids],
+    () => buildZoneHealthSummaryFromGrids(grids, latestSeverityByZone),
+    [grids, latestSeverityByZone],
   )
 
   const zoneOptions = useMemo(() => {
@@ -360,6 +515,30 @@ export default function Dashboard() {
   }, [user?.uid])
 
   useEffect(() => {
+    const safeUserId = String(user?.uid || '').trim()
+    if (!safeUserId) {
+      setSavedFinancialSummary(null)
+      return undefined
+    }
+
+    const refreshSnapshot = () => {
+      setSavedFinancialSummary(getTreatmentRoiSnapshot(safeUserId))
+    }
+
+    refreshSnapshot()
+
+    const handleCacheUpdated = () => {
+      refreshSnapshot()
+    }
+
+    window.addEventListener(TREATMENT_ROI_CACHE_UPDATED_EVENT, handleCacheUpdated)
+
+    return () => {
+      window.removeEventListener(TREATMENT_ROI_CACHE_UPDATED_EVENT, handleCacheUpdated)
+    }
+  }, [user?.uid])
+
+  useEffect(() => {
     const userId = String(user?.uid || '').trim()
     if (!selectedZoneName || !userId) {
       setZoneQuickReview('')
@@ -373,8 +552,15 @@ export default function Dashboard() {
     setZoneQuickReview('')
     setZoneQuickReviewError('')
 
+    const quickReviewPrompt = [
+      '[ZONE_REVIEW] You are an agriculture assistant.',
+      `Give one short agriculture-only review for zone ${selectedZoneName}.`,
+      'Mention crop health risk level and one immediate farm action.',
+      'Keep it to one sentence.',
+    ].join(' ')
+
     sendAssistantMessage({
-      userPrompt: '[ZONE_REVIEW] Provide one very short quick review for this zone in one sentence.',
+      userPrompt: quickReviewPrompt,
       userId,
       zone: selectedZoneName,
       location: farmLocation,
@@ -402,10 +588,10 @@ export default function Dashboard() {
     return () => {
       active = false
     }
-  }, [selectedZoneName, user?.uid])
+  }, [farmLocation, lat, lng, selectedZoneName, user?.uid])
 
   const weatherSnapshot = weatherData || {}
-  const financialSummary = summary?.financialSummary || {}
+  const financialSummary = savedFinancialSummary || summary?.financialSummary || {}
   const weatherServiceWarning = String(weatherSnapshot.serviceWarning || '').trim()
 
   const hourlyForecast6h = useMemo(() => {
@@ -420,7 +606,7 @@ export default function Dashboard() {
     return hourly.slice(0, 6)
   }, [weatherSnapshot])
 
-  if (!summary && !loadError) {
+  if (!summary && !loadError && !savedFinancialSummary) {
     return (
       <section className="pg-page pg-dashboard-page" aria-label="Financial and climate command center">
         <SectionHeader title="Home" align="center" />

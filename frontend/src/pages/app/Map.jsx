@@ -19,24 +19,331 @@ const HEALTH_COLORS = {
 }
 const MIN_GRID_AREA_HECTARES = 0.01
 const MAX_GRID_AREA_HECTARES = 200
+const EMPTY_GRID_HOLD_MS = 9000
 
 function createBufferCollection(grids) {
   return {
     type: 'FeatureCollection',
-    features: grids
-      .filter((grid) => {
-        const geometryType = grid?.bufferZone?.type
-        return geometryType === 'Polygon' || geometryType === 'MultiPolygon'
-      })
-      .map((grid) => ({
+    features: [],
+  }
+}
+
+function resolveStoredGeometry(value) {
+  if (!value) {
+    return null
+  }
+
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value)
+    } catch {
+      return null
+    }
+  }
+
+  return value
+}
+
+function createSpreadCollection(grids, markers = []) {
+  const isPolygonGeometry = (geometry) => {
+    const geometryType = geometry?.type
+    return geometryType === 'Polygon' || geometryType === 'MultiPolygon'
+  }
+
+  const toSeverityScore = (value, fallback = 0) => {
+    const raw = Number(value)
+    if (!Number.isFinite(raw)) {
+      return fallback
+    }
+
+    const normalized = raw >= 0 && raw <= 1 ? raw * 100 : raw
+    return Math.min(Math.max(normalized, 0), 100)
+  }
+
+  const severityToColor = (severityScore) => {
+    const score = Math.min(Math.max(Number(severityScore) || 0, 0), 100) / 100
+    const start = { r: 34, g: 197, b: 94 }
+    const end = { r: 239, g: 68, b: 68 }
+
+    const mix = (left, right) => Math.round(left + (right - left) * score)
+    const toHex = (value) => value.toString(16).padStart(2, '0').toUpperCase()
+
+    return `#${toHex(mix(start.r, end.r))}${toHex(mix(start.g, end.g))}${toHex(mix(start.b, end.b))}`
+  }
+
+  const intersectPolygons = (leftFeature, rightFeature) => {
+    let intersection = null
+
+    try {
+      intersection = turf.intersect(turf.featureCollection([leftFeature, rightFeature]))
+    } catch {
+      intersection = null
+    }
+
+    if (!intersection) {
+      try {
+        intersection = turf.intersect(leftFeature, rightFeature)
+      } catch {
+        intersection = null
+      }
+    }
+
+    if (!isPolygonGeometry(intersection?.geometry)) {
+      return null
+    }
+
+    const areaSqm = turf.area(intersection)
+    if (!Number.isFinite(areaSqm) || areaSqm <= 0) {
+      return null
+    }
+
+    return intersection
+  }
+
+  const resolveDerivedSpreadRadiusKm = (sourceGrid, severityScore) => {
+    const directRadius = Number(
+      sourceGrid?.spreadRadiusKm
+      || sourceGrid?.predictedSpreadRadius
+      || sourceGrid?.bufferZoneKm
+      || 0,
+    )
+
+    if (Number.isFinite(directRadius) && directRadius > 0) {
+      return directRadius
+    }
+
+    const minRadius = 0.06
+    const maxRadius = 0.45
+    return minRadius + ((maxRadius - minRadius) * Math.min(Math.max(severityScore, 0), 100)) / 100
+  }
+
+  const persistedFeatures = grids
+    .map((grid) => {
+      const spreadGeometry = resolveStoredGeometry(grid?.spreadGeometry) || resolveStoredGeometry(grid?.bufferZone)
+      if (!isPolygonGeometry(spreadGeometry)) {
+        return null
+      }
+
+      const fallbackSeverity =
+        grid?.healthState === 'Infected'
+          ? 80
+          : grid?.healthState === 'At-Risk'
+            ? 55
+            : 0
+      const severityScore = toSeverityScore(grid?.spreadSeverityScore, fallbackSeverity)
+
+      return {
         type: 'Feature',
-        id: `${grid.id}-buffer`,
+        id: `${grid.id}-spread`,
         properties: {
           gridId: grid.gridId || grid.id,
-          radiusKm: Number(grid.bufferZoneKm || 0),
+          spreadSeverityScore: severityScore,
+          spreadColor: String(grid?.spreadColor || '').trim() || severityToColor(severityScore),
+          radiusKm: Number(grid?.spreadRadiusKm || grid?.bufferZoneKm || 0),
+          sourceGridId: String(grid?.spreadSourceGridId || '').trim(),
         },
-        geometry: grid.bufferZone,
-      })),
+        geometry: spreadGeometry,
+      }
+    })
+    .filter(Boolean)
+
+  if (persistedFeatures.length > 0) {
+    return {
+      type: 'FeatureCollection',
+      features: persistedFeatures,
+    }
+  }
+
+  const polygonGrids = grids
+    .map((grid) => {
+      const polygon = resolveStoredGeometry(grid?.polygon)
+      if (!isPolygonGeometry(polygon)) {
+        return null
+      }
+
+      return {
+        grid,
+        feature: turf.feature(polygon, {
+          gridDocId: String(grid?.id || ''),
+          gridId: String(grid?.gridId || grid?.id || ''),
+        }),
+      }
+    })
+    .filter(Boolean)
+
+  const buildMarkerFallbackFeatures = () => {
+    if (!Array.isArray(markers) || markers.length === 0) {
+      return []
+    }
+
+    const zoneFeatures = polygonGrids.map((item) => item.feature)
+
+    return markers
+      .filter((marker) => Number.isFinite(marker?.lat) && Number.isFinite(marker?.lng))
+      .flatMap((marker, markerIndex) => {
+        const markerId = String(marker?.id || marker?.captureId || `marker-${markerIndex}`)
+        const diagnosisText = String(marker?.diagnosisLabel || '').toLowerCase()
+        const healthyLike = /(healthy|normal|safe|ok)/.test(diagnosisText)
+        const severityScore = toSeverityScore(
+          marker?.severityScore ?? marker?.severity,
+          healthyLike ? 35 : 65,
+        )
+        const radiusKm = 0.05 + ((0.25 - 0.05) * severityScore) / 100
+
+        let markerCircle = null
+        try {
+          markerCircle = turf.buffer(turf.point([Number(marker.lng), Number(marker.lat)]), radiusKm, {
+            units: 'kilometers',
+            steps: 48,
+          })
+        } catch {
+          markerCircle = null
+        }
+
+        if (!markerCircle || !isPolygonGeometry(markerCircle?.geometry)) {
+          return []
+        }
+
+        const baseProperties = {
+          gridId: marker?.gridId || 'Unlinked zone',
+          spreadSeverityScore: severityScore,
+          spreadColor: severityToColor(severityScore),
+          radiusKm: Number(radiusKm.toFixed(3)),
+          sourceGridId: String(marker?.gridId || '').trim(),
+          sourceMarkerId: markerId,
+          spreadDerived: true,
+          spreadFromMarker: true,
+        }
+
+        if (zoneFeatures.length === 0) {
+          return [{
+            type: 'Feature',
+            id: `marker-fallback-${markerId}`,
+            properties: baseProperties,
+            geometry: markerCircle.geometry,
+          }]
+        }
+
+        const clippedPieces = zoneFeatures
+          .map((zoneFeature, zoneIndex) => {
+            const clipped = intersectPolygons(markerCircle, zoneFeature)
+            if (!clipped) {
+              return null
+            }
+
+            return {
+              type: 'Feature',
+              id: `marker-fallback-${markerId}-${zoneIndex}`,
+              properties: baseProperties,
+              geometry: clipped.geometry,
+            }
+          })
+          .filter(Boolean)
+
+        if (clippedPieces.length > 0) {
+          return clippedPieces
+        }
+
+        return [{
+          type: 'Feature',
+          id: `marker-fallback-${markerId}-raw`,
+          properties: {
+            ...baseProperties,
+            spreadUnclipped: true,
+          },
+          geometry: markerCircle.geometry,
+        }]
+      })
+  }
+
+  if (polygonGrids.length === 0) {
+    return {
+      type: 'FeatureCollection',
+      features: [],
+    }
+  }
+
+  const infectedCandidates = polygonGrids
+    .filter(({ grid }) => String(grid?.healthState || '') === 'Infected')
+    .sort((left, right) => {
+      const leftMs = toMillis(left.grid?.lastAbnormalAt)
+        || Number(left.grid?.lastAbnormalAtMs || 0)
+        || toMillis(left.grid?.lastUpdated)
+      const rightMs = toMillis(right.grid?.lastAbnormalAt)
+        || Number(right.grid?.lastAbnormalAtMs || 0)
+        || toMillis(right.grid?.lastUpdated)
+      return rightMs - leftMs
+    })
+
+  const source = infectedCandidates[0]
+  if (!source) {
+    const markerFallbackFeatures = buildMarkerFallbackFeatures()
+    return {
+      type: 'FeatureCollection',
+      features: markerFallbackFeatures,
+    }
+  }
+
+  const sourceSeverity = toSeverityScore(
+    source.grid?.spreadSeverityScore ?? source.grid?.severityScore ?? source.grid?.severity,
+    80,
+  )
+  const sourceRadiusKm = resolveDerivedSpreadRadiusKm(source.grid, sourceSeverity)
+  const sourceColor = String(source.grid?.spreadColor || '').trim() || severityToColor(sourceSeverity)
+
+  let spreadCircle = null
+  try {
+    spreadCircle = turf.buffer(turf.centroid(source.feature), sourceRadiusKm, {
+      units: 'kilometers',
+      steps: 64,
+    })
+  } catch {
+    spreadCircle = null
+  }
+
+  if (!spreadCircle || !isPolygonGeometry(spreadCircle?.geometry)) {
+    return {
+      type: 'FeatureCollection',
+      features: [],
+    }
+  }
+
+  const derivedFeatures = polygonGrids
+    .map(({ grid, feature }) => {
+      const clipped = intersectPolygons(spreadCircle, feature)
+      if (!clipped) {
+        return null
+      }
+
+      return {
+        type: 'Feature',
+        id: `${source.grid.id}-derived-${grid.id}`,
+        properties: {
+          gridId: grid.gridId || grid.id,
+          spreadSeverityScore: sourceSeverity,
+          spreadColor: sourceColor,
+          radiusKm: Number(sourceRadiusKm),
+          sourceGridId: source.grid.gridId || source.grid.id,
+          spreadDerived: true,
+        },
+        geometry: clipped.geometry,
+      }
+    })
+    .filter(Boolean)
+
+  if (derivedFeatures.length === 0) {
+    const markerFallbackFeatures = buildMarkerFallbackFeatures()
+    if (markerFallbackFeatures.length > 0) {
+      return {
+        type: 'FeatureCollection',
+        features: markerFallbackFeatures,
+      }
+    }
+  }
+
+  return {
+    type: 'FeatureCollection',
+    features: derivedFeatures,
   }
 }
 
@@ -44,17 +351,25 @@ function createFeatureCollection(grids) {
   return {
     type: 'FeatureCollection',
     features: grids
-      .filter((grid) => grid?.polygon?.type === 'Polygon')
-      .map((grid) => ({
-        type: 'Feature',
-        id: grid.id,
-        properties: {
-          gridId: grid.gridId || grid.id,
-          healthState: grid.healthState || 'Healthy',
-          areaHectares: grid.areaHectares || 0,
-        },
-        geometry: grid.polygon,
-      })),
+      .map((grid) => {
+        const polygon = resolveStoredGeometry(grid?.polygon)
+        const geometryType = polygon?.type
+        if (geometryType !== 'Polygon' && geometryType !== 'MultiPolygon') {
+          return null
+        }
+
+        return {
+          type: 'Feature',
+          id: grid.id,
+          properties: {
+            gridId: grid.gridId || grid.id,
+            healthState: grid.healthState || 'Healthy',
+            areaHectares: grid.areaHectares || 0,
+          },
+          geometry: polygon,
+        }
+      })
+      .filter(Boolean)
   }
 }
 
@@ -96,6 +411,10 @@ function toMillis(value) {
 
   if (value instanceof Date) {
     return value.getTime()
+  }
+
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : 0
   }
 
   const parsed = Date.parse(String(value))
@@ -310,6 +629,104 @@ export default function MapPage() {
     deleteGrid,
     updateGridName,
   } = useGrids()
+  const spreadCollection = useMemo(() => createSpreadCollection(grids, scanMarkers), [grids, scanMarkers])
+  const gridCollection = useMemo(() => createFeatureCollection(grids), [grids])
+  const lastStableGridCollectionRef = useRef({ type: 'FeatureCollection', features: [] })
+  const lastStableSpreadCollectionRef = useRef({ type: 'FeatureCollection', features: [] })
+  const emptyGridHoldUntilRef = useRef(0)
+  const [gridHoldTick, setGridHoldTick] = useState(0)
+
+  const hasSpreadContext = useMemo(
+    () => (
+      grids.some((item) => item?.healthState === 'Infected' || item?.healthState === 'At-Risk')
+      || scanMarkers.length > 0
+    ),
+    [grids, scanMarkers.length],
+  )
+
+  const effectiveGridCollection = useMemo(() => {
+    const nextCount = Array.isArray(gridCollection?.features) ? gridCollection.features.length : 0
+    const previousCount = Array.isArray(lastStableGridCollectionRef.current?.features)
+      ? lastStableGridCollectionRef.current.features.length
+      : 0
+
+    if (nextCount > 0) {
+      emptyGridHoldUntilRef.current = 0
+      return gridCollection
+    }
+
+    if (grids.length > 0 && nextCount === 0 && previousCount > 0) {
+      return lastStableGridCollectionRef.current
+    }
+
+    if (grids.length === 0 && nextCount === 0 && previousCount > 0) {
+      const now = Date.now()
+      if (emptyGridHoldUntilRef.current === 0) {
+        emptyGridHoldUntilRef.current = now + EMPTY_GRID_HOLD_MS
+      }
+
+      const holdActive = now < emptyGridHoldUntilRef.current
+      if (holdActive || isLoading || Boolean(error)) {
+        return lastStableGridCollectionRef.current
+      }
+
+      emptyGridHoldUntilRef.current = 0
+    }
+
+    return gridCollection
+  }, [error, gridCollection, gridHoldTick, grids.length, isLoading])
+
+  const effectiveSpreadCollection = useMemo(() => {
+    const nextCount = Array.isArray(spreadCollection?.features) ? spreadCollection.features.length : 0
+    const previousCount = Array.isArray(lastStableSpreadCollectionRef.current?.features)
+      ? lastStableSpreadCollectionRef.current.features.length
+      : 0
+
+    if (hasSpreadContext && nextCount === 0 && previousCount > 0) {
+      return lastStableSpreadCollectionRef.current
+    }
+
+    return spreadCollection
+  }, [hasSpreadContext, spreadCollection])
+
+  useEffect(() => {
+    const holdUntil = emptyGridHoldUntilRef.current
+    if (!holdUntil) {
+      return undefined
+    }
+
+    const waitMs = holdUntil - Date.now()
+    if (waitMs <= 0) {
+      return undefined
+    }
+
+    const timerId = window.setTimeout(() => {
+      setGridHoldTick((value) => value + 1)
+    }, waitMs + 40)
+
+    return () => {
+      window.clearTimeout(timerId)
+    }
+  }, [error, gridHoldTick, grids.length, isLoading])
+
+  useEffect(() => {
+    const nextCount = Array.isArray(effectiveGridCollection?.features) ? effectiveGridCollection.features.length : 0
+    if (nextCount > 0) {
+      lastStableGridCollectionRef.current = effectiveGridCollection
+      return
+    }
+
+    if (grids.length === 0 && emptyGridHoldUntilRef.current === 0 && !isLoading && !error) {
+      lastStableGridCollectionRef.current = effectiveGridCollection
+    }
+  }, [effectiveGridCollection, error, grids.length, isLoading])
+
+  useEffect(() => {
+    const nextCount = Array.isArray(effectiveSpreadCollection?.features) ? effectiveSpreadCollection.features.length : 0
+    if (nextCount > 0 || !hasSpreadContext) {
+      lastStableSpreadCollectionRef.current = effectiveSpreadCollection
+    }
+  }, [effectiveSpreadCollection, hasSpreadContext])
 
   const mapboxToken = import.meta.env.VITE_MAPBOX_TOKEN
   const isMapboxConfigured = Boolean(mapboxToken && !mapboxToken.includes('YOUR_'))
@@ -752,6 +1169,13 @@ export default function MapPage() {
         })
       }
 
+      if (!map.getSource('pg-grid-spread')) {
+        map.addSource('pg-grid-spread', {
+          type: 'geojson',
+          data: createSpreadCollection([]),
+        })
+      }
+
       if (!map.getSource('pg-scan-markers')) {
         map.addSource('pg-scan-markers', {
           type: 'geojson',
@@ -789,22 +1213,62 @@ export default function MapPage() {
         },
       })
 
+      const spreadColorExpression = [
+        'case',
+        ['>', ['length', ['coalesce', ['get', 'spreadColor'], '']], 0],
+        ['get', 'spreadColor'],
+        [
+          'interpolate',
+          ['linear'],
+          ['to-number', ['coalesce', ['get', 'spreadSeverityScore'], 0]],
+          0,
+          '#22C55E',
+          50,
+          '#F59E0B',
+          100,
+          '#EF4444',
+        ],
+      ]
+
+      const spreadFillOpacityExpression = [
+        'case',
+        ['boolean', ['coalesce', ['get', 'spreadFromMarker'], false], false],
+        [
+          'interpolate',
+          ['linear'],
+          ['to-number', ['coalesce', ['get', 'spreadSeverityScore'], 0]],
+          0,
+          0.16,
+          100,
+          0.36,
+        ],
+        [
+          'interpolate',
+          ['linear'],
+          ['to-number', ['coalesce', ['get', 'spreadSeverityScore'], 0]],
+          0,
+          0.08,
+          100,
+          0.28,
+        ],
+      ]
+
       map.addLayer({
-        id: 'pg-grid-buffer-fill',
+        id: 'pg-grid-spread-fill',
         type: 'fill',
-        source: 'pg-grid-buffers',
+        source: 'pg-grid-spread',
         paint: {
-          'fill-color': '#FFA500',
-          'fill-opacity': 0.12,
+          'fill-color': spreadColorExpression,
+          'fill-opacity': spreadFillOpacityExpression,
         },
       })
 
       map.addLayer({
-        id: 'pg-grid-buffer-outline',
+        id: 'pg-grid-spread-outline',
         type: 'line',
-        source: 'pg-grid-buffers',
+        source: 'pg-grid-spread',
         paint: {
-          'line-color': '#C97A00',
+          'line-color': spreadColorExpression,
           'line-width': 2,
           'line-dasharray': [2, 2],
         },
@@ -924,14 +1388,32 @@ export default function MapPage() {
     drawRef.current = draw
 
     return () => {
-      map.off('draw.create', onDrawCreate)
-      map.off('draw.update', onDrawUpdate)
-      map.off('draw.delete', onDrawDelete)
-      map.remove()
-      mapRef.current = null
-      drawRef.current = null
       mapReadyRef.current = false
       setMapReady(false)
+
+      // Detach refs first so downstream effects never touch a disposing map instance.
+      mapRef.current = null
+      drawRef.current = null
+
+      try {
+        map.off('draw.create', onDrawCreate)
+        map.off('draw.update', onDrawUpdate)
+        map.off('draw.delete', onDrawDelete)
+      } catch (listenerCleanupError) {
+        console.warn('Map listener cleanup skipped:', listenerCleanupError)
+      }
+
+      try {
+        map.getCanvas().style.cursor = ''
+      } catch {
+        // Cursor reset is best-effort only.
+      }
+
+      try {
+        map.remove()
+      } catch (mapCleanupError) {
+        console.warn('Map instance cleanup failed:', mapCleanupError)
+      }
     }
   }, [deleteGrid, isFirebaseConfigured, isMapboxConfigured, mapboxToken, saveOrUpdateGridByFeature])
 
@@ -942,14 +1424,19 @@ export default function MapPage() {
 
     const source = mapRef.current.getSource('pg-grids')
     if (source) {
-      source.setData(createFeatureCollection(grids))
+      source.setData(effectiveGridCollection)
     }
 
     const bufferSource = mapRef.current.getSource('pg-grid-buffers')
     if (bufferSource) {
       bufferSource.setData(createBufferCollection(grids))
     }
-  }, [grids, mapReady])
+
+    const spreadSource = mapRef.current.getSource('pg-grid-spread')
+    if (spreadSource) {
+      spreadSource.setData(effectiveSpreadCollection)
+    }
+  }, [effectiveGridCollection, effectiveSpreadCollection, mapReady])
 
   useEffect(() => {
     if (!mapReady || !mapReadyRef.current || !mapRef.current) {
@@ -1104,7 +1591,7 @@ export default function MapPage() {
   const healthyCount = grids.filter((item) => item.healthState === 'Healthy').length
   const riskCount = grids.filter((item) => item.healthState === 'At-Risk').length
   const infectedCount = grids.filter((item) => item.healthState === 'Infected').length
-  const bufferedCount = grids.filter((item) => item?.bufferZone).length
+  const spreadZoneCount = Array.isArray(effectiveSpreadCollection?.features) ? effectiveSpreadCollection.features.length : 0
   const riskRecommendations = grids
     .filter((item) => item.healthState === 'At-Risk' || item.healthState === 'Infected')
     .slice(0, 4)
@@ -1167,7 +1654,7 @@ export default function MapPage() {
             <span><i className="dot healthy" />Healthy</span>
             <span><i className="dot risk" />At-Risk</span>
             <span><i className="dot infected" />Infected</span>
-            <span><i className="dot risk" />Buffer zone</span>
+            <span><i className="dot risk" />Spread zone</span>
           </div>
           <div className="pg-map-metrics">
             <p><strong>Total area</strong><span>{totalHectares.toFixed(2)} ha</span></p>
@@ -1176,7 +1663,7 @@ export default function MapPage() {
             <p><strong>Healthy</strong><span>{healthyCount}</span></p>
             <p><strong>At-Risk</strong><span>{riskCount}</span></p>
             <p><strong>Infected</strong><span>{infectedCount}</span></p>
-            <p><strong>Buffer zones</strong><span>{bufferedCount}</span></p>
+            <p><strong>Spread zones</strong><span>{spreadZoneCount}</span></p>
             <p><strong>Marked scans</strong><span>{scanMarkers.length}</span></p>
             <p><strong>Connection</strong><span>{isOnline ? 'Online' : 'Offline'}</span></p>
             <p><strong>Sync</strong><span>{syncStatusLabel}</span></p>

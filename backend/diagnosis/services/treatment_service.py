@@ -148,7 +148,6 @@ class TreatmentService:
             manual_yield_kg=yield_kg,
         )
         sold_kg = max(0.0, float(actual_sold_kg) if actual_sold_kg is not None else expected_yield)
-        sold_kg = min(sold_kg, expected_yield)
 
         used_manual = False
         if channel == "contract":
