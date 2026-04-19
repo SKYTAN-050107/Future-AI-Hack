@@ -2459,13 +2459,29 @@ body {
 }
 
 .pg-scanner-zone-overlay {
-  z-index: 16;
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0 8px calc(env(safe-area-inset-bottom) + 8px);
+  background: linear-gradient(180deg, rgba(2, 6, 23, 0.48), rgba(2, 6, 23, 0.72));
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
 }
 
 .pg-scanner-zone-sheet {
+  position: relative;
+  width: min(680px, calc(100vw - 16px));
+  max-height: min(86vh, 760px);
+  overflow-y: auto;
+  margin: 0;
   background: linear-gradient(180deg, rgba(7, 24, 32, 0.97), rgba(2, 11, 16, 0.98));
-  color: #ECFEFF;
-  border-top: 1px solid rgba(125, 211, 252, 0.32);
+  color: #000000;
+  border: 1px solid rgba(125, 211, 252, 0.38);
+  border-radius: 22px 22px 0 0;
+  box-shadow: 0 -10px 36px rgba(0, 0, 0, 0.52);
 }
 
 .pg-scanner-zone-header {
@@ -2474,13 +2490,13 @@ body {
 
 .pg-scanner-zone-header h2 {
   margin: 0;
-  color: #ECFEFF;
+  color: #000000;
   font-size: 1.03rem;
 }
 
 .pg-scanner-zone-header .pg-btn {
-  color: #67E8F9;
-  border-color: rgba(103, 232, 249, 0.62);
+  color: #000000;
+  border-color: rgba(156, 163, 175, 0.62);
 }
 
 .pg-scanner-zone-body {
@@ -2490,21 +2506,22 @@ body {
 
 .pg-scanner-zone-hint {
   margin: 0;
-  color: rgba(207, 250, 254, 0.95);
-  font-size: 0.84rem;
+  color: #000000;
+  font-size: 0.9rem;
   line-height: 1.45;
 }
 
 .pg-scanner-zone-body .pg-field-label {
   margin-top: 2px;
-  color: #CFFAFE;
+  color: #000000;
 }
 
 .pg-scanner-zone-select {
   margin-top: 0;
-  background: rgba(8, 47, 73, 0.62);
-  border-color: rgba(125, 211, 252, 0.44);
-  color: #ECFEFF;
+  background: rgba(8, 47, 73, 0.84);
+  border-color: rgba(156, 163, 175, 0.62);
+  color: #000000;
+  min-height: 44px;
 }
 
 .pg-scanner-zone-select:focus {
@@ -2514,7 +2531,7 @@ body {
 
 .pg-scanner-zone-list-hint {
   margin: 0;
-  color: rgba(165, 243, 252, 0.92);
+  color: #000000;
   font-size: 0.8rem;
 }
 
@@ -2524,17 +2541,18 @@ body {
   padding: 9px 10px;
   background: rgba(127, 29, 29, 0.5);
   border: 1px solid rgba(248, 113, 113, 0.72);
-  color: #FEE2E2;
+  color: #000000;
   font-size: 0.8rem;
   font-weight: 700;
 }
 
 .pg-scanner-zone-actions {
-  margin-top: 4px;
+  margin-top: 8px;
 }
 
 .pg-scanner-zone-actions .pg-btn-primary {
   background: linear-gradient(120deg, #06B6D4, #14B8A6);
+  color: #000000;
 }
 
 .pg-scanner-zone-actions .pg-btn-primary:hover:not(:disabled) {
@@ -2542,8 +2560,12 @@ body {
 }
 
 .pg-scanner-zone-actions .pg-btn-ghost {
-  color: #A5F3FC;
-  border-color: rgba(103, 232, 249, 0.62);
+  color: #000000;
+  border-color: rgba(156, 163, 175, 0.62);
+}
+
+.pg-scanner-zone-actions .pg-btn {
+  min-height: 44px;
 }
 
 .pg-inventory-page {
@@ -3352,6 +3374,142 @@ body {
 .pg-chatbot-input:focus-visible {
   outline: 2px solid rgba(var(--ring), 0.9);
   outline-offset: 2px;
+}
+
+.pg-chatbot-toolbar-btn,
+.pg-chatbot-toolbar-gemini,
+.pg-chatbot-history-close,
+.pg-chatbot-gemini-btn,
+.pg-chatbot-history-item,
+.pg-chatbot-quick-btn,
+.pg-chatbot-send-btn,
+.pg-chatbot-upload-btn {
+  transition:
+    transform 0.16s ease,
+    box-shadow 0.22s ease,
+    border-color 0.2s ease,
+    background-color 0.2s ease,
+    filter 0.2s ease;
+}
+
+.pg-chatbot-toolbar-btn:hover,
+.pg-chatbot-history-close:hover,
+.pg-chatbot-quick-btn:hover,
+.pg-chatbot-upload-btn:hover {
+  transform: translateY(-1px);
+}
+
+.pg-chatbot-toolbar-btn:hover {
+  border-color: rgba(20, 184, 166, 0.58);
+  background: rgba(20, 184, 166, 0.08);
+}
+
+.pg-chatbot-toolbar-gemini:hover,
+.pg-chatbot-gemini-btn:hover,
+.pg-chatbot-send-btn:hover {
+  transform: translateY(-1px) scale(1.02);
+  filter: saturate(1.06) brightness(1.02);
+}
+
+.pg-chatbot-toolbar-gemini:hover,
+.pg-chatbot-send-btn:hover {
+  box-shadow: 0 12px 24px rgba(20, 184, 166, 0.44);
+}
+
+.pg-chatbot-gemini-btn:hover {
+  box-shadow: 0 14px 26px rgba(20, 184, 166, 0.4);
+}
+
+.pg-chatbot-history-item:hover {
+  transform: translateY(-1px);
+  border-color: rgba(20, 184, 166, 0.52);
+  background: color-mix(in srgb, rgba(20, 184, 166, 0.12) 70%, var(--surface));
+}
+
+.pg-chatbot-quick-btn:hover {
+  border-color: rgba(20, 184, 166, 0.56);
+  background: rgba(20, 184, 166, 0.14);
+}
+
+.pg-chatbot-history-close:hover,
+.pg-chatbot-upload-btn:hover {
+  border-color: rgba(20, 184, 166, 0.54);
+}
+
+.pg-chatbot-toolbar-btn:active,
+.pg-chatbot-toolbar-gemini:active,
+.pg-chatbot-history-close:active,
+.pg-chatbot-gemini-btn:active,
+.pg-chatbot-history-item:active,
+.pg-chatbot-quick-btn:active,
+.pg-chatbot-send-btn:active,
+.pg-chatbot-upload-btn:active {
+  transform: translateY(0) scale(0.97);
+}
+
+.pg-chatbot-toolbar-btn .pg-icon,
+.pg-chatbot-toolbar-gemini .pg-icon,
+.pg-chatbot-gemini-btn .pg-icon,
+.pg-chatbot-send-btn .pg-icon,
+.pg-chatbot-upload-btn .pg-icon {
+  transition: transform 0.18s ease;
+}
+
+.pg-chatbot-toolbar-btn:hover .pg-icon,
+.pg-chatbot-toolbar-gemini:hover .pg-icon,
+.pg-chatbot-gemini-btn:hover .pg-icon,
+.pg-chatbot-send-btn:hover .pg-icon,
+.pg-chatbot-upload-btn:hover .pg-icon {
+  transform: scale(1.08);
+}
+
+.pg-chatbot-send-btn:disabled,
+.pg-chatbot-upload-btn:disabled {
+  transform: none;
+  filter: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+  .pg-chatbot-toolbar-btn,
+  .pg-chatbot-toolbar-gemini,
+  .pg-chatbot-history-close,
+  .pg-chatbot-gemini-btn,
+  .pg-chatbot-history-item,
+  .pg-chatbot-quick-btn,
+  .pg-chatbot-send-btn,
+  .pg-chatbot-upload-btn,
+  .pg-chatbot-toolbar-btn .pg-icon,
+  .pg-chatbot-toolbar-gemini .pg-icon,
+  .pg-chatbot-gemini-btn .pg-icon,
+  .pg-chatbot-send-btn .pg-icon,
+  .pg-chatbot-upload-btn .pg-icon {
+    transition: none;
+  }
+
+  .pg-chatbot-toolbar-btn:hover,
+  .pg-chatbot-toolbar-gemini:hover,
+  .pg-chatbot-history-close:hover,
+  .pg-chatbot-gemini-btn:hover,
+  .pg-chatbot-history-item:hover,
+  .pg-chatbot-quick-btn:hover,
+  .pg-chatbot-send-btn:hover,
+  .pg-chatbot-upload-btn:hover,
+  .pg-chatbot-toolbar-btn:active,
+  .pg-chatbot-toolbar-gemini:active,
+  .pg-chatbot-history-close:active,
+  .pg-chatbot-gemini-btn:active,
+  .pg-chatbot-history-item:active,
+  .pg-chatbot-quick-btn:active,
+  .pg-chatbot-send-btn:active,
+  .pg-chatbot-upload-btn:active,
+  .pg-chatbot-toolbar-btn:hover .pg-icon,
+  .pg-chatbot-toolbar-gemini:hover .pg-icon,
+  .pg-chatbot-gemini-btn:hover .pg-icon,
+  .pg-chatbot-send-btn:hover .pg-icon,
+  .pg-chatbot-upload-btn:hover .pg-icon {
+    transform: none;
+  }
 }
 
 .pg-chatbot-history-backdrop {

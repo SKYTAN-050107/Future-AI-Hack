@@ -39,6 +39,8 @@ export default function AppLayout() {
   const [direction, setDirection] = useState('forward')
   const previousRankRef = useRef(getPathRank(location.pathname))
   const isScannerRoute = location.pathname.startsWith('/app/scan')
+  const isChatbotRoute = location.pathname.startsWith('/app/chatbot')
+  const showTopActions = !isScannerRoute && !isChatbotRoute
 
   useEffect(() => {
     const nextRank = getPathRank(location.pathname)
@@ -52,7 +54,7 @@ export default function AppLayout() {
 
   return (
     <div className="pg-shell">
-      {!isScannerRoute ? (
+      {showTopActions ? (
         <div className="pg-top-actions">
           <ThemeToggle />
           <NotificationMenu />

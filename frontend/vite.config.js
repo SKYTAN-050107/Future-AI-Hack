@@ -14,8 +14,8 @@ export default defineConfig(({ mode }) => {
         registerType: 'autoUpdate',
         includeAssets: ['pwa-icon.svg', 'pwa-maskable.svg'],
         manifest: {
-          name: 'PadiGuard AI',
-          short_name: 'PadiGuard',
+          name: 'AcreZen',
+          short_name: 'AcreZen',
           description: 'Offline-first AI farming assistant for padi farmers.',
           theme_color: '#10a36c',
           background_color: '#edf8f4',
