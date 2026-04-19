@@ -2456,6 +2456,274 @@ select.pg-select option {
   border: 1px solid rgba(255, 255, 255, 0.42);
 }
 
+/* ── Finance widget: treatment summary teaser ─────── */
+
+.pg-finance-treatment-summary {
+  border-radius: 10px;
+  padding: 9px 10px;
+  background: rgba(4, 120, 87, 0.28);
+  border: 1px solid rgba(204, 251, 241, 0.22);
+}
+
+.pg-finance-summary-label {
+  margin: 0 0 3px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #CCFBF1;
+}
+
+.pg-finance-summary-text {
+  margin: 0;
+  font-size: 0.84rem;
+  color: #E6FFFA;
+  line-height: 1.4;
+}
+
+/* ── Finance widget: 3-CTA group ─────────────────── */
+
+.pg-finance-cta-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: auto;
+}
+
+.pg-finance-cta-btn {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.82rem;
+  padding: 10px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.38);
+  background: rgba(255, 255, 255, 0.14);
+  color: #FFFFFF;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+  text-align: center;
+}
+
+.pg-finance-cta-btn:hover,
+.pg-finance-cta-btn:focus-visible {
+  background: rgba(255, 255, 255, 0.26);
+  transform: translateY(-1px);
+}
+
+.pg-finance-cta-btn:active {
+  transform: translateY(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pg-finance-cta-btn {
+    transition: none;
+  }
+}
+
+/* ── Deep-dive page entrance stagger ─────────────── */
+
+@keyframes pgDeepDiveFadeSlideUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pgDeepDiveFadeSlideUpLight {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Scoped glass style for ROI deep dive, treatment plan, and yield prediction pages */
+
+.pg-glass-deep-dive {
+  --pg-deep-accent-rgb: 41 165 138;
+  --pg-deep-glass-top: rgba(255, 255, 255, 0.44);
+  --pg-deep-glass-bottom: rgba(255, 255, 255, 0.2);
+  --pg-deep-border: rgba(var(--border-rgb), 0.56);
+}
+
+.pg-glass-deep-dive .pg-card,
+.pg-glass-deep-dive .pg-deep-dive-metrics > * {
+  position: relative;
+  background:
+    linear-gradient(155deg, var(--pg-deep-glass-top), var(--pg-deep-glass-bottom));
+  border: 1px solid var(--pg-deep-border);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow:
+    0 10px 26px rgba(var(--text-rgb), 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.36);
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+
+.pg-glass-deep-dive .pg-card:hover,
+.pg-glass-deep-dive .pg-card:focus-within,
+.pg-glass-deep-dive .pg-deep-dive-metrics > *:hover {
+  transform: translateY(-3px);
+  border-color: rgba(var(--pg-deep-accent-rgb), 0.45);
+  box-shadow:
+    0 16px 30px rgba(var(--text-rgb), 0.12),
+    0 0 0 1px rgba(var(--pg-deep-accent-rgb), 0.22);
+}
+
+.pg-glass-deep-dive .pg-input,
+.pg-glass-deep-dive select.pg-input {
+  background: rgba(255, 255, 255, 0.58);
+  border-color: rgba(var(--border-rgb), 0.72);
+}
+
+.pg-glass-deep-dive .pg-input:focus,
+.pg-glass-deep-dive select.pg-input:focus {
+  border-color: rgba(var(--pg-deep-accent-rgb), 0.68);
+  box-shadow: 0 0 0 3px rgba(var(--pg-deep-accent-rgb), 0.18);
+}
+
+.pg-glass-deep-dive .pg-btn {
+  transition: transform 0.14s ease, box-shadow 0.14s ease, filter 0.14s ease;
+}
+
+.pg-glass-deep-dive .pg-btn:hover:not(:disabled),
+.pg-glass-deep-dive .pg-btn:focus-visible {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px rgba(var(--text-rgb), 0.18);
+  filter: saturate(1.04);
+}
+
+.pg-glass-deep-dive .pg-btn:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.pg-page-yield-prediction .pg-yield-confidence-track {
+  background: rgba(var(--border-rgb), 0.34);
+  border: 1px solid rgba(var(--border-rgb), 0.48);
+  border-radius: 6px;
+  height: 10px;
+  overflow: hidden;
+  margin: 6px 0;
+}
+
+.pg-page-yield-prediction .pg-yield-confidence-fill {
+  height: 100%;
+  border-radius: 6px;
+  transition: width 0.4s ease;
+}
+
+.pg-page-yield-prediction .pg-yield-confidence-fill.is-high {
+  background: linear-gradient(90deg, rgba(52, 211, 153, 0.95), rgba(16, 185, 129, 0.98));
+}
+
+.pg-page-yield-prediction .pg-yield-confidence-fill.is-medium {
+  background: linear-gradient(90deg, rgba(250, 204, 21, 0.94), rgba(245, 158, 11, 0.98));
+}
+
+.pg-page-yield-prediction .pg-yield-confidence-fill.is-low {
+  background: linear-gradient(90deg, rgba(251, 113, 133, 0.95), rgba(239, 68, 68, 0.98));
+}
+
+.dark .pg-glass-deep-dive {
+  --pg-deep-accent-rgb: 45 212 191;
+  --pg-deep-glass-top: rgba(12, 22, 38, 0.74);
+  --pg-deep-glass-bottom: rgba(8, 16, 30, 0.62);
+  --pg-deep-border: rgba(148, 163, 184, 0.34);
+}
+
+.dark .pg-glass-deep-dive .pg-input,
+.dark .pg-glass-deep-dive select.pg-input {
+  background: rgba(15, 23, 42, 0.66);
+  border-color: rgba(148, 163, 184, 0.42);
+}
+
+/* Light-mode-only boost so motion reads clearly on brighter surfaces */
+html:not(.dark) .pg-glass-deep-dive .pg-card,
+html:not(.dark) .pg-glass-deep-dive .pg-deep-dive-metrics > * {
+  border-color: rgba(var(--pg-deep-accent-rgb), 0.26);
+  box-shadow:
+    0 12px 24px rgba(28, 83, 71, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.52);
+}
+
+html:not(.dark) .pg-glass-deep-dive .pg-card:hover,
+html:not(.dark) .pg-glass-deep-dive .pg-card:focus-within,
+html:not(.dark) .pg-glass-deep-dive .pg-deep-dive-metrics > *:hover {
+  transform: translateY(-6px) scale(1.01);
+  border-color: rgba(var(--pg-deep-accent-rgb), 0.52);
+  box-shadow:
+    0 22px 34px rgba(23, 92, 78, 0.2),
+    0 0 0 2px rgba(var(--pg-deep-accent-rgb), 0.24);
+}
+
+html:not(.dark) .pg-glass-deep-dive .pg-btn:hover:not(:disabled),
+html:not(.dark) .pg-glass-deep-dive .pg-btn:focus-visible {
+  transform: translateY(-2px) scale(1.01);
+  box-shadow:
+    0 10px 22px rgba(23, 92, 78, 0.18),
+    0 0 0 2px rgba(var(--pg-deep-accent-rgb), 0.2);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .pg-page-roi-deep-dive .pg-deep-dive-metrics,
+  .pg-page-treatment-plan .pg-card:first-of-type,
+  .pg-page-yield-prediction .pg-card:first-of-type {
+    animation: pgDeepDiveFadeSlideUp 0.24s ease both;
+  }
+
+  .pg-page-roi-deep-dive .pg-card,
+  .pg-page-treatment-plan .pg-card,
+  .pg-page-yield-prediction .pg-card {
+    animation: pgDeepDiveFadeSlideUp 0.24s ease both;
+  }
+
+  .pg-page-roi-deep-dive .pg-card:nth-of-type(2),
+  .pg-page-treatment-plan .pg-card:nth-of-type(2),
+  .pg-page-yield-prediction .pg-card:nth-of-type(2) {
+    animation-delay: 0.05s;
+  }
+
+  .pg-page-roi-deep-dive .pg-card:nth-of-type(3),
+  .pg-page-treatment-plan .pg-card:nth-of-type(3),
+  .pg-page-yield-prediction .pg-card:nth-of-type(3) {
+    animation-delay: 0.1s;
+  }
+
+  .pg-page-roi-deep-dive .pg-card:nth-of-type(4),
+  .pg-page-treatment-plan .pg-card:nth-of-type(4),
+  .pg-page-yield-prediction .pg-card:nth-of-type(4) {
+    animation-delay: 0.15s;
+  }
+
+  .pg-page-roi-deep-dive .pg-card:nth-of-type(5),
+  .pg-page-treatment-plan .pg-card:nth-of-type(5),
+  .pg-page-yield-prediction .pg-card:nth-of-type(5) {
+    animation-delay: 0.2s;
+  }
+
+  html:not(.dark) .pg-page-roi-deep-dive .pg-deep-dive-metrics,
+  html:not(.dark) .pg-page-treatment-plan .pg-card:first-of-type,
+  html:not(.dark) .pg-page-yield-prediction .pg-card:first-of-type,
+  html:not(.dark) .pg-page-roi-deep-dive .pg-card,
+  html:not(.dark) .pg-page-treatment-plan .pg-card,
+  html:not(.dark) .pg-page-yield-prediction .pg-card {
+    animation-name: pgDeepDiveFadeSlideUpLight;
+    animation-duration: 0.36s;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pg-glass-deep-dive .pg-card,
+  .pg-glass-deep-dive .pg-deep-dive-metrics > *,
+  .pg-glass-deep-dive .pg-btn,
+  .pg-page-yield-prediction .pg-yield-confidence-fill {
+    transition: none;
+    animation: none;
+  }
+}
+
 /* Ã¢â€â‚¬Ã¢â€â‚¬ Dashboard Skeleton Shimmer Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ */
 
 @keyframes pgSkeletonShimmer {

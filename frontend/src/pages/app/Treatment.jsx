@@ -502,9 +502,9 @@ export default function Treatment() {
 
   if (isLoadingCrops) {
     return (
-      <section className="pg-page">
+      <section className="pg-page pg-page-roi-deep-dive pg-glass-deep-dive">
         <SectionHeader
-          title="Treatment"
+          title="ROI Deep Dive"
           align="center"
           leadingAction={<BackButton fallback="/app" label="Back to home" />}
         />
@@ -516,9 +516,9 @@ export default function Treatment() {
   }
 
   return (
-    <section className="pg-page">
+    <section className="pg-page pg-page-roi-deep-dive pg-glass-deep-dive">
       <SectionHeader
-        title="Treatment"
+        title="ROI Deep Dive"
         align="center"
         leadingAction={<BackButton fallback="/app" label="Back to home" />}
       />
@@ -539,8 +539,106 @@ export default function Treatment() {
         </article>
       ) : (
         <>
+          {/* 1. Revenue and cost metrics */}
+          <div className="pg-tile-grid pg-deep-dive-metrics">
+            <MetricTile
+              label="Revenue"
+              value={plan ? `RM ${formatMoney(plan.expected_gain_rm)}` : '...'}
+              helper="actualSoldKg x farm price"
+              tone="success"
+            />
+            <MetricTile
+              label="Total cost"
+              value={plan ? `RM ${formatMoney(plan.estimated_cost_rm)}` : '...'}
+              helper="inventory + labor + other"
+            />
+            <MetricTile
+              label="ROI"
+              value={plan ? formatRoi(plan) : '...'}
+              helper={plan?.roi_note ? `ROI ${plan.roi_note}` : 'updated on save'}
+              tone="success"
+            />
+          </div>
+
+          {/* 2. Breakdown details */}
+          <article className="pg-card">
+            <h2>Breakdown</h2>
+            {isLoading ? <p>Recalculating ROI...</p> : null}
+
+            {plan ? (
+              <>
+                <p>Retail price: RM {formatMoney(plan.retail_price_rm_per_kg)}/kg</p>
+                <p>Farm price: RM {formatMoney(plan.farm_price_rm_per_kg)}/kg</p>
+                <p>Price date: {plan.price_date || 'N/A'}</p>
+                <p>Yield source: {yieldInputSourceLabel}</p>
+                {yieldForecast && !hasManualYieldInput ? (
+                  <p>
+                    Forecast context: confidence {forecastConfidence.toFixed(2)}, projected loss {forecastLossPercent.toFixed(1)}%.
+                  </p>
+                ) : null}
+                <p>Inventory cost: RM {formatMoney(plan.inventory_cost_rm)}</p>
+                <p>Labor cost: RM {formatMoney(plan.labor_cost_rm)}</p>
+                <p>Other costs: RM {formatMoney(plan.other_costs_rm)}</p>
+                <p>Profit: RM {formatMoney(plan.profit_rm)}</p>
+
+                <details style={{ marginTop: 12 }}>
+                  <summary>Inventory usage details</summary>
+                  {Array.isArray(plan.inventory_breakdown) && plan.inventory_breakdown.length > 0 ? (
+                    <ul style={{ marginTop: 8 }}>
+                      {plan.inventory_breakdown.map((line) => (
+                        <li key={line.inventory_id}>
+                          {line.name}: {toSafeNumber(line.quantity_used).toFixed(2)} x RM {formatMoney(line.cost_per_unit_rm)} = RM {formatMoney(line.line_cost_rm)}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p style={{ marginTop: 8 }}>No inventory usage linked to this crop yet.</p>
+                  )}
+                </details>
+              </>
+            ) : (
+              <p>Save your inputs in the Inputs &amp; Assumptions section below to see the full cost breakdown.</p>
+            )}
+          </article>
+
+          {/* 3. Suggested plan */}
+          {plan ? (
+            <article className="pg-card">
+              <h2>Suggested Plan</h2>
+              <p>{plan.recommendation}</p>
+              {plan.organic_alternative ? (
+                <>
+                  <p style={{ marginTop: 10, fontWeight: 600 }}>Organic alternative</p>
+                  <p>{plan.organic_alternative}</p>
+                </>
+              ) : null}
+            </article>
+          ) : null}
+
+          {/* 4. Live ROI panel */}
           <article className="pg-card">
             <h2>Live ROI Panel</h2>
+            <small style={{ display: 'block', marginBottom: 10, opacity: 0.82 }}>
+              Adjust inputs in the Inputs &amp; Assumptions section below, then save to recalculate your ROI.
+            </small>
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                className="pg-btn pg-btn-primary"
+                onClick={handleSaveAndCalculate}
+                disabled={!selectedCropId || !cropDetail || isLoading}
+              >
+                {isLoading ? 'Saving...' : 'Save & Recalculate'}
+              </button>
+            </div>
+            <small style={{ display: 'block', marginTop: 6, opacity: 0.82 }}>
+              ROI recalculates only after you click Save &amp; Recalculate.
+            </small>
+          </article>
+
+          {/* 5. Inputs and assumptions (moved to bottom) */}
+          <article className="pg-card">
+            <h2>Inputs &amp; Assumptions</h2>
 
             <label className="pg-field-label" htmlFor="pg-treatment-crop">Crop</label>
             <select
@@ -653,86 +751,6 @@ export default function Treatment() {
               value={otherCostsRm}
               onChange={(event) => setOtherCostsRm(toSafeNumber(event.target.value, 0))}
             />
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 10 }}>
-              <button
-                type="button"
-                className="pg-btn pg-btn-primary"
-                onClick={handleSaveAndCalculate}
-                disabled={!selectedCropId || !cropDetail || isLoading}
-              >
-                {isLoading ? 'Saving...' : 'Save'}
-              </button>
-            </div>
-            <small style={{ display: 'block', marginTop: 6, opacity: 0.82 }}>
-              ROI recalculates only after you click Save.
-            </small>
-          </article>
-
-          <div className="pg-tile-grid">
-            <MetricTile
-              label="Revenue"
-              value={plan ? `RM ${formatMoney(plan.expected_gain_rm)}` : '...'}
-              helper="actualSoldKg x farm price"
-              tone="success"
-            />
-            <MetricTile
-              label="Total cost"
-              value={plan ? `RM ${formatMoney(plan.estimated_cost_rm)}` : '...'}
-              helper="inventory + labor + other"
-            />
-            <MetricTile
-              label="ROI"
-              value={plan ? formatRoi(plan) : '...'}
-              helper={plan?.roi_note ? `ROI ${plan.roi_note}` : 'updated on save'}
-              tone="success"
-            />
-          </div>
-
-          <article className="pg-card">
-            <h2>Breakdown View</h2>
-            {isLoading ? <p>Recalculating ROI...</p> : null}
-
-            {plan ? (
-              <>
-                <p>Retail price: RM {formatMoney(plan.retail_price_rm_per_kg)}/kg</p>
-                <p>Farm price: RM {formatMoney(plan.farm_price_rm_per_kg)}/kg</p>
-                <p>Price date: {plan.price_date || 'N/A'}</p>
-                <p>Yield source: {yieldInputSourceLabel}</p>
-                {yieldForecast && !hasManualYieldInput ? (
-                  <p>
-                    Forecast context: confidence {forecastConfidence.toFixed(2)}, projected loss {forecastLossPercent.toFixed(1)}%.
-                  </p>
-                ) : null}
-                <p>Inventory cost: RM {formatMoney(plan.inventory_cost_rm)}</p>
-                <p>Labor cost: RM {formatMoney(plan.labor_cost_rm)}</p>
-                <p>Other costs: RM {formatMoney(plan.other_costs_rm)}</p>
-                <p>Profit: RM {formatMoney(plan.profit_rm)}</p>
-
-                <details style={{ marginTop: 12 }}>
-                  <summary>Inventory usage details</summary>
-                  {Array.isArray(plan.inventory_breakdown) && plan.inventory_breakdown.length > 0 ? (
-                    <ul style={{ marginTop: 8 }}>
-                      {plan.inventory_breakdown.map((line) => (
-                        <li key={line.inventory_id}>
-                          {line.name}: {toSafeNumber(line.quantity_used).toFixed(2)} x RM {formatMoney(line.cost_per_unit_rm)} = RM {formatMoney(line.line_cost_rm)}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p style={{ marginTop: 8 }}>No inventory usage linked to this crop yet.</p>
-                  )}
-                </details>
-
-                <article className="pg-card" style={{ marginTop: 12 }}>
-                  <h2>Suggested plan</h2>
-                  <p>{plan.recommendation}</p>
-                  <p>{plan.organic_alternative}</p>
-                </article>
-              </>
-            ) : (
-              <p>Select a crop, adjust values, then click Save to calculate ROI.</p>
-            )}
           </article>
         </>
       )}

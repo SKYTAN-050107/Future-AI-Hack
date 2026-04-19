@@ -9,7 +9,7 @@ import { useSessionContext } from '../../hooks/useSessionContext'
 import { useGrids } from '../../hooks/useGrids'
 import { useScanHistory } from '../../hooks/useScanHistory'
 import { useFarmLocationCoordinates } from '../../hooks/useFarmLocationCoordinates'
-import { getTreatmentRoiSnapshot, TREATMENT_ROI_CACHE_UPDATED_EVENT } from '../../utils/treatmentRoiCache'
+import { getTreatmentRoiSnapshot, getTreatmentFormSnapshot, TREATMENT_ROI_CACHE_UPDATED_EVENT } from '../../utils/treatmentRoiCache'
 
 function safeNumber(value, fallback = 0) {
   if (value === null || value === undefined || value === '') {
@@ -363,6 +363,7 @@ export default function Dashboard() {
   const [cropCount, setCropCount] = useState(0)
   const [isCropLoading, setIsCropLoading] = useState(true)
   const [savedFinancialSummary, setSavedFinancialSummary] = useState(null)
+  const [savedTreatmentPlan, setSavedTreatmentPlan] = useState(null)
 
   const firstGridWithCentroid = useMemo(
     () => grids.find((grid) => Number.isFinite(grid?.centroid?.lat) && Number.isFinite(grid?.centroid?.lng)),
@@ -579,11 +580,15 @@ export default function Dashboard() {
     const safeUserId = String(user?.uid || '').trim()
     if (!safeUserId) {
       setSavedFinancialSummary(null)
+      setSavedTreatmentPlan(null)
       return undefined
     }
 
     const refreshSnapshot = () => {
       setSavedFinancialSummary(getTreatmentRoiSnapshot(safeUserId))
+      const formSnapshot = getTreatmentFormSnapshot(safeUserId)
+      const planFromCache = formSnapshot?.values?.plan ?? null
+      setSavedTreatmentPlan(planFromCache && typeof planFromCache === 'object' ? planFromCache : null)
     }
 
     refreshSnapshot()
@@ -843,12 +848,7 @@ export default function Dashboard() {
         </article>
 
         {/* ── Financial / ROI Widget ──────────────────── */}
-        <button
-          type="button"
-          className="pg-dashboard-card pg-finance-card"
-          onClick={() => navigate('/app/treatment')}
-          aria-label="Open treatment plan and ROI"
-        >
+        <article className="pg-dashboard-card pg-finance-card" aria-label="Financial command center">
           {isDashboardLoading && !hasFinancialData ? (
             <FinanceCardSkeleton />
           ) : (
@@ -876,16 +876,50 @@ export default function Dashboard() {
                 </div>
               </div>
 
+              {savedTreatmentPlan ? (
+                <div className="pg-finance-treatment-summary">
+                  <p className="pg-finance-summary-label">Last treatment recommendation</p>
+                  <p className="pg-finance-summary-text">{String(savedTreatmentPlan.recommendation || '').slice(0, 100)}{String(savedTreatmentPlan.recommendation || '').length > 100 ? '…' : ''}</p>
+                </div>
+              ) : (
+                <div className="pg-finance-treatment-summary">
+                  <p className="pg-finance-summary-label">No treatment plan computed yet</p>
+                  <p className="pg-finance-summary-text">Run the ROI calculator to see your treatment recommendation here.</p>
+                </div>
+              )}
+
               {safeNumber(financialSummary.lowStockLiters, 999) < 5 ? (
                 <p className="pg-finance-alert">
                   Low stock alert: {financialSummary.lowStockItem || 'Item'} only {safeNumber(financialSummary.lowStockLiters).toFixed(1)}L left.
                 </p>
               ) : null}
 
-              <span className="pg-finance-cta">View Treatment Plan</span>
+              <div className="pg-finance-cta-group">
+                <button
+                  type="button"
+                  className="pg-btn pg-btn-primary pg-finance-cta-btn"
+                  onClick={() => navigate('/app/treatment-plan')}
+                >
+                  Treatment Plan
+                </button>
+                <button
+                  type="button"
+                  className="pg-btn pg-btn-primary pg-finance-cta-btn"
+                  onClick={() => navigate('/app/treatment')}
+                >
+                  ROI Deep Dive
+                </button>
+                <button
+                  type="button"
+                  className="pg-btn pg-btn-inline pg-finance-cta-btn"
+                  onClick={() => navigate('/app/yield-prediction')}
+                >
+                  Yield Prediction
+                </button>
+              </div>
             </>
           )}
-        </button>
+        </article>
       </div>
     </section>
   )

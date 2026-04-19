@@ -13,6 +13,8 @@ import Profile from '../pages/app/Profile'
 import Report from '../pages/app/Report'
 import Scanner from '../pages/app/Scanner.jsx'
 import Treatment from '../pages/app/Treatment'
+import TreatmentPlan from '../pages/app/TreatmentPlan'
+import YieldPrediction from '../pages/app/YieldPrediction'
 import Weather from '../pages/app/Weather'
 import Onboarding from '../pages/onboarding/Onboarding'
 import Auth from '../pages/public/Auth'
@@ -181,6 +183,9 @@ export const appRoutes = [
       { path: 'scan', element: <Scanner /> },
       { path: 'report', element: <Report /> },
       { path: 'treatment', element: <Treatment /> },
+      { path: 'roi', element: <Treatment /> },
+      { path: 'treatment-plan', element: <TreatmentPlan /> },
+      { path: 'yield-prediction', element: <YieldPrediction /> },
       { path: 'chatbot', element: <Chatbot /> },
       { path: 'inventory', element: <Inventory /> },
       { path: 'crops', element: <Crops /> },
