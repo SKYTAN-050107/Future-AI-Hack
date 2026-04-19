@@ -386,6 +386,7 @@ export default function Inventory() {
           onChange={(e) => setCategorySearch(e.target.value)}
           aria-label="Search inventory by category"
         />
+        <span className="pg-inv-search-count" aria-live="polite">({visibleItems.length})</span>
       </div>
 
       {/* ── Filter Pills ── */}

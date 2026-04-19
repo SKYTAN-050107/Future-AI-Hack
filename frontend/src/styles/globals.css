@@ -3113,8 +3113,19 @@ select.pg-select option {
 }
 
 /* -- Inventory Category Search -- */
-.pg-inv-search-wrap { padding: 0 0 8px; }
+.pg-inv-search-wrap {
+  padding: 0 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 .pg-inv-search { width: 100%; max-width: 320px; }
+.pg-inv-search-count {
+  font-size: 0.86rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+  min-width: 2ch;
+}
 
 /* Ã¢â€â‚¬Ã¢â€â‚¬ Filter Pills Ã¢â€â‚¬Ã¢â€â‚¬ */
 .pg-inv-filters {
