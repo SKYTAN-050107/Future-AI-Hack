@@ -37,6 +37,8 @@ const QUICK_PROMPTS = [
   'Estimate treatment ROI from latest scan',
 ]
 
+const CAMERA_CAPTURE_USER_MESSAGE = 'I have captured this image. Please diagnose it and suggest what to do next.'
+
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024
 const ALLOWED_IMAGE_MIME = new Set([
   'image/jpeg',
@@ -348,7 +350,7 @@ function formatConversationTime(value) {
 export default function Chatbot() {
   const location = useLocation()
   const navigate = useNavigate()
-  const { user, profile } = useSessionContext()
+  const { user, profile, isAuthLoading } = useSessionContext()
   const { reports, timelineItems, isLoading, error } = useScanHistory()
   const { saveScanReport } = useScanReports()
   const [conversationHistory, setConversationHistory] = useState([])
@@ -361,6 +363,7 @@ export default function Chatbot() {
   const threadRef = useRef(null)
   const photoInputRef = useRef(null)
   const autoScanTriggeredRef = useRef(false)
+  const suppressConversationBootstrapRef = useRef(false)
   const migratedConversationUsersRef = useRef(new Set())
   const conversationStorageKey = getConversationStorageKey(user?.uid)
   const farmLocation = String(profile?.onboarding?.location || '').trim()
@@ -459,6 +462,10 @@ export default function Chatbot() {
   }, [messages, isThinking])
 
   useEffect(() => {
+    if (suppressConversationBootstrapRef.current) {
+      return
+    }
+
     const storedConversations = loadStoredConversations(conversationStorageKey)
     const initialConversation = storedConversations[0] || null
 
@@ -525,7 +532,7 @@ export default function Chatbot() {
     const fromScan = params.get('fromScan') === '1'
     const captureIdFromUrl = getQueryParam(location.search, 'captureId')
 
-    if (!fromScan || isAutoProcessing || isThinking) {
+    if (!fromScan || isAutoProcessing || isThinking || isAuthLoading) {
       return
     }
 
@@ -535,102 +542,119 @@ export default function Chatbot() {
 
     const uid = String(user?.uid || '').trim()
     let cancelled = false
+    const conversationId = activeConversationId || createConversationId()
+    const defaultUserPrompt = CAMERA_CAPTURE_USER_MESSAGE
+
+    autoScanTriggeredRef.current = true
+    suppressConversationBootstrapRef.current = true
+
+    if (activeConversationId !== conversationId) {
+      setActiveConversationId(conversationId)
+    }
+
+    setMessages((prev) => {
+      const lastMessage = prev[prev.length - 1]
+      if (lastMessage?.role === 'user' && lastMessage?.text === defaultUserPrompt) {
+        return prev
+      }
+
+      const next = [...prev, { role: 'user', text: defaultUserPrompt }]
+      persistConversation(conversationId, next)
+      return next
+    })
+
+    setIsAutoProcessing(true)
+    setIsThinking(true)
+    navigate('/app/chatbot', { replace: true })
 
     const runAutoScan = async () => {
-      let pendingCapture = loadPendingCapture()
+      let pendingCapture = null
 
-      if ((!pendingCapture?.base64Image || !pendingCapture?.captureId) && captureIdFromUrl && uid) {
-        try {
-          pendingCapture = await hydratePendingCaptureFromFirestore(uid, captureIdFromUrl)
-        } catch (captureLoadError) {
-          console.warn('Unable to hydrate scan capture from Firestore:', captureLoadError)
-        }
-      }
+      try {
+        pendingCapture = loadPendingCapture()
 
-      if (cancelled) {
-        return
-      }
-
-      if (!pendingCapture?.base64Image) {
-        autoScanTriggeredRef.current = true
-        navigate('/app/chatbot', { replace: true })
-        return
-      }
-
-      autoScanTriggeredRef.current = true
-
-      const conversationId = activeConversationId || createConversationId()
-      if (activeConversationId !== conversationId) {
-        setActiveConversationId(conversationId)
-      }
-
-      const userText = pendingCapture.userPrompt || 'I just captured this crop photo. Please diagnose and advise.'
-      const userMessage = { role: 'user', text: userText }
-
-      setMessages((prev) => {
-        const next = [...prev, userMessage]
-        persistConversation(conversationId, next)
-        return next
-      })
-
-      setIsAutoProcessing(true)
-      setIsThinking(true)
-      navigate('/app/chatbot', { replace: true })
-
-      scanAndAskAssistant({
-        source: pendingCapture.source || 'camera',
-        gridId: pendingCapture.gridId || null,
-        userId: uid || null,
-        base64Image: pendingCapture.base64Image,
-        userPrompt: userText,
-      })
-        .then(async (response) => {
+        if ((!pendingCapture?.base64Image || !pendingCapture?.captureId) && captureIdFromUrl && uid) {
           try {
-            await saveScanReport({
-              ...response,
-              ownerUid: uid || null,
-              source: pendingCapture.source || 'camera',
-              status: normalizeScanStatus(response),
-              gridId: pendingCapture.gridId || response?.gridId || response?.zone || null,
-              zone: pendingCapture.gridId || response?.zone || null,
-              zoneAssignmentMode: pendingCapture.zoneAssignmentMode || null,
-              zonePosition: pendingCapture.zonePosition || null,
-              zonePositionLabel: pendingCapture.zonePositionLabel || null,
-              captureId: pendingCapture.captureId || captureIdFromUrl || null,
-              captureDownloadURL: pendingCapture.captureDownloadURL || null,
-              captureStoragePath: pendingCapture.captureStoragePath || null,
-              captureCapturedAt: pendingCapture.capturedAt || null,
-            })
-          } catch {
-            // Keep chat flow smooth even when persistence fails.
+            pendingCapture = await hydratePendingCaptureFromFirestore(uid, captureIdFromUrl)
+          } catch (captureLoadError) {
+            console.warn('Unable to hydrate scan capture from Firestore:', captureLoadError)
           }
+        }
 
-          const diagnosisLine = `Diagnosis: ${response.disease} | Severity ${response.severity}% | Confidence ${response.confidence}% | Risk ${response.spread_risk}.`
-          const assistantText = `${response.assistant_reply}\n\n${diagnosisLine}`
+        if (cancelled) {
+          return
+        }
 
-          const aiMessage = { role: 'ai', text: assistantText }
-          setMessages((prev) => {
-            const next = [...prev, aiMessage]
-            persistConversation(conversationId, next)
-            return next
-          })
-        })
-        .catch((scanError) => {
-          const aiMessage = {
+        if (!pendingCapture?.base64Image) {
+          const missingCaptureMessage = {
             role: 'ai',
-            text: scanError?.message || 'I could not process that photo right now. Please capture again and retry.',
+            text: 'I could not find the captured photo. Please capture again and retry.',
           }
           setMessages((prev) => {
-            const next = [...prev, aiMessage]
+            const next = [...prev, missingCaptureMessage]
             persistConversation(conversationId, next)
             return next
           })
+          return
+        }
+
+        const userPrompt = String(pendingCapture.userPrompt || defaultUserPrompt).trim() || defaultUserPrompt
+
+        const response = await scanAndAskAssistant({
+          source: pendingCapture.source || 'camera',
+          gridId: pendingCapture.gridId || null,
+          userId: uid || null,
+          base64Image: pendingCapture.base64Image,
+          userPrompt,
         })
-        .finally(() => {
-          clearPendingCapture()
+
+        try {
+          await saveScanReport({
+            ...response,
+            ownerUid: uid || null,
+            source: pendingCapture.source || 'camera',
+            status: normalizeScanStatus(response),
+            gridId: pendingCapture.gridId || response?.gridId || response?.zone || null,
+            zone: pendingCapture.gridId || response?.zone || null,
+            zoneAssignmentMode: pendingCapture.zoneAssignmentMode || null,
+            zonePosition: pendingCapture.zonePosition || null,
+            zonePositionLabel: pendingCapture.zonePositionLabel || null,
+            captureId: pendingCapture.captureId || captureIdFromUrl || null,
+            captureDownloadURL: pendingCapture.captureDownloadURL || null,
+            captureStoragePath: pendingCapture.captureStoragePath || null,
+            captureCapturedAt: pendingCapture.capturedAt || null,
+          })
+        } catch {
+          // Keep chat flow smooth even when persistence fails.
+        }
+
+        const diagnosisLine = `Diagnosis: ${response.disease} | Severity ${response.severity}% | Confidence ${response.confidence}% | Risk ${response.spread_risk}.`
+        const assistantText = `${response.assistant_reply}\n\n${diagnosisLine}`
+
+        const aiMessage = { role: 'ai', text: assistantText }
+        setMessages((prev) => {
+          const next = [...prev, aiMessage]
+          persistConversation(conversationId, next)
+          return next
+        })
+      } catch (scanError) {
+        const aiMessage = {
+          role: 'ai',
+          text: scanError?.message || 'I could not process that photo right now. Please capture again and retry.',
+        }
+        setMessages((prev) => {
+          const next = [...prev, aiMessage]
+          persistConversation(conversationId, next)
+          return next
+        })
+      } finally {
+        clearPendingCapture()
+        if (!cancelled) {
           setIsAutoProcessing(false)
           setIsThinking(false)
-        })
+        }
+        suppressConversationBootstrapRef.current = false
+      }
     }
 
     runAutoScan()
@@ -640,6 +664,7 @@ export default function Chatbot() {
     }
   }, [
     activeConversationId,
+    isAuthLoading,
     isAutoProcessing,
     isThinking,
     location.search,
