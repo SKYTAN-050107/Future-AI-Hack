@@ -2680,6 +2680,41 @@ body {
   font-size: 0.8rem;
 }
 
+.pg-scanner-zone-map {
+  width: 100%;
+  min-height: 220px;
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid rgba(125, 211, 252, 0.38);
+  box-shadow: 0 12px 22px rgba(2, 6, 23, 0.35);
+}
+
+.pg-scanner-zone-map .mapboxgl-canvas {
+  outline: none;
+}
+
+.pg-scanner-zone-map-placeholder {
+  margin: 0;
+  border-radius: 12px;
+  padding: 12px;
+  border: 1px dashed rgba(125, 211, 252, 0.42);
+  background: rgba(8, 47, 73, 0.42);
+  color: rgba(207, 250, 254, 0.95);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.pg-scanner-zone-marker-hint {
+  margin: 0;
+  border-radius: 12px;
+  padding: 10px;
+  background: rgba(8, 145, 178, 0.22);
+  border: 1px solid rgba(103, 232, 249, 0.5);
+  color: #CFFAFE;
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+
 .pg-scanner-zone-error {
   margin: 0;
   border-radius: 10px;
@@ -2890,13 +2925,11 @@ body {
 
 @media (min-width: 920px) {
   .pg-treatment-layout {
-    grid-template-columns: 1.05fr 1fr;
-    align-items: start;
+    grid-template-columns: 1fr;
   }
 
   .pg-treatment-controls {
-    position: sticky;
-    top: calc(70px + env(safe-area-inset-top));
+    position: static;
   }
 
   .pg-treatment-grid {

@@ -286,6 +286,93 @@ export default function Treatment() {
       ) : (
         <>
           <div className="pg-treatment-layout">
+            <div className="pg-treatment-results">
+              <div className="pg-tile-grid pg-treatment-metrics">
+                <MetricTile
+                  label="Revenue"
+                  value={plan ? `RM ${formatMoney(plan.expected_gain_rm)}` : '...'}
+                  helper="actualSoldKg x farm price"
+                  tone="success"
+                />
+                <MetricTile
+                  label="Total cost"
+                  value={plan ? `RM ${formatMoney(plan.estimated_cost_rm)}` : '...'}
+                  helper="inventory + labor + other"
+                />
+                <MetricTile
+                  label="ROI"
+                  value={plan ? formatRoi(plan) : '...'}
+                  helper={plan?.roi_note ? `ROI ${plan.roi_note}` : 'live updated'}
+                  tone="success"
+                />
+              </div>
+
+              <article className="pg-card pg-treatment-breakdown">
+                <div className="pg-treatment-card-head">
+                  <h2>Breakdown View</h2>
+                  {isLoading ? <p>Recalculating ROI...</p> : <p>Figures refresh automatically when any input changes.</p>}
+                </div>
+
+                {plan ? (
+                  <>
+                    <div className="pg-treatment-breakdown-grid">
+                      <div className="pg-treatment-breakdown-row">
+                        <span>Retail price</span>
+                        <strong>RM {formatMoney(plan.retail_price_rm_per_kg)}/kg</strong>
+                      </div>
+                      <div className="pg-treatment-breakdown-row">
+                        <span>Farm price</span>
+                        <strong>RM {formatMoney(plan.farm_price_rm_per_kg)}/kg</strong>
+                      </div>
+                      <div className="pg-treatment-breakdown-row">
+                        <span>Price date</span>
+                        <strong>{plan.price_date || 'N/A'}</strong>
+                      </div>
+                      <div className="pg-treatment-breakdown-row">
+                        <span>Inventory cost</span>
+                        <strong>RM {formatMoney(plan.inventory_cost_rm)}</strong>
+                      </div>
+                      <div className="pg-treatment-breakdown-row">
+                        <span>Labor cost</span>
+                        <strong>RM {formatMoney(plan.labor_cost_rm)}</strong>
+                      </div>
+                      <div className="pg-treatment-breakdown-row">
+                        <span>Other costs</span>
+                        <strong>RM {formatMoney(plan.other_costs_rm)}</strong>
+                      </div>
+                      <div className="pg-treatment-breakdown-row is-profit">
+                        <span>Profit</span>
+                        <strong>RM {formatMoney(plan.profit_rm)}</strong>
+                      </div>
+                    </div>
+
+                    <details className="pg-treatment-details">
+                      <summary>Inventory usage details</summary>
+                      {Array.isArray(plan.inventory_breakdown) && plan.inventory_breakdown.length > 0 ? (
+                        <ul className="pg-treatment-details-list">
+                          {plan.inventory_breakdown.map((line) => (
+                            <li key={line.inventory_id}>
+                              {line.name}: {toSafeNumber(line.quantity_used).toFixed(2)} x RM {formatMoney(line.cost_per_unit_rm)} = RM {formatMoney(line.line_cost_rm)}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="pg-treatment-empty-details">No inventory usage linked to this crop yet.</p>
+                      )}
+                    </details>
+
+                    <section className="pg-treatment-suggestion">
+                      <h3>Suggested plan</h3>
+                      <p>{plan.recommendation}</p>
+                      <p>{plan.organic_alternative}</p>
+                    </section>
+                  </>
+                ) : (
+                  <p className="pg-treatment-empty-state">Select a crop and adjust values to see live ROI.</p>
+                )}
+              </article>
+            </div>
+
             <article className="pg-card pg-treatment-controls">
               <div className="pg-treatment-card-head">
                 <h2>Live ROI Controls</h2>
@@ -407,93 +494,6 @@ export default function Treatment() {
                 </div>
               </div>
             </article>
-
-            <div className="pg-treatment-results">
-              <div className="pg-tile-grid pg-treatment-metrics">
-                <MetricTile
-                  label="Revenue"
-                  value={plan ? `RM ${formatMoney(plan.expected_gain_rm)}` : '...'}
-                  helper="actualSoldKg x farm price"
-                  tone="success"
-                />
-                <MetricTile
-                  label="Total cost"
-                  value={plan ? `RM ${formatMoney(plan.estimated_cost_rm)}` : '...'}
-                  helper="inventory + labor + other"
-                />
-                <MetricTile
-                  label="ROI"
-                  value={plan ? formatRoi(plan) : '...'}
-                  helper={plan?.roi_note ? `ROI ${plan.roi_note}` : 'live updated'}
-                  tone="success"
-                />
-              </div>
-
-              <article className="pg-card pg-treatment-breakdown">
-                <div className="pg-treatment-card-head">
-                  <h2>Breakdown View</h2>
-                  {isLoading ? <p>Recalculating ROI...</p> : <p>Figures refresh automatically when any input changes.</p>}
-                </div>
-
-                {plan ? (
-                  <>
-                    <div className="pg-treatment-breakdown-grid">
-                      <div className="pg-treatment-breakdown-row">
-                        <span>Retail price</span>
-                        <strong>RM {formatMoney(plan.retail_price_rm_per_kg)}/kg</strong>
-                      </div>
-                      <div className="pg-treatment-breakdown-row">
-                        <span>Farm price</span>
-                        <strong>RM {formatMoney(plan.farm_price_rm_per_kg)}/kg</strong>
-                      </div>
-                      <div className="pg-treatment-breakdown-row">
-                        <span>Price date</span>
-                        <strong>{plan.price_date || 'N/A'}</strong>
-                      </div>
-                      <div className="pg-treatment-breakdown-row">
-                        <span>Inventory cost</span>
-                        <strong>RM {formatMoney(plan.inventory_cost_rm)}</strong>
-                      </div>
-                      <div className="pg-treatment-breakdown-row">
-                        <span>Labor cost</span>
-                        <strong>RM {formatMoney(plan.labor_cost_rm)}</strong>
-                      </div>
-                      <div className="pg-treatment-breakdown-row">
-                        <span>Other costs</span>
-                        <strong>RM {formatMoney(plan.other_costs_rm)}</strong>
-                      </div>
-                      <div className="pg-treatment-breakdown-row is-profit">
-                        <span>Profit</span>
-                        <strong>RM {formatMoney(plan.profit_rm)}</strong>
-                      </div>
-                    </div>
-
-                    <details className="pg-treatment-details">
-                      <summary>Inventory usage details</summary>
-                      {Array.isArray(plan.inventory_breakdown) && plan.inventory_breakdown.length > 0 ? (
-                        <ul className="pg-treatment-details-list">
-                          {plan.inventory_breakdown.map((line) => (
-                            <li key={line.inventory_id}>
-                              {line.name}: {toSafeNumber(line.quantity_used).toFixed(2)} x RM {formatMoney(line.cost_per_unit_rm)} = RM {formatMoney(line.line_cost_rm)}
-                            </li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <p className="pg-treatment-empty-details">No inventory usage linked to this crop yet.</p>
-                      )}
-                    </details>
-
-                    <section className="pg-treatment-suggestion">
-                      <h3>Suggested plan</h3>
-                      <p>{plan.recommendation}</p>
-                      <p>{plan.organic_alternative}</p>
-                    </section>
-                  </>
-                ) : (
-                  <p className="pg-treatment-empty-state">Select a crop and adjust values to see live ROI.</p>
-                )}
-              </article>
-            </div>
           </div>
         </>
       )}
