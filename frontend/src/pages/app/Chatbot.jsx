@@ -363,6 +363,7 @@ export default function Chatbot() {
   const threadRef = useRef(null)
   const photoInputRef = useRef(null)
   const autoScanTriggeredRef = useRef(false)
+  const processedAutoScanCaptureIdsRef = useRef(new Set())
   const suppressConversationBootstrapRef = useRef(false)
   const migratedConversationUsersRef = useRef(new Set())
   const conversationStorageKey = getConversationStorageKey(user?.uid)
@@ -540,6 +541,12 @@ export default function Chatbot() {
       return
     }
 
+    if (captureIdFromUrl && processedAutoScanCaptureIdsRef.current.has(captureIdFromUrl)) {
+      navigate('/app/chatbot', { replace: true })
+      clearPendingCapture()
+      return
+    }
+
     const uid = String(user?.uid || '').trim()
     let cancelled = false
     const conversationId = activeConversationId || createConversationId()
@@ -569,6 +576,7 @@ export default function Chatbot() {
 
     const runAutoScan = async () => {
       let pendingCapture = null
+      let resolvedCaptureId = captureIdFromUrl
 
       try {
         pendingCapture = loadPendingCapture()
@@ -583,6 +591,16 @@ export default function Chatbot() {
 
         if (cancelled) {
           return
+        }
+
+        const pendingCaptureId = String(pendingCapture?.captureId || '').trim()
+        resolvedCaptureId = pendingCaptureId || captureIdFromUrl
+        if (resolvedCaptureId && processedAutoScanCaptureIdsRef.current.has(resolvedCaptureId)) {
+          return
+        }
+
+        if (resolvedCaptureId) {
+          processedAutoScanCaptureIdsRef.current.add(resolvedCaptureId)
         }
 
         if (!pendingCapture?.base64Image) {
@@ -619,7 +637,7 @@ export default function Chatbot() {
             zoneAssignmentMode: pendingCapture.zoneAssignmentMode || null,
             zonePosition: pendingCapture.zonePosition || null,
             zonePositionLabel: pendingCapture.zonePositionLabel || null,
-            captureId: pendingCapture.captureId || captureIdFromUrl || null,
+            captureId: resolvedCaptureId || null,
             captureDownloadURL: pendingCapture.captureDownloadURL || null,
             captureStoragePath: pendingCapture.captureStoragePath || null,
             captureCapturedAt: pendingCapture.capturedAt || null,
