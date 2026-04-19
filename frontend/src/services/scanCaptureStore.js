@@ -50,6 +50,7 @@ export async function persistUserScanCapture({
   zoneAssignmentMode = null,
   zonePosition = null,
   zonePositionLabel = null,
+  cropType = null,
   conversationId = null,
 }) {
   const ownerUid = String(uid || '').trim()
@@ -94,6 +95,7 @@ export async function persistUserScanCapture({
     zoneAssignmentMode: zoneAssignmentMode || null,
     zonePosition: zonePosition || null,
     zonePositionLabel: zonePositionLabel || null,
+    cropType: String(cropType || '').trim() || null,
     conversationId: conversationId || null,
     storagePath,
     downloadURL,

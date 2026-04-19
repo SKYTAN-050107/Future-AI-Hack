@@ -170,7 +170,7 @@ function getZoneMapSourceData(zoneGeometry, gridId) {
 export default function Scanner() {
   const navigate = useNavigate()
   const { user } = useSessionContext()
-  const { grids } = useGrids()
+  const { grids, updateGridCropType } = useGrids()
   const videoRef = useRef(null)
   const streamRef = useRef(null)
   const wsRef = useRef(null)
@@ -194,6 +194,7 @@ export default function Scanner() {
   const [zoneChoiceError, setZoneChoiceError] = useState('')
   const [zoneMarkerPosition, setZoneMarkerPosition] = useState(null)
   const [zoneMarkerLabel, setZoneMarkerLabel] = useState('')
+  const [zoneCropType, setZoneCropType] = useState('')
   const [pendingCaptureDraft, setPendingCaptureDraft] = useState(null)
 
   const mapboxToken = import.meta.env.VITE_MAPBOX_TOKEN
@@ -209,9 +210,11 @@ export default function Scanner() {
       }
 
       uniqueZones.set(gridId, {
+        docId: String(grid?.id || '').trim(),
         value: gridId,
         label: gridId,
         healthState: String(grid?.healthState || 'Healthy'),
+        cropType: String(grid?.cropType || '').trim(),
         areaHectares: Number(grid?.areaHectares || 0),
         geometry: grid?.polygon || null,
         hasGeometry: ['Polygon', 'MultiPolygon'].includes(String(grid?.polygon?.type || '')),
@@ -276,10 +279,17 @@ export default function Scanner() {
     setZoneChoiceError('')
     setZoneMarkerPosition(null)
     setZoneMarkerLabel('')
+    setZoneCropType('')
     setPendingCaptureDraft(null)
   }
 
-  const finalizeCaptureWithZone = async (gridId, markerPosition = null, markerLabel = null) => {
+  const finalizeCaptureWithZone = async (
+    gridId,
+    markerPosition = null,
+    markerLabel = null,
+    cropType = null,
+    gridDocId = null,
+  ) => {
     if (!pendingCaptureDraft) {
       return
     }
@@ -287,6 +297,7 @@ export default function Scanner() {
     const resolvedGridId = String(gridId || '').trim() || null
     const resolvedMarkerPosition = resolvedGridId ? normalizeZonePosition(markerPosition) : null
     const resolvedMarkerLabel = resolvedGridId ? String(markerLabel || '').trim() || null : null
+    const resolvedCropType = resolvedGridId ? String(cropType || '').trim() || null : null
 
     if (resolvedGridId && !resolvedMarkerPosition) {
       setZoneChoiceError('Tap on the zone map to mark the exact location before continuing.')
@@ -314,9 +325,18 @@ export default function Scanner() {
             zoneAssignmentMode: resolvedGridId ? 'selected' : 'skipped',
             zonePosition: resolvedMarkerPosition,
             zonePositionLabel: resolvedMarkerLabel,
+            cropType: resolvedCropType,
           })
         } catch (captureError) {
           console.warn('Failed to persist scanner capture:', captureError)
+        }
+      }
+
+      if (resolvedGridId && gridDocId && resolvedCropType) {
+        try {
+          await updateGridCropType(gridDocId, resolvedCropType)
+        } catch (cropTypeError) {
+          console.warn('Failed to update selected zone crop type:', cropTypeError)
         }
       }
 
@@ -331,6 +351,7 @@ export default function Scanner() {
         zoneAssignmentMode: resolvedGridId ? 'selected' : 'skipped',
         zonePosition: resolvedMarkerPosition,
         zonePositionLabel: resolvedMarkerLabel,
+        cropType: resolvedCropType,
         captureDownloadURL: persistedCapture.downloadURL || null,
         captureStoragePath: persistedCapture.storagePath || null,
         capturePersisted: Boolean(persistedCapture.persisted),
@@ -373,7 +394,13 @@ export default function Scanner() {
     }
 
     setZoneChoiceError('')
-    void finalizeCaptureWithZone(selectedGridId, zoneMarkerPosition, zoneMarkerLabel)
+    void finalizeCaptureWithZone(
+      selectedGridId,
+      zoneMarkerPosition,
+      zoneMarkerLabel,
+      zoneCropType,
+      selectedZone?.docId || null,
+    )
   }
 
   const handleRetakeCapture = () => {
@@ -389,13 +416,15 @@ export default function Scanner() {
     if (!selectedGridId) {
       setZoneMarkerPosition(null)
       setZoneMarkerLabel('')
+      setZoneCropType('')
       return
     }
 
     setZoneMarkerPosition(null)
     setZoneMarkerLabel('')
+    setZoneCropType(String(selectedZone?.cropType || '').trim())
     setZoneChoiceError('')
-  }, [selectedGridId])
+  }, [selectedGridId, selectedZone?.cropType])
 
   useEffect(() => {
     if (!isZoneChoiceOpen || !selectedZone || !selectedZone?.hasGeometry || !canMarkSelectedZone) {
@@ -939,6 +968,22 @@ export default function Scanner() {
                       {zoneMarkerLabel ? ` (${zoneMarkerLabel})` : ''}.
                     </p>
                   ) : null}
+
+                  <label className="pg-field-label" htmlFor="pg-scanner-crop-type-input">
+                    Crop type (optional)
+                  </label>
+                  <input
+                    id="pg-scanner-crop-type-input"
+                    className="pg-input"
+                    type="text"
+                    value={zoneCropType}
+                    placeholder="e.g. Paddy"
+                    maxLength={56}
+                    onChange={(event) => {
+                      setZoneCropType(event.target.value)
+                    }}
+                    disabled={isFinalizingCapture}
+                  />
                 </>
               ) : null}
 

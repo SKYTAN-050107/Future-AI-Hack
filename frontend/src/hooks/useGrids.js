@@ -330,6 +330,19 @@ export function useGrids() {
     })
   }, [authUser?.uid])
 
+  const updateGridCropType = useCallback(async (gridDocId, nextCropType) => {
+    if (!db || !authUser?.uid) {
+      throw new Error('Firebase is not configured')
+    }
+
+    const safeCropType = String(nextCropType ?? '').trim()
+    const target = doc(db, USERS_COLLECTION, authUser.uid, GRID_COLLECTION, gridDocId)
+    await updateDoc(target, {
+      cropType: safeCropType || null,
+      lastUpdated: serverTimestamp(),
+    })
+  }, [authUser?.uid])
+
   return useMemo(
     () => ({
       grids,
@@ -340,6 +353,7 @@ export function useGrids() {
       deleteGrid,
       updateGridHealthState,
       updateGridName,
+      updateGridCropType,
       isFirebaseConfigured,
     }),
     [
@@ -350,6 +364,7 @@ export function useGrids() {
       saveGrid,
       saveOrUpdateGridByFeature,
       updateGridName,
+      updateGridCropType,
       updateGridHealthState,
     ],
   )

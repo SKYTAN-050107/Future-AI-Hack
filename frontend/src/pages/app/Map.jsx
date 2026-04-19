@@ -519,6 +519,14 @@ function toMarkerRecord(data, idHint, sourcePrefix) {
     || data?.pest_name
     || '',
   ).trim()
+  const cropType = String(
+    data?.cropType
+    || data?.crop_type
+    || data?.crop
+    || data?.cropName
+    || data?.crop_name
+    || '',
+  ).trim()
 
   return {
     id: `${sourcePrefix}-${captureId}`,
@@ -531,6 +539,7 @@ function toMarkerRecord(data, idHint, sourcePrefix) {
     capturedAtLabel: formatCapturedAt(capturedAtRaw),
     captureImageUrl,
     diagnosisLabel,
+    cropType,
     zonePositionLabel: String(data?.zonePositionLabel || data?.zone_position_label || '').trim(),
     sourceRefs: mergeSourceRefs({ sourceType, sourceDocId }),
   }
@@ -562,6 +571,7 @@ function mergeMarkerRecords(...markerLists) {
       capturedAtLabel: String(primary.capturedAtLabel || secondary.capturedAtLabel || '').trim(),
       captureImageUrl: String(primary.captureImageUrl || secondary.captureImageUrl || '').trim(),
       diagnosisLabel: String(primary.diagnosisLabel || secondary.diagnosisLabel || '').trim(),
+      cropType: String(primary.cropType || secondary.cropType || '').trim(),
       zonePositionLabel: String(primary.zonePositionLabel || secondary.zonePositionLabel || '').trim(),
       sourceRefs: mergeSourceRefs(primary.sourceRefs, secondary.sourceRefs),
     })
@@ -587,6 +597,7 @@ function createScanMarkerCollection(markers) {
           capturedAtLabel: marker.capturedAtLabel || '',
           captureImageUrl: marker.captureImageUrl || '',
           diagnosisLabel: marker.diagnosisLabel || null,
+          cropType: marker.cropType || '',
           zonePositionLabel: marker.zonePositionLabel || '',
         },
         geometry: {
@@ -609,6 +620,7 @@ export default function MapPage() {
   const [pendingFeature, setPendingFeature] = useState(null)
   const [pendingZoneName, setPendingZoneName] = useState('')
   const [zoneNameDrafts, setZoneNameDrafts] = useState({})
+  const [zoneCropTypeDrafts, setZoneCropTypeDrafts] = useState({})
   const [isSavingPending, setIsSavingPending] = useState(false)
   const [deletingGridId, setDeletingGridId] = useState('')
   const [renamingGridId, setRenamingGridId] = useState('')
@@ -628,6 +640,7 @@ export default function MapPage() {
     saveOrUpdateGridByFeature,
     deleteGrid,
     updateGridName,
+    updateGridCropType,
   } = useGrids()
   const spreadCollection = useMemo(() => createSpreadCollection(grids, scanMarkers), [grids, scanMarkers])
   const gridCollection = useMemo(() => createFeatureCollection(grids), [grids])
@@ -931,6 +944,21 @@ export default function MapPage() {
         next[key] = Object.prototype.hasOwnProperty.call(prev, key)
           ? String(prev[key] || '')
           : String(grid.gridId || '')
+      })
+
+      return next
+    })
+  }, [grids])
+
+  useEffect(() => {
+    setZoneCropTypeDrafts((prev) => {
+      const next = {}
+
+      grids.forEach((grid) => {
+        const key = String(grid.id)
+        next[key] = Object.prototype.hasOwnProperty.call(prev, key)
+          ? String(prev[key] || '')
+          : String(grid.cropType || '')
       })
 
       return next
@@ -1351,6 +1379,7 @@ export default function MapPage() {
 
         const [lng, lat] = feature.geometry.coordinates || []
         const diagnosisLabel = String(feature.properties?.diagnosisLabel || '').trim() || 'Pending diagnosis'
+        const markerCropType = String(feature.properties?.cropType || '').trim()
         const capturedAt = String(feature.properties?.capturedAt || '').trim()
         const capturedAtLabel = String(feature.properties?.capturedAtLabel || '').trim() || formatCapturedAt(capturedAt)
         const captureImageUrl = String(feature.properties?.captureImageUrl || '').trim()
@@ -1362,10 +1391,17 @@ export default function MapPage() {
         titleNode.textContent = diagnosisLabel
         popupContainer.appendChild(titleNode)
 
+        if (markerCropType) {
+          const cropNode = document.createElement('div')
+          cropNode.style.marginTop = '4px'
+          cropNode.textContent = `crop type: ${markerCropType}`
+          popupContainer.appendChild(cropNode)
+        }
+
         if (capturedAtLabel) {
           const timeNode = document.createElement('div')
           timeNode.style.marginTop = '4px'
-          timeNode.textContent = `拍照时间: ${capturedAtLabel}`
+          timeNode.textContent = `time of capture: ${capturedAtLabel}`
           popupContainer.appendChild(timeNode)
         }
 
@@ -1390,7 +1426,7 @@ export default function MapPage() {
             fallback.style.padding = '8px'
             fallback.style.fontSize = '12px'
             fallback.style.opacity = '0.85'
-            fallback.textContent = '图片已失效，请重新拍照获取最新记录。'
+            fallback.textContent = 'The image has expired. Please take a new photo to obtain the latest record.'
             imageWrap.appendChild(fallback)
           }, { once: true })
 
@@ -1594,19 +1630,37 @@ export default function MapPage() {
       return
     }
 
+    const nextCropType = String(zoneCropTypeDrafts[gridDocId] || '').trim()
+
     const currentName = String(grid?.gridId || '').trim()
-    if (nextName === currentName) {
-      setActionMessage('Zone name is unchanged.')
+    const currentCropType = String(grid?.cropType || '').trim()
+    const shouldUpdateName = nextName !== currentName
+    const shouldUpdateCropType = nextCropType !== currentCropType
+
+    if (!shouldUpdateName && !shouldUpdateCropType) {
+      setActionMessage('Zone details are unchanged.')
       return
     }
 
     try {
       setRenamingGridId(gridDocId)
-      await updateGridName(gridDocId, nextName)
-      setActionMessage(`Zone renamed to ${nextName}.`)
+
+      if (shouldUpdateName) {
+        await updateGridName(gridDocId, nextName)
+      }
+
+      if (shouldUpdateCropType) {
+        await updateGridCropType(gridDocId, nextCropType)
+      }
+
+      const renameMessage = shouldUpdateName ? `Zone renamed to ${nextName}.` : 'Zone name unchanged.'
+      const cropTypeMessage = shouldUpdateCropType
+        ? (nextCropType ? ` Crop type set to ${nextCropType}.` : ' Crop type cleared.')
+        : ''
+      setActionMessage(`${renameMessage}${cropTypeMessage}`.trim())
       setLastSaveState('saved')
     } catch (renameError) {
-      setActionMessage(renameError?.message || 'Failed to rename zone.')
+      setActionMessage(renameError?.message || 'Failed to save zone details.')
       setLastSaveState('failed')
     } finally {
       setRenamingGridId('')
@@ -1724,6 +1778,7 @@ export default function MapPage() {
               <h3>Marked scan points</h3>
               {scanMarkers.slice(0, 12).map((marker) => {
                 const markerName = String(marker?.diagnosisLabel || marker?.gridId || marker?.captureId || 'Unknown scan').trim()
+                const markerCropType = String(marker?.cropType || '').trim() || 'Not set'
                 const markerDeleteKey = resolveMarkerDeleteKey(marker)
                 const markerTime = String(marker?.capturedAtLabel || '').trim() || 'Unknown time'
                 return (
@@ -1733,22 +1788,36 @@ export default function MapPage() {
                       display: 'flex',
                       justifyContent: 'space-between',
                       alignItems: 'flex-start',
+                      flexWrap: 'wrap',
                       gap: 8,
                       marginBottom: 8,
                     }}
                   >
                     <div style={{ flex: 1, minWidth: 0 }}>
+                      <small style={{ display: 'block', marginBottom: 4, fontWeight: 600 }}>
+                        Crop Type: {markerCropType}
+                      </small>
                       <small style={{ display: 'block', marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {markerName}
                       </small>
                       <small style={{ display: 'block', opacity: 0.78 }}>
-                        拍照时间: {markerTime}
+                        Time of capture: {markerTime}
                       </small>
                     </div>
 
                     <button
                       type="button"
-                      className="pg-btn"
+                      className="pg-btn pg-btn-ghost"
+                      style={{
+                        padding: '8px 12px',
+                        minHeight: 'auto',
+                        fontSize: '0.8rem',
+                        flexShrink: 0,
+                        whiteSpace: 'nowrap',
+                        marginLeft: 'auto',
+                        borderColor: 'rgba(var(--danger-rgb), 0.45)',
+                        color: 'var(--danger)',
+                      }}
                       onClick={() => handleDeleteScanMarker(marker)}
                       disabled={!markerDeleteKey || deletingMarkerKey === markerDeleteKey}
                     >
@@ -1778,6 +1847,10 @@ export default function MapPage() {
                   <small style={{ display: 'block', fontWeight: 600, color: 'var(--pg-accent)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {grid.gridId || grid.id} ({Number(grid.areaHectares || 0).toFixed(2)} ha)
                   </small>
+
+                  <small style={{ display: 'block', opacity: 0.8 }}>
+                    Crop type: {String(grid.cropType || '').trim() || 'Not set'}
+                  </small>
                   
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                     <input
@@ -1790,6 +1863,23 @@ export default function MapPage() {
                         const value = event.target.value
                         const key = String(grid.id)
                         setZoneNameDrafts((prev) => ({
+                          ...prev,
+                          [key]: value,
+                        }))
+                      }}
+                    />
+
+                    <input
+                      className="pg-input"
+                      type="text"
+                      style={{ flex: 1, minWidth: 0, margin: 0 }}
+                      value={zoneCropTypeDrafts[String(grid.id)] || ''}
+                      maxLength={56}
+                      placeholder="Crop type (e.g. Paddy)"
+                      onChange={(event) => {
+                        const value = event.target.value
+                        const key = String(grid.id)
+                        setZoneCropTypeDrafts((prev) => ({
                           ...prev,
                           [key]: value,
                         }))
