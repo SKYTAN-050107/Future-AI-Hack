@@ -1253,6 +1253,33 @@ export default function MapPage() {
         ],
       ]
 
+      const spreadOutlineColorExpression = [
+        'case',
+        ['boolean', ['coalesce', ['get', 'spreadFromMarker'], false], false],
+        [
+          'interpolate',
+          ['linear'],
+          ['to-number', ['coalesce', ['get', 'spreadSeverityScore'], 0]],
+          0,
+          '#166534',
+          50,
+          '#B45309',
+          100,
+          '#991B1B',
+        ],
+        [
+          'interpolate',
+          ['linear'],
+          ['to-number', ['coalesce', ['get', 'spreadSeverityScore'], 0]],
+          0,
+          '#15803D',
+          50,
+          '#D97706',
+          100,
+          '#B91C1C',
+        ],
+      ]
+
       map.addLayer({
         id: 'pg-grid-spread-fill',
         type: 'fill',
@@ -1268,8 +1295,19 @@ export default function MapPage() {
         type: 'line',
         source: 'pg-grid-spread',
         paint: {
-          'line-color': spreadColorExpression,
-          'line-width': 2,
+          'line-color': spreadOutlineColorExpression,
+          'line-width': [
+            'case',
+            ['boolean', ['coalesce', ['get', 'spreadFromMarker'], false], false],
+            3,
+            2.35,
+          ],
+          'line-opacity': [
+            'case',
+            ['boolean', ['coalesce', ['get', 'spreadFromMarker'], false], false],
+            0.95,
+            0.86,
+          ],
           'line-dasharray': [2, 2],
         },
       })
