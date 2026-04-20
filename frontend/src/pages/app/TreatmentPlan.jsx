@@ -1,13 +1,15 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import SectionHeader from '../../components/ui/SectionHeader'
 import BackButton from '../../components/navigation/BackButton'
 import { getCropById, getCrops } from '../../api/crops'
-import { getTreatmentPlan } from '../../api/treatment'
+import { getCachedTreatmentPlan, getTreatmentPlan, setCachedTreatmentPlan } from '../../api/treatment'
 import { getTreatmentFormSnapshot, saveTreatmentFormSnapshot, saveTreatmentRoiSnapshot } from '../../utils/treatmentRoiCache'
 import { useSessionContext } from '../../hooks/useSessionContext'
 import { useScanHistory } from '../../hooks/useScanHistory'
 import { useGrids } from '../../hooks/useGrids'
+
+const CACHE_REFRESH_THROTTLE_MS = 15000
 
 function toSafeNumber(value, fallback = 0) {
   const parsed = Number(value)
@@ -41,6 +43,18 @@ function deriveSurvivalProbability(report) {
   return Math.max(0.05, Math.min(0.95, 1 - severity / 100))
 }
 
+function getCachedPlanForCrop(userId, cropId) {
+  const safeCropId = String(cropId || '').trim()
+  const cached = getCachedTreatmentPlan(userId)
+  const cachedCropId = String(cached?.input?.cropId || '').trim()
+
+  if (!safeCropId || !cached || cachedCropId !== safeCropId) {
+    return null
+  }
+
+  return cached.plan && typeof cached.plan === 'object' ? cached.plan : null
+}
+
 export default function TreatmentPlan() {
   const navigate = useNavigate()
   const { user, profile } = useSessionContext()
@@ -54,6 +68,7 @@ export default function TreatmentPlan() {
   const [isLoading, setIsLoading] = useState(false)
   const [isLoadingCrops, setIsLoadingCrops] = useState(true)
   const [error, setError] = useState('')
+  const selectedCropIdRef = useRef('')
 
   const userId = String(user?.uid || '').trim()
 
@@ -74,6 +89,84 @@ export default function TreatmentPlan() {
   }, [cropDetail?.areaHectares, totalAreaHectares])
 
   useEffect(() => {
+    selectedCropIdRef.current = selectedCropId
+  }, [selectedCropId])
+
+  useEffect(() => {
+    if (!userId) {
+      setPlan(null)
+      return undefined
+    }
+
+    const cached = getCachedTreatmentPlan(userId)
+    if (!cached) {
+      return undefined
+    }
+
+    const cachedCropId = String(cached?.input?.cropId || '').trim()
+    if (cachedCropId) {
+      setSelectedCropId((current) => current || cachedCropId)
+    }
+
+    if (cached.plan && typeof cached.plan === 'object') {
+      setPlan(cached.plan)
+    }
+
+    return undefined
+  }, [userId])
+
+  useEffect(() => {
+    let active = true
+
+    if (!userId) {
+      return undefined
+    }
+
+    const cached = getCachedTreatmentPlan(userId)
+    const cachedInput = cached?.input
+    const cachedPlan = cached?.plan
+    const cachedCropId = String(cachedInput?.cropId || '').trim()
+    const cachedRefreshedAt = Number(cached?.refreshedAt)
+
+    if (!cachedInput || typeof cachedInput !== 'object' || !cachedPlan || typeof cachedPlan !== 'object') {
+      return undefined
+    }
+
+    if (Number.isFinite(cachedRefreshedAt) && cachedRefreshedAt > 0 && Date.now() - cachedRefreshedAt < CACHE_REFRESH_THROTTLE_MS) {
+      return undefined
+    }
+
+    // Mark refresh start to avoid duplicate calls during React StrictMode remount checks.
+    setCachedTreatmentPlan({ userId, input: cachedInput, plan: cachedPlan, refreshedAt: Date.now() })
+    setIsLoading(true)
+    setError('')
+
+    getTreatmentPlan(cachedInput)
+      .then((response) => {
+        setCachedTreatmentPlan({ userId, input: cachedInput, plan: response, refreshedAt: Date.now() })
+        saveTreatmentRoiSnapshot({ userId, plan: response })
+        if (cachedCropId) {
+          saveTreatmentFormSnapshot({ userId, cropId: cachedCropId, values: { ...cachedInput, plan: response }, plan: response })
+        }
+        if (!active) return
+        if (!selectedCropIdRef.current || selectedCropIdRef.current === cachedCropId) {
+          setPlan(response)
+        }
+      })
+      .catch((err) => {
+        if (!active) return
+        setError(err?.message || 'Unable to refresh cached treatment plan')
+      })
+      .finally(() => {
+        if (active) setIsLoading(false)
+      })
+
+    return () => {
+      active = false
+    }
+  }, [userId])
+
+  useEffect(() => {
     let active = true
     if (!userId) { setIsLoadingCrops(false); return undefined }
     setIsLoadingCrops(true)
@@ -82,6 +175,11 @@ export default function TreatmentPlan() {
         if (!active) return
         const nextCrops = Array.isArray(response?.items) ? response.items.map(normalizeCrop) : []
         setCrops(nextCrops)
+        const cachedInMemoryCropId = String(getCachedTreatmentPlan(userId)?.input?.cropId || '').trim()
+        if (cachedInMemoryCropId && nextCrops.some((c) => c.id === cachedInMemoryCropId)) {
+          setSelectedCropId(cachedInMemoryCropId)
+          return
+        }
         const cached = String(getTreatmentFormSnapshot(userId)?.selectedCropId || '').trim()
         if (cached && nextCrops.some((c) => c.id === cached)) { setSelectedCropId(cached); return }
         const preferred = String(profile?.activeCropId || '').trim()
@@ -101,12 +199,25 @@ export default function TreatmentPlan() {
         if (!active) return
         const normalized = normalizeCrop(response)
         setCropDetail(normalized)
-        const cachedForm = getTreatmentFormSnapshot(userId, selectedCropId)?.values
-        if (cachedForm?.plan) { setPlan(cachedForm.plan) } else { setPlan(null) }
+        setPlan(getCachedPlanForCrop(userId, selectedCropId))
       })
-      .catch(() => { if (active) { setCropDetail(null); setPlan(null) } })
+      .catch(() => {
+        if (!active) return
+        setCropDetail(null)
+        setPlan(getCachedPlanForCrop(userId, selectedCropId))
+      })
     return () => { active = false }
   }, [selectedCropId, userId])
+
+  const handleCropChange = (event) => {
+    const nextCropId = String(event.target.value || '').trim()
+    setSelectedCropId(nextCropId)
+
+    const cachedCropId = String(getCachedTreatmentPlan(userId)?.input?.cropId || '').trim()
+    if (!cachedCropId || cachedCropId !== nextCropId) {
+      setPlan(null)
+    }
+  }
 
   const handleCalculate = () => {
     if (!userId || !selectedCropId || !cropDetail) return
@@ -136,6 +247,7 @@ export default function TreatmentPlan() {
     getTreatmentPlan(input)
       .then((response) => {
         setPlan(response)
+        setCachedTreatmentPlan({ userId, input, plan: response, refreshedAt: Date.now() })
         saveTreatmentRoiSnapshot({ userId, plan: response })
         saveTreatmentFormSnapshot({ userId, cropId: selectedCropId, values: { ...input, plan: response }, plan: response })
       })
@@ -143,7 +255,7 @@ export default function TreatmentPlan() {
       .finally(() => setIsLoading(false))
   }
 
-  if (isLoadingCrops) {
+  if (isLoadingCrops && !plan) {
     return (
       <section className="pg-page pg-page-treatment-plan pg-glass-deep-dive">
         <SectionHeader title="Treatment Plan" align="center" leadingAction={<BackButton fallback="/app" label="Back to home" />} />
@@ -162,7 +274,7 @@ export default function TreatmentPlan() {
 
       {error ? <article className="pg-card"><p>{error}</p></article> : null}
 
-      {crops.length === 0 ? (
+      {crops.length === 0 && !isLoadingCrops ? (
         <article className="pg-card">
           <h2>Add your first crop</h2>
           <p>Add a crop profile to unlock treatment plan guidance.</p>
@@ -172,27 +284,29 @@ export default function TreatmentPlan() {
         </article>
       ) : (
         <>
-          <article className="pg-card">
-            <label className="pg-field-label" htmlFor="pg-tp-crop">Crop</label>
-            <select
-              id="pg-tp-crop"
-              className="pg-input"
-              value={selectedCropId}
-              onChange={(e) => setSelectedCropId(e.target.value)}
-            >
-              {crops.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 10 }}>
-              <button
-                type="button"
-                className="pg-btn pg-btn-primary"
-                onClick={handleCalculate}
-                disabled={!selectedCropId || !cropDetail || isLoading}
+          {crops.length > 0 ? (
+            <article className="pg-card">
+              <label className="pg-field-label" htmlFor="pg-tp-crop">Crop</label>
+              <select
+                id="pg-tp-crop"
+                className="pg-input"
+                value={selectedCropId}
+                onChange={handleCropChange}
               >
-                {isLoading ? 'Loading...' : 'Load Plan'}
-              </button>
-            </div>
-          </article>
+                {crops.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 10 }}>
+                <button
+                  type="button"
+                  className="pg-btn pg-btn-primary"
+                  onClick={handleCalculate}
+                  disabled={!selectedCropId || !cropDetail || isLoading}
+                >
+                  {isLoading ? 'Loading...' : 'Load Plan'}
+                </button>
+              </div>
+            </article>
+          ) : null}
 
           {plan ? (
             <>
