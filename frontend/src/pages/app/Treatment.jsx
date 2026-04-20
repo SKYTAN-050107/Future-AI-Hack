@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import SectionHeader from '../../components/ui/SectionHeader'
 import MetricTile from '../../components/ui/MetricTile'
 import BackButton from '../../components/navigation/BackButton'
-import { getCropById, getCrops } from '../../api/crops'
+import { getCropById, getCrops, updateCrop } from '../../api/crops'
 import { runSwarmOrchestrator } from '../../api/swarm'
 import { getTreatmentPlan } from '../../api/treatment'
 import { getTreatmentFormSnapshot, saveTreatmentFormSnapshot, saveTreatmentRoiSnapshot } from '../../utils/treatmentRoiCache'
@@ -103,6 +103,7 @@ export default function Treatment() {
   const [calculationInput, setCalculationInput] = useState(null)
   const [plan, setPlan] = useState(null)
   const [error, setError] = useState('')
+  const [isSavingCrop, setIsSavingCrop] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [isLoadingCrops, setIsLoadingCrops] = useState(true)
 
@@ -463,21 +464,24 @@ export default function Treatment() {
     }
   }, [calculationInput])
 
-  const handleSaveAndCalculate = () => {
+  function validateCalculationInput() {
     if (!userId || !selectedCropId || !cropDetail) {
       setPlan(null)
       setError('Select a crop before calculating ROI.')
-      return
+      return false
     }
 
     if (sellingChannel === 'contract' && Number(manualPriceOverride) <= 0) {
       setPlan(null)
       setError('Contract selling requires manual price override (RM/kg).')
-      return
+      return false
     }
 
-    setError('')
-    setCalculationInput({
+    return true
+  }
+
+  function buildCalculationInput() {
+    return {
       userId,
       cropId: selectedCropId,
       cropType: cropDetail?.name,
@@ -497,7 +501,58 @@ export default function Treatment() {
       treatmentPlan: String(latestReport?.treatmentPlan || latestReport?.treatment_plan || 'recommended treatment').trim(),
       lat: firstGridWithCentroid?.centroid?.lat,
       lng: firstGridWithCentroid?.centroid?.lng,
-    })
+    }
+  }
+
+  const handleRecalculateOnly = () => {
+    if (!validateCalculationInput()) {
+      return
+    }
+
+    setError('')
+    setCalculationInput(buildCalculationInput())
+  }
+
+  const handleSaveAndCalculate = async () => {
+    if (!validateCalculationInput()) {
+      return
+    }
+
+    const safeExpectedYieldKg = Math.max(0, toSafeNumber(yieldKg, 0))
+    const safeLaborCostRm = Math.max(0, toSafeNumber(laborCostRm, 0))
+    const safeOtherCostsRm = Math.max(0, toSafeNumber(otherCostsRm, 0))
+
+    setError('')
+    setIsSavingCrop(true)
+
+    try {
+      await updateCrop(selectedCropId, {
+        userId,
+        expectedYieldKg: safeExpectedYieldKg,
+        laborCostRm: safeLaborCostRm,
+        otherCostsRm: safeOtherCostsRm,
+      })
+
+      setCropDetail((current) => {
+        if (!current) {
+          return current
+        }
+
+        return {
+          ...current,
+          expectedYieldKg: safeExpectedYieldKg,
+          laborCostRm: safeLaborCostRm,
+          otherCostsRm: safeOtherCostsRm,
+        }
+      })
+    } catch (saveError) {
+      setError(saveError?.message || 'Unable to save crop profile')
+      return
+    } finally {
+      setIsSavingCrop(false)
+    }
+
+    setCalculationInput(buildCalculationInput())
   }
 
   if (isLoadingCrops) {
@@ -555,7 +610,7 @@ export default function Treatment() {
             <MetricTile
               label="ROI"
               value={plan ? formatRoi(plan) : '...'}
-              helper={plan?.roi_note ? `ROI ${plan.roi_note}` : 'updated on save'}
+              helper={plan?.roi_note ? `ROI ${plan.roi_note}` : 'updated on recalculation'}
               tone="success"
             />
           </div>
@@ -619,20 +674,28 @@ export default function Treatment() {
           <article className="pg-card">
             <h2>Live ROI Panel</h2>
             <small style={{ display: 'block', marginBottom: 10, opacity: 0.82 }}>
-              Adjust inputs in the Inputs &amp; Assumptions section below, then save to recalculate your ROI.
+              Adjust inputs below, then choose whether to recalculate only or save and recalculate.
             </small>
-            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                className="pg-btn"
+                onClick={handleRecalculateOnly}
+                disabled={!selectedCropId || !cropDetail || isLoading || isSavingCrop}
+              >
+                {isLoading ? 'Calculating...' : 'Recalculate Only'}
+              </button>
               <button
                 type="button"
                 className="pg-btn pg-btn-primary"
                 onClick={handleSaveAndCalculate}
-                disabled={!selectedCropId || !cropDetail || isLoading}
+                disabled={!selectedCropId || !cropDetail || isLoading || isSavingCrop}
               >
-                {isLoading ? 'Saving...' : 'Save & Recalculate'}
+                {isSavingCrop ? 'Saving...' : isLoading ? 'Calculating...' : 'Save & Recalculate'}
               </button>
             </div>
             <small style={{ display: 'block', marginTop: 6, opacity: 0.82 }}>
-              ROI recalculates only after you click Save &amp; Recalculate.
+              Recalculate Only updates ROI without saving crop values.
             </small>
           </article>
 
