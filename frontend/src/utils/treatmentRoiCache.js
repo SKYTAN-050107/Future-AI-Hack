@@ -128,6 +128,9 @@ export function saveTreatmentFormSnapshot({ userId, cropId, values, plan }) {
   const existingFormsByCrop = sameUser && typeof existing?.formsByCrop === 'object'
     ? existing.formsByCrop
     : {}
+  const existingValues = typeof existingFormsByCrop[safeCropId] === 'object' && existingFormsByCrop[safeCropId]
+    ? existingFormsByCrop[safeCropId]
+    : {}
 
   const nextFormValues = {
     yieldKg: toFiniteNumber(values.yieldKg) ?? 0,
@@ -140,6 +143,24 @@ export function saveTreatmentFormSnapshot({ userId, cropId, values, plan }) {
     hasManualYieldInput: Boolean(values.hasManualYieldInput),
     hasManualActualSoldInput: Boolean(values.hasManualActualSoldInput),
     plan: plan && typeof plan === 'object' ? plan : null,
+  }
+
+  if (typeof values.actualSoldKgInput === 'string') {
+    nextFormValues.actualSoldKgInput = values.actualSoldKgInput
+  } else if (typeof existingValues.actualSoldKgInput === 'string') {
+    nextFormValues.actualSoldKgInput = existingValues.actualSoldKgInput
+  }
+
+  if (typeof values.laborCostRmInput === 'string') {
+    nextFormValues.laborCostRmInput = values.laborCostRmInput
+  } else if (typeof existingValues.laborCostRmInput === 'string') {
+    nextFormValues.laborCostRmInput = existingValues.laborCostRmInput
+  }
+
+  if (typeof values.otherCostsRmInput === 'string') {
+    nextFormValues.otherCostsRmInput = values.otherCostsRmInput
+  } else if (typeof existingValues.otherCostsRmInput === 'string') {
+    nextFormValues.otherCostsRmInput = existingValues.otherCostsRmInput
   }
 
   writeFormSnapshot({

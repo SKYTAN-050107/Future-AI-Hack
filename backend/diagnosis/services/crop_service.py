@@ -104,6 +104,14 @@ class CropService:
             other_costs_rm,
         )
 
+    async def delete_crop(self, *, user_id: str, crop_id: str) -> dict:
+        if not user_id:
+            raise ValueError("user_id is required")
+        if not crop_id:
+            raise ValueError("crop_id is required")
+
+        return await asyncio.to_thread(self._delete_crop_sync, user_id, crop_id)
+
     async def record_price_snapshot(
         self,
         *,
@@ -333,6 +341,22 @@ class CropService:
             },
             merge=True,
         )
+
+    def _delete_crop_sync(self, user_id: str, crop_id: str) -> dict:
+        ref = self._user_crops_collection(user_id).document(crop_id)
+
+        snapshot = ref.get()
+        if not snapshot.exists:
+            raise ValueError(f"Crop not found: {crop_id}")
+
+        ref.delete()
+        logger.info("Firestore crop deleted: user_id=%s crop_id=%s", user_id, crop_id)
+
+        return {
+            "success": True,
+            "id": crop_id,
+            "deleted": True,
+        }
 
     def _to_crop_item(self, crop_id: str, data: dict) -> dict:
         created_at = data.get("created_at") or data.get("createdAt")

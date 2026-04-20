@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import SectionHeader from '../../components/ui/SectionHeader'
 import BackButton from '../../components/navigation/BackButton'
-import { createCrop, getCrops, updateCrop } from '../../api/crops'
+import { createCrop, deleteCrop, getCrops, updateCrop } from '../../api/crops'
 import { getInventory } from '../../api/inventory'
 import { useSessionContext } from '../../hooks/useSessionContext'
 
@@ -74,6 +74,9 @@ export default function Crops() {
   const [successMsg, setSuccessMsg] = useState('')
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
+  const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false)
+  const [deleteCandidate, setDeleteCandidate] = useState(null)
   const [activeTab, setActiveTab] = useState('profile')
 
   const userId = String(user?.uid || '').trim()
@@ -190,6 +193,30 @@ export default function Crops() {
     setActiveTab('profile')
   }
 
+  function handleOpenDeleteConfirm() {
+    if (!selectedCropId) {
+      return
+    }
+
+    const cropToDelete = crops.find((item) => item.id === selectedCropId) || null
+    setDeleteCandidate({
+      cropId: selectedCropId,
+      cropName: cropToDelete?.name || 'this crop',
+    })
+    setIsDeleteConfirmOpen(true)
+    setError('')
+    setSuccessMsg('')
+  }
+
+  function closeDeleteConfirmModal() {
+    if (isDeleting) {
+      return
+    }
+
+    setIsDeleteConfirmOpen(false)
+    setDeleteCandidate(null)
+  }
+
   async function handleSaveCrop() {
     if (!userId) {
       setError('Sign in to manage crops.')
@@ -255,6 +282,46 @@ export default function Crops() {
       setError(saveError?.message || 'Unable to save crop profile')
     } finally {
       setIsSaving(false)
+    }
+  }
+
+  async function handleDeleteCrop() {
+    if (!userId) {
+      setError('Sign in to manage crops.')
+      return
+    }
+
+    const cropIdToDelete = String(deleteCandidate?.cropId || selectedCropId || '').trim()
+    if (!cropIdToDelete) {
+      return
+    }
+
+    setIsDeleting(true)
+    setError('')
+    setSuccessMsg('')
+
+    try {
+      await deleteCrop(cropIdToDelete, { userId })
+
+      const cropResponse = await getCrops({ userId })
+      const nextCrops = Array.isArray(cropResponse?.items)
+        ? cropResponse.items.map(normalizeCrop)
+        : []
+
+      setCrops(nextCrops)
+
+      const nextSelectedCropId = nextCrops[0]?.id || ''
+      setSelectedCropId(nextSelectedCropId)
+      const nextSelectedCrop = nextCrops.find((item) => item.id === nextSelectedCropId) || null
+      hydrateDraft(nextSelectedCrop)
+      setActiveTab('profile')
+      setIsDeleteConfirmOpen(false)
+      setDeleteCandidate(null)
+      setSuccessMsg('Crop deleted.')
+    } catch (deleteError) {
+      setError(deleteError?.message || 'Unable to delete crop')
+    } finally {
+      setIsDeleting(false)
     }
   }
 
@@ -440,6 +507,7 @@ export default function Crops() {
                       min="0"
                       value={expectedYieldKg}
                       onChange={(e) => setExpectedYieldKg(e.target.value)}
+                      onWheel={(e) => e.currentTarget.blur()}
                       placeholder="0"
                     />
                   </div>
@@ -454,6 +522,7 @@ export default function Crops() {
                       step="0.01"
                       value={areaHectares}
                       onChange={(e) => setAreaHectares(e.target.value)}
+                      onWheel={(e) => e.currentTarget.blur()}
                       placeholder="0.00"
                     />
                   </div>
@@ -510,6 +579,7 @@ export default function Crops() {
                         step="0.01"
                         value={laborCostRm}
                         onChange={(e) => setLaborCostRm(e.target.value)}
+                        onWheel={(e) => e.currentTarget.blur()}
                         placeholder="0.00"
                       />
                     </div>
@@ -524,6 +594,7 @@ export default function Crops() {
                         step="0.01"
                         value={otherCostsRm}
                         onChange={(e) => setOtherCostsRm(e.target.value)}
+                        onWheel={(e) => e.currentTarget.blur()}
                         placeholder="0.00"
                       />
                     </div>
@@ -586,6 +657,7 @@ export default function Crops() {
                                 const nextValue = e.target.value
                                 setUsageDraft((curr) => ({ ...curr, [item.id]: nextValue }))
                               }}
+                              onWheel={(e) => e.currentTarget.blur()}
                               placeholder="0"
                               style={{ width: 90, margin: 0, textAlign: 'right' }}
                               aria-label={`Quantity of ${item.name} used`}
@@ -636,12 +708,57 @@ export default function Crops() {
             type="button"
             className="pg-btn pg-btn-primary"
             onClick={handleSaveCrop}
-            disabled={isSaving}
+            disabled={isSaving || isDeleting}
             style={{ width: '100%', marginTop: 16 }}
           >
             {isSaving ? 'Saving…' : isNewCrop ? '+ Create Crop' : 'Save Changes'}
           </button>
+
+          {selectedCropId && (
+            <button
+              type="button"
+              className="pg-btn pg-btn-danger-soft"
+              onClick={handleOpenDeleteConfirm}
+              disabled={isSaving || isDeleting}
+              style={{ width: '100%', marginTop: 10 }}
+            >
+              {isDeleting ? 'Deleting...' : 'Delete Crop'}
+            </button>
+          )}
         </article>
+      )}
+
+      {isDeleteConfirmOpen && (
+        <div className="pg-modal-backdrop" onClick={closeDeleteConfirmModal}>
+          <div className="pg-modal-drawer pg-modal-drawer-themed" onClick={(event) => event.stopPropagation()}>
+            <div className="pg-modal-close-bar" onClick={closeDeleteConfirmModal}></div>
+            <h2 style={{ marginTop: 0, marginBottom: 10 }}>Delete Crop</h2>
+            <p style={{ marginTop: 0, marginBottom: 16, color: 'var(--text-secondary)' }}>
+              Delete <strong>{deleteCandidate?.cropName || 'this crop'}</strong>? This cannot be undone.
+            </p>
+
+            <div className="pg-cta-row" style={{ marginTop: 4, flexDirection: 'column', gap: 12 }}>
+              <button
+                type="button"
+                className="pg-btn pg-btn-danger-soft"
+                style={{ width: '100%' }}
+                onClick={handleDeleteCrop}
+                disabled={isDeleting || isSaving}
+              >
+                {isDeleting ? 'Deleting...' : 'Yes, Delete Crop'}
+              </button>
+              <button
+                type="button"
+                className="pg-btn pg-btn-ghost"
+                style={{ width: '100%' }}
+                onClick={closeDeleteConfirmModal}
+                disabled={isDeleting}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </section>
   )

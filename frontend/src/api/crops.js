@@ -50,3 +50,11 @@ export async function updateCrop(cropId, payload) {
   _cropsCacheResponse = null
   return response
 }
+
+export async function deleteCrop(cropId, payload) {
+  const response = await gateway.deleteCrop(cropId, payload)
+  // Invalidate cache when crops change
+  _cropsCacheUserId = null
+  _cropsCacheResponse = null
+  return response
+}

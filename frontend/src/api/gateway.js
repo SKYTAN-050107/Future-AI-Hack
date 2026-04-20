@@ -319,6 +319,19 @@ export const gateway = {
     })
   },
 
+  deleteCrop: async (cropId, { userId }) => {
+    const safeCropId = String(cropId || '').trim()
+    const safeUserId = String(userId || '').trim()
+
+    if (!safeCropId || !safeUserId) {
+      throw new Error('cropId and userId are required to delete a crop')
+    }
+
+    return requestJson(`/api/crops/${encodeURIComponent(safeCropId)}${buildQueryString({ user_id: safeUserId })}`, {
+      method: 'DELETE',
+    })
+  },
+
   getInventory: async ({ userId }) => {
     const safeUserId = String(userId || '').trim()
     if (!safeUserId) {

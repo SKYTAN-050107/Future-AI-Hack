@@ -24,6 +24,7 @@ from models.scan_models import (
     BoundingBox,
     CropCreateRequest,
     CropCreateResponse,
+    CropDeleteResponse,
     CropItemResponse,
     CropListResponse,
     CropUpdateRequest,
@@ -1119,6 +1120,28 @@ async def crop_update(crop_id: str, payload: CropUpdateRequest) -> CropUpdateRes
 
     logger.info("Crop update response: user_id=%s crop_id=%s", payload.user_id, crop_id)
     return CropUpdateResponse.model_validate({"success": True, "item": updated_item})
+
+
+@router.delete("/api/crops/{crop_id}", response_model=CropDeleteResponse)
+async def crop_delete(crop_id: str, user_id: str = Query(..., min_length=1)) -> CropDeleteResponse | JSONResponse:
+    """Delete a user crop profile."""
+    service = _get_crop_service()
+    if service is None:
+        return _error_response(503, _crop_service_init_error or "crop service unavailable")
+
+    try:
+        result = await service.delete_crop(
+            user_id=user_id,
+            crop_id=crop_id,
+        )
+    except ValueError as exc:
+        return _error_response(400, str(exc))
+    except Exception as exc:
+        logger.exception("Crop delete failed: %s", exc)
+        return _error_response(502, f"Crop service failed: {exc}")
+
+    logger.info("Crop delete response: user_id=%s crop_id=%s", user_id, crop_id)
+    return CropDeleteResponse.model_validate(result)
 
 
 @router.get("/api/zones", response_model=ZoneHealthSummaryResponse)

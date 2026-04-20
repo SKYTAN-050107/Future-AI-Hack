@@ -89,9 +89,9 @@ export default function Treatment() {
   const [selectedCropId, setSelectedCropId] = useState('')
   const [cropDetail, setCropDetail] = useState(null)
   const [yieldKg, setYieldKg] = useState(0)
-  const [actualSoldKg, setActualSoldKg] = useState(0)
-  const [laborCostRm, setLaborCostRm] = useState(0)
-  const [otherCostsRm, setOtherCostsRm] = useState(0)
+  const [actualSoldKg, setActualSoldKg] = useState('')
+  const [laborCostRm, setLaborCostRm] = useState('')
+  const [otherCostsRm, setOtherCostsRm] = useState('')
   const [hasManualYieldInput, setHasManualYieldInput] = useState(false)
   const [hasManualActualSoldInput, setHasManualActualSoldInput] = useState(false)
   const [sellingChannel, setSellingChannel] = useState('middleman')
@@ -233,9 +233,21 @@ export default function Treatment() {
         const cachedForm = getTreatmentFormSnapshot(userId, selectedCropId)?.values
         if (cachedForm) {
           setYieldKg(toSafeNumber(cachedForm.yieldKg, normalized.expectedYieldKg))
-          setActualSoldKg(toSafeNumber(cachedForm.actualSoldKg, normalized.expectedYieldKg))
-          setLaborCostRm(toSafeNumber(cachedForm.laborCostRm, normalized.laborCostRm))
-          setOtherCostsRm(toSafeNumber(cachedForm.otherCostsRm, normalized.otherCostsRm))
+          setActualSoldKg(
+            typeof cachedForm.actualSoldKgInput === 'string'
+              ? cachedForm.actualSoldKgInput
+              : String(toSafeNumber(cachedForm.actualSoldKg, normalized.expectedYieldKg)),
+          )
+          setLaborCostRm(
+            typeof cachedForm.laborCostRmInput === 'string'
+              ? cachedForm.laborCostRmInput
+              : String(toSafeNumber(cachedForm.laborCostRm, normalized.laborCostRm)),
+          )
+          setOtherCostsRm(
+            typeof cachedForm.otherCostsRmInput === 'string'
+              ? cachedForm.otherCostsRmInput
+              : String(toSafeNumber(cachedForm.otherCostsRm, normalized.otherCostsRm)),
+          )
           setSellingChannel(String(cachedForm.sellingChannel || 'middleman').trim().toLowerCase() || 'middleman')
           setMarketCondition(String(cachedForm.marketCondition || 'normal').trim().toLowerCase() || 'normal')
           setManualPriceOverride(String(cachedForm.manualPriceOverride ?? ''))
@@ -247,11 +259,11 @@ export default function Treatment() {
 
         setPlan(null)
         setYieldKg(normalized.expectedYieldKg)
-        setActualSoldKg(normalized.expectedYieldKg)
+        setActualSoldKg(String(normalized.expectedYieldKg))
         setHasManualYieldInput(false)
         setHasManualActualSoldInput(false)
-        setLaborCostRm(normalized.laborCostRm)
-        setOtherCostsRm(normalized.otherCostsRm)
+        setLaborCostRm(String(normalized.laborCostRm))
+        setOtherCostsRm(String(normalized.otherCostsRm))
         setSellingChannel('middleman')
         setMarketCondition('normal')
         setManualPriceOverride('')
@@ -384,7 +396,7 @@ export default function Treatment() {
         }
 
         if (predicted > 0 && !hasManualActualSoldInput) {
-          setActualSoldKg(predicted)
+          setActualSoldKg(String(predicted))
         }
       })
       .catch((loadError) => {
@@ -416,31 +428,42 @@ export default function Treatment() {
       return undefined
     }
 
+    const requestInput = {
+      ...calculationInput,
+    }
+    const rawInputs = requestInput.rawInputs && typeof requestInput.rawInputs === 'object'
+      ? requestInput.rawInputs
+      : {}
+    delete requestInput.rawInputs
+
     let active = true
     setIsLoading(true)
     setError('')
 
-    getTreatmentPlan(calculationInput)
+    getTreatmentPlan(requestInput)
       .then((response) => {
         if (!active) {
           return
         }
 
         setPlan(response)
-        saveTreatmentRoiSnapshot({ userId: calculationInput.userId, plan: response })
+        saveTreatmentRoiSnapshot({ userId: requestInput.userId, plan: response })
         saveTreatmentFormSnapshot({
-          userId: calculationInput.userId,
-          cropId: calculationInput.cropId,
+          userId: requestInput.userId,
+          cropId: requestInput.cropId,
           values: {
-            yieldKg: calculationInput.yieldKg,
-            actualSoldKg: calculationInput.actualSoldKg,
-            laborCostRm: calculationInput.laborCostRm,
-            otherCostsRm: calculationInput.otherCostsRm,
-            sellingChannel: calculationInput.sellingChannel,
-            marketCondition: calculationInput.marketCondition,
-            manualPriceOverride: calculationInput.manualPriceOverrideInput,
-            hasManualYieldInput: calculationInput.hasManualYieldInput,
-            hasManualActualSoldInput: calculationInput.hasManualActualSoldInput,
+            yieldKg: requestInput.yieldKg,
+            actualSoldKg: requestInput.actualSoldKg,
+            laborCostRm: requestInput.laborCostRm,
+            otherCostsRm: requestInput.otherCostsRm,
+            actualSoldKgInput: String(rawInputs.actualSoldKgInput ?? ''),
+            laborCostRmInput: String(rawInputs.laborCostRmInput ?? ''),
+            otherCostsRmInput: String(rawInputs.otherCostsRmInput ?? ''),
+            sellingChannel: requestInput.sellingChannel,
+            marketCondition: requestInput.marketCondition,
+            manualPriceOverride: requestInput.manualPriceOverrideInput,
+            hasManualYieldInput: requestInput.hasManualYieldInput,
+            hasManualActualSoldInput: requestInput.hasManualActualSoldInput,
           },
           plan: response,
         })
@@ -481,6 +504,11 @@ export default function Treatment() {
   }
 
   function buildCalculationInput() {
+    const safeYieldKg = Math.max(0, toSafeNumber(yieldKg, 0))
+    const safeActualSoldKg = Math.max(0, toSafeNumber(actualSoldKg, 0))
+    const safeLaborCostRm = Math.max(0, toSafeNumber(laborCostRm, 0))
+    const safeOtherCostsRm = Math.max(0, toSafeNumber(otherCostsRm, 0))
+
     return {
       userId,
       cropId: selectedCropId,
@@ -491,16 +519,21 @@ export default function Treatment() {
       manualPriceOverrideInput: manualPriceOverride,
       farmSizeHectares: resolvedFarmSizeHectares,
       survivalProb: deriveSurvivalProbability(latestReport) ?? 1,
-      yieldKg,
-      actualSoldKg,
-      laborCostRm,
-      otherCostsRm,
+      yieldKg: safeYieldKg,
+      actualSoldKg: safeActualSoldKg,
+      laborCostRm: safeLaborCostRm,
+      otherCostsRm: safeOtherCostsRm,
       hasManualYieldInput,
       hasManualActualSoldInput,
       disease: String(latestReport?.disease || 'Crop disease risk').trim(),
       treatmentPlan: String(latestReport?.treatmentPlan || latestReport?.treatment_plan || 'recommended treatment').trim(),
       lat: firstGridWithCentroid?.centroid?.lat,
       lng: firstGridWithCentroid?.centroid?.lng,
+      rawInputs: {
+        actualSoldKgInput: actualSoldKg,
+        laborCostRmInput: laborCostRm,
+        otherCostsRmInput: otherCostsRm,
+      },
     }
   }
 
@@ -750,8 +783,9 @@ export default function Treatment() {
               value={actualSoldKg}
               onChange={(event) => {
                 setHasManualActualSoldInput(true)
-                setActualSoldKg(toSafeNumber(event.target.value, 0))
+                setActualSoldKg(event.target.value)
               }}
+              onWheel={(event) => event.currentTarget.blur()}
             />
 
             <label className="pg-field-label" htmlFor="pg-treatment-channel">Selling channel</label>
@@ -789,6 +823,7 @@ export default function Treatment() {
                   step="0.01"
                   value={manualPriceOverride}
                   onChange={(event) => setManualPriceOverride(event.target.value)}
+                  onWheel={(event) => event.currentTarget.blur()}
                 />
               </>
             ) : null}
@@ -801,7 +836,8 @@ export default function Treatment() {
               min="0"
               step="0.01"
               value={laborCostRm}
-              onChange={(event) => setLaborCostRm(toSafeNumber(event.target.value, 0))}
+              onChange={(event) => setLaborCostRm(event.target.value)}
+              onWheel={(event) => event.currentTarget.blur()}
             />
 
             <label className="pg-field-label" htmlFor="pg-treatment-other">Other costs (RM)</label>
@@ -812,7 +848,8 @@ export default function Treatment() {
               min="0"
               step="0.01"
               value={otherCostsRm}
-              onChange={(event) => setOtherCostsRm(toSafeNumber(event.target.value, 0))}
+              onChange={(event) => setOtherCostsRm(event.target.value)}
+              onWheel={(event) => event.currentTarget.blur()}
             />
           </article>
         </>

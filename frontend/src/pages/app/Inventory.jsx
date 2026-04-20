@@ -416,12 +416,10 @@ export default function Inventory() {
           <div className="pg-inv-empty">
             <IconSprout className="pg-icon" style={{ width: 40, height: 40, opacity: 0.3 }} />
             <p>{error ? 'Inventory unavailable.' : 'No items in this category.'}</p>
-            {!error && (
-              <button type="button" className="pg-inv-empty-action" onClick={() => setIsAddingItem(true)}>
-                <IconPlus className="pg-icon" style={{ width: 16, height: 16 }} />
-                Add your first item
-              </button>
-            )}
+            <button type="button" className="pg-inv-empty-action" onClick={() => setIsAddingItem(true)}>
+              <IconPlus className="pg-icon" style={{ width: 16, height: 16 }} />
+              Add your first item
+            </button>
           </div>
         ) : null}
 
@@ -480,15 +478,17 @@ export default function Inventory() {
       <p className="pg-inv-updated">Last updated: {lastUpdatedLabel}</p>
 
       {/* ── FAB ── */}
-      <button
-        type="button"
-        className="pg-inv-fab"
-        aria-label="Add new inventory item"
-        onClick={() => setIsAddingItem(true)}
-        disabled={isActionBusy}
-      >
-        <IconPlus className="pg-icon" />
-      </button>
+      {items.length > 0 ? (
+        <button
+          type="button"
+          className="pg-inv-fab"
+          aria-label="Add new inventory item"
+          onClick={() => setIsAddingItem(true)}
+          disabled={isActionBusy}
+        >
+          <IconPlus className="pg-icon" />
+        </button>
+      ) : null}
 
       {/* ═══════════════════ Add Item Modal ═══════════════════ */}
       {isAddingItem && (
@@ -516,13 +516,13 @@ export default function Inventory() {
               )}
               
               <label className="pg-field-label">Quantity</label>
-              <input required className="pg-input" type="number" step="0.1" min="0" value={addLiters} onChange={e => setAddLiters(e.target.value)} placeholder="e.g. 10.5" />
+              <input required className="pg-input" type="number" step="0.1" min="0" value={addLiters} onChange={e => setAddLiters(e.target.value)} onWheel={e => e.currentTarget.blur()} placeholder="e.g. 10.5" />
               
               <label className="pg-field-label">Unit Code</label>
               <input required className="pg-input" type="text" value={addUnit} onChange={e => setAddUnit(e.target.value)} placeholder="e.g. liters or kg" />
               
               <label className="pg-field-label">Cost Per Unit (RM)</label>
-              <input required className="pg-input" type="number" step="0.01" min="0" value={addCost} onChange={e => setAddCost(e.target.value)} placeholder="e.g. 45.00" />
+              <input required className="pg-input" type="number" step="0.01" min="0" value={addCost} onChange={e => setAddCost(e.target.value)} onWheel={e => e.currentTarget.blur()} placeholder="e.g. 45.00" />
               
               <label className="pg-field-label">Description (Optional)</label>
               <input className="pg-input" type="text" value={addDesc} onChange={e => setAddDesc(e.target.value)} placeholder="e.g. Usage notes or details" />
@@ -564,13 +564,13 @@ export default function Inventory() {
               )}
 
               <label className="pg-field-label">Stock Quantity (Liters/Kg)</label>
-              <input required className="pg-input" type="number" step="0.1" min="0" value={editLiters} onChange={e => setEditLiters(e.target.value)} />
+              <input required className="pg-input" type="number" step="0.1" min="0" value={editLiters} onChange={e => setEditLiters(e.target.value)} onWheel={e => e.currentTarget.blur()} />
 
               <label className="pg-field-label">Description (Optional)</label>
               <input className="pg-input" type="text" value={editDesc} onChange={e => setEditDesc(e.target.value)} placeholder="Usage notes" />
               
               <label className="pg-field-label">Cost Per Unit (RM)</label>
-              <input required className="pg-input" type="number" step="0.01" min="0" value={editCost} onChange={e => setEditCost(e.target.value)} />
+              <input required className="pg-input" type="number" step="0.01" min="0" value={editCost} onChange={e => setEditCost(e.target.value)} onWheel={e => e.currentTarget.blur()} />
 
               <div className="pg-cta-row" style={{ marginTop: 40, flexDirection: 'column', gap: 12 }}>
                 <button type="submit" className="pg-btn pg-btn-primary" style={{ width: '100%' }} disabled={isUpdatingItem || isRemovingItem}>

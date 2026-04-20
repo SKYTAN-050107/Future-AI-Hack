@@ -409,6 +409,14 @@ class CropUpdateResponse(BaseModel):
     item: CropItemResponse
 
 
+class CropDeleteResponse(BaseModel):
+    """Result of deleting a crop."""
+
+    success: bool = True
+    id: str
+    deleted: bool
+
+
 class DashboardSummaryRequest(BaseModel):
     """Input contract for dashboard aggregate endpoint."""
 
