@@ -1,0 +1,2 @@
+﻿STATUS=200
+{"assistant_reply":"{'error': \"'LLMService' object has no attribute '_trim_text'\"}"}

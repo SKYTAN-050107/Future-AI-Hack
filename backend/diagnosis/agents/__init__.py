@@ -6,7 +6,10 @@ via ``ctx.session.state`` managed by ADK's SequentialAgent runner.
 """
 
 from agents.crop_embed_agent import CropEmbedAgent
+from agents.assistant_reply_agent import AssistantReplyAgent
+from agents.agriculture_advice_agent import AgricultureAdviceAgent
+from agents.response_validation_agent import ResponseValidationAgent
 from agents.vector_match_agent import VectorMatchAgent
 from agents.reasoning_agent import ReasoningAgent
 
-__all__ = ["CropEmbedAgent", "VectorMatchAgent", "ReasoningAgent"]
+__all__ = ["CropEmbedAgent", "VectorMatchAgent", "ReasoningAgent", "AssistantReplyAgent", "ResponseValidationAgent", "AgricultureAdviceAgent"]

@@ -1,6 +1,44 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { IconClock, IconSparkles } from '../../components/icons/UiIcons'
+import { useSessionContext } from '../../hooks/useSessionContext'
+import { createScanCaptureId, persistUserScanCapture } from '../../services/scanCaptureStore'
+
+const PENDING_CAPTURE_KEY = 'pg_pending_scan_capture_v1'
+
+function captureFrameAsDataUrl(videoElement, options = {}) {
+  const maxWidth = Number(options.maxWidth || 960)
+  const quality = Number(options.quality || 0.85)
+  const rawWidth = videoElement.videoWidth || 1280
+  const rawHeight = videoElement.videoHeight || 720
+  const scale = rawWidth > maxWidth ? maxWidth / rawWidth : 1
+  const width = Math.round(rawWidth * scale)
+  const height = Math.round(rawHeight * scale)
+
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+
+  const context = canvas.getContext('2d')
+  if (!context) {
+    throw new Error('Unable to capture frame from camera')
+  }
+
+  context.drawImage(videoElement, 0, 0, width, height)
+  return canvas.toDataURL('image/jpeg', quality)
+}
+
+function savePendingCapture(payload) {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  try {
+    window.sessionStorage.setItem(PENDING_CAPTURE_KEY, JSON.stringify(payload))
+  } catch {
+    // Ignore storage failures and let chatbot run without auto-processing.
+  }
+}
 
 function formatCaptureTime(date) {
   return new Intl.DateTimeFormat('en-MY', {
@@ -11,12 +49,14 @@ function formatCaptureTime(date) {
 
 export default function Scanner() {
   const navigate = useNavigate()
+  const { user } = useSessionContext()
   const videoRef = useRef(null)
   const streamRef = useRef(null)
   const [cameraState, setCameraState] = useState('loading')
   const [statusMessage, setStatusMessage] = useState('Initializing rear camera...')
   const [lastCaptureTime, setLastCaptureTime] = useState('')
   const [isCaptureFlashVisible, setIsCaptureFlashVisible] = useState(false)
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
   useEffect(() => {
     let isMounted = true
@@ -53,7 +93,7 @@ export default function Scanner() {
             }
 
             setCameraState('ready')
-            setStatusMessage('Camera ready. Hold leaf inside guide frame.')
+            setStatusMessage('Camera ready. Point the lens at the crop.')
           }
 
           videoRef.current.play().catch(() => {
@@ -83,9 +123,18 @@ export default function Scanner() {
     }
   }, [])
 
-  const handleCapture = () => {
+  const handleCapture = async () => {
     if (cameraState !== 'ready') {
       setStatusMessage('Camera is still preparing. Try again in a moment.')
+      return
+    }
+
+    if (isSubmitting) {
+      return
+    }
+
+    if (!videoRef.current) {
+      setStatusMessage('Camera stream is not ready. Please try again.')
       return
     }
 
@@ -96,7 +145,50 @@ export default function Scanner() {
 
     const capturedAt = new Date()
     setLastCaptureTime(formatCaptureTime(capturedAt))
-    setStatusMessage('Frame captured. Sending to swarm diagnosis pipeline...')
+    setStatusMessage('Frame captured. Saving photo to your account...')
+
+    const captureId = createScanCaptureId()
+    const uid = String(user?.uid || '').trim()
+
+    setIsSubmitting(true)
+    try {
+      const base64Image = captureFrameAsDataUrl(videoRef.current)
+      let persistedCapture = { captureId, persisted: false, downloadURL: null, storagePath: null }
+
+      if (uid) {
+        try {
+          persistedCapture = await persistUserScanCapture({
+            uid,
+            captureId,
+            base64Image,
+            capturedAt: capturedAt.toISOString(),
+            source: 'camera',
+            userPrompt: 'I just took this photo. Please analyze it and tell me what to do next.',
+          })
+        } catch (captureError) {
+          console.warn('Failed to persist scanner capture:', captureError)
+        }
+      }
+
+      savePendingCapture({
+        source: 'camera',
+        captureId,
+        base64Image,
+        capturedAt: capturedAt.toISOString(),
+        userPrompt: 'I just took this photo. Please analyze it and tell me what to do next.',
+        ownerUid: uid || null,
+        captureDownloadURL: persistedCapture.downloadURL || null,
+        captureStoragePath: persistedCapture.storagePath || null,
+        capturePersisted: Boolean(persistedCapture.persisted),
+      })
+
+      setStatusMessage('Photo saved. Opening PadiGuard AI Assistant...')
+      navigate(`/app/chatbot?fromScan=1&captureId=${encodeURIComponent(captureId)}`)
+    } catch (error) {
+      setStatusMessage(error?.message || 'Capture failed. Please try again.')
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   return (
@@ -138,10 +230,6 @@ export default function Scanner() {
         </button>
       </header>
 
-      <div className="pg-scanner-viewfinder" aria-hidden="true">
-        <div className="pg-scanner-viewfinder-frame" />
-      </div>
-
       <footer className="pg-scanner-bottom-overlay">
         <p className="pg-scanner-status">
           {lastCaptureTime ? `Last capture at ${lastCaptureTime}` : statusMessage}
@@ -151,6 +239,7 @@ export default function Scanner() {
           type="button"
           className="pg-scanner-capture-btn"
           onClick={handleCapture}
+          disabled={isSubmitting}
           aria-label="Capture crop photo"
         />
       </footer>

@@ -1,76 +1,487 @@
-const delay = (ms = 120) => new Promise((resolve) => setTimeout(resolve, ms))
+function normalizeBase64Image(value) {
+  const input = String(value || '').trim()
+  if (!input) {
+    return ''
+  }
 
-async function withMock(payload) {
-  await delay()
-  return { ...payload, __source: 'mock' }
+  if (input.startsWith('data:') && input.includes(',')) {
+    return input.split(',', 2)[1]
+  }
+
+  return input
+}
+
+const DEFAULT_REQUEST_TIMEOUT_MS = 30000
+
+async function requestJson(path, options = {}) {
+  let response = null
+  const method = String(options?.method || 'GET').toUpperCase()
+  const timeoutMs = Number(options?.timeoutMs || DEFAULT_REQUEST_TIMEOUT_MS)
+  const controller = timeoutMs > 0 ? new AbortController() : null
+  const timeoutId = controller
+    ? window.setTimeout(() => controller.abort(), timeoutMs)
+    : null
+
+  console.debug('[API request]', { method, path })
+  try {
+    response = await fetch(path, {
+      ...options,
+      signal: controller ? controller.signal : options.signal,
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        ...(options.headers || {}),
+      },
+    })
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s. Please try again.`)
+    }
+
+    throw new Error('Cannot reach diagnosis backend on current origin. Ensure backend proxy is running and retry.')
+  } finally {
+    if (timeoutId) {
+      window.clearTimeout(timeoutId)
+    }
+  }
+
+  let payload = null
+  try {
+    payload = await response.json()
+  } catch {
+    payload = null
+  }
+
+  if (!response.ok) {
+    const message = (
+      (typeof payload?.error === 'string' ? payload.error : null)
+      || payload?.error?.message
+      || (typeof payload?.detail === 'string' ? payload.detail : null)
+      || payload?.detail?.error
+      || `Request failed (${response.status})`
+    )
+    console.error('[API error]', { method, path, status: response.status, message, payload })
+    throw new Error(message)
+  }
+
+  console.debug('[API response]', { method, path, status: response.status, payload })
+
+  return payload
+}
+
+function toFiniteNumber(value) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function buildQueryString(params) {
+  const query = new URLSearchParams()
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value === null || value === undefined || value === '') {
+      return
+    }
+
+    query.set(key, String(value))
+  })
+
+  const encoded = query.toString()
+  return encoded ? `?${encoded}` : ''
 }
 
 export const gateway = {
-  health: async () => withMock({ status: 'ok' }),
+  health: async () => requestJson('/health', { method: 'GET' }),
 
-  getFleetSummary: async () => withMock({
-    total_batteries: 0,
-    avg_soh: 0,
-    avg_rul: 0,
-    active_alerts: 0,
-  }),
+  getWeatherOutlook: async ({ lat, lng, days = 7 }) => {
+    const safeLat = toFiniteNumber(lat)
+    const safeLng = toFiniteNumber(lng)
+    const safeDays = toFiniteNumber(days)
 
-  getFleetAlerts: async () => withMock({ alerts: [] }),
+    if (safeLat === null || safeLng === null) {
+      throw new Error('lat and lng are required for weather lookup')
+    }
 
-  uploadCsv: async (file) => withMock({
-    uploaded: Boolean(file),
-    filename: file?.name || null,
-    rows: 0,
-  }),
+    return requestJson(`/api/weather${buildQueryString({ lat: safeLat, lng: safeLng, days: safeDays || 7 })}`, {
+      method: 'GET',
+      timeoutMs: 30000,
+    })
+  },
 
-  getBattery: async (id) => withMock({
-    cell_id: id,
-    SOH: [],
-    RUL: [],
-    points: [],
-  }),
+  scanDisease: async (input) => {
+    const base64Image = normalizeBase64Image(input?.base64Image)
+    if (!base64Image) {
+      throw new Error('base64Image is required for diagnosis scan')
+    }
 
-  getBatteryRisk: async () => withMock({ breakdown: [] }),
+    return requestJson('/api/scan', {
+      method: 'POST',
+      timeoutMs: 90000,
+      body: JSON.stringify({
+        source: input?.source || 'camera',
+        grid_id: input?.gridId || null,
+        user_id: input?.userId || null,
+        base64_image: base64Image,
+      }),
+    })
+  },
 
-  getBatteryScorecard: async (id) => withMock({
-    cell_id: id,
-    soc_score: 0,
-    soh_score: 0,
-    recommended_policy_tier: '-',
-    maintenance_flag: false,
-  }),
+  scanAndAskAssistant: async (input) => {
+    const base64Image = normalizeBase64Image(input?.base64Image)
+    if (!base64Image) {
+      throw new Error('base64Image is required for assistant diagnosis flow')
+    }
 
-  getInsuranceQuote: async (id) => withMock({
-    cell_id: id,
-    policy_tier: '-',
-    base_insured_amount: '-',
-    recommended_insured_amount: '-',
-    premium_rate_percent: 0,
-    estimated_annual_premium: '-',
-    notes: 'Mock quote data',
-  }),
+    return requestJson('/api/assistant/scan', {
+      method: 'POST',
+      timeoutMs: 90000,
+      body: JSON.stringify({
+        source: input?.source || 'camera',
+        grid_id: input?.gridId || null,
+        user_id: input?.userId || null,
+        base64_image: base64Image,
+        user_prompt: input?.userPrompt || 'I just took this photo. Please explain what disease this is and what I should do now.',
+      }),
+    })
+  },
 
-  getInsurancePackages: async () => withMock({ packages: [] }),
+  sendAssistantMessage: async (input) => {
+    const userPrompt = String(input?.userPrompt || '').trim()
+    const userId = String(input?.userId || '').trim()
+    const location = String(input?.location || '').trim()
+    const lat = toFiniteNumber(input?.lat)
+    const lng = toFiniteNumber(input?.lng)
 
-  getWeatherOutlook: async () => withMock({
-    rain_probability: 76,
-    best_spray_window: 'Today 3:00 PM - 5:00 PM',
-    advisory: 'Avoid spraying tomorrow morning due to high rain intensity.',
-  }),
+    if (!userPrompt) {
+      throw new Error('userPrompt is required for assistant message')
+    }
 
-  scanDisease: async () => withMock({
-    disease: 'Blast',
-    severity: 64,
-    confidence: 92,
-    spread_risk: 'High',
-    zone: 'Zone C',
-  }),
+    if (!userId) {
+      throw new Error('userId is required for assistant message')
+    }
 
-  getTreatmentPlan: async () => withMock({
-    recommendation: 'Apply tricyclazole at 0.6 kg/ha before evening rain window.',
-    estimated_cost_rm: 110,
-    expected_gain_rm: 640,
-    roi_x: 5.8,
-    organic_alternative: 'Neem extract for low-severity sectors with follow-up scan in 48h.',
-  }),
+    return requestJson('/api/assistant/message', {
+      method: 'POST',
+      timeoutMs: 45000,
+      body: JSON.stringify({
+        user_prompt: userPrompt,
+        user_id: userId,
+        zone: input?.zone || null,
+        location: location || null,
+        lat,
+        lng,
+      }),
+    })
+  },
+
+  getTreatmentPlan: async (input) => {
+    const userId = String(input?.userId || '').trim()
+    const cropId = String(input?.cropId || '').trim()
+
+    if (!userId) {
+      throw new Error('userId is required for treatment plan')
+    }
+
+    const body = {
+      user_id: userId,
+      crop_id: cropId || null,
+      disease: String(input?.disease || 'Crop disease risk').trim() || 'Crop disease risk',
+      crop_type: String(input?.cropType || input?.cropName || '').trim() || null,
+      treatment_plan: String(input?.treatmentPlan || 'recommended treatment').trim() || null,
+      farm_size_hectares: toFiniteNumber(input?.farmSizeHectares),
+      survival_prob: toFiniteNumber(input?.survivalProb) ?? 1,
+      lat: toFiniteNumber(input?.lat),
+      lng: toFiniteNumber(input?.lng),
+      weatherContext: input?.weatherContext || null,
+      treatment_cost_rm: toFiniteNumber(input?.treatmentCostRm),
+      selling_channel: String(input?.sellingChannel || 'middleman').trim().toLowerCase(),
+      market_condition: String(input?.marketCondition || 'normal').trim().toLowerCase(),
+      manual_price_override: toFiniteNumber(input?.manualPriceOverride),
+      yield_kg: toFiniteNumber(input?.yieldKg),
+      actual_sold_kg: toFiniteNumber(input?.actualSoldKg),
+      labor_cost_rm: toFiniteNumber(input?.laborCostRm),
+      other_costs_rm: toFiniteNumber(input?.otherCostsRm),
+    }
+
+    if (!cropId) {
+      const disease = String(input?.disease || '').trim()
+      const cropType = String(input?.cropType || '').trim()
+      const treatmentPlan = String(input?.treatmentPlan || '').trim()
+      const farmSizeHectares = toFiniteNumber(input?.farmSizeHectares)
+      const survivalProb = toFiniteNumber(input?.survivalProb)
+
+      if (!disease || !cropType || !treatmentPlan) {
+        throw new Error('disease, cropType, and treatmentPlan are required when cropId is not provided')
+      }
+
+      if (farmSizeHectares === null || farmSizeHectares <= 0) {
+        throw new Error('farmSizeHectares must be greater than 0 when cropId is not provided')
+      }
+
+      if (survivalProb === null || survivalProb < 0 || survivalProb > 1) {
+        throw new Error('survivalProb must be between 0 and 1')
+      }
+    }
+
+    return requestJson('/api/treatment', {
+      method: 'POST',
+      timeoutMs: 45000,
+      body: JSON.stringify(body),
+    })
+  },
+
+  getCrops: async ({ userId }) => {
+    const safeUserId = String(userId || '').trim()
+    if (!safeUserId) {
+      throw new Error('userId is required for crops lookup')
+    }
+
+    return requestJson(`/api/crops${buildQueryString({ user_id: safeUserId })}`, {
+      method: 'GET',
+      timeoutMs: 30000,
+    })
+  },
+
+  getCropById: async (cropId, { userId }) => {
+    const safeCropId = String(cropId || '').trim()
+    const safeUserId = String(userId || '').trim()
+
+    if (!safeCropId || !safeUserId) {
+      throw new Error('cropId and userId are required for crop lookup')
+    }
+
+    return requestJson(`/api/crops/${encodeURIComponent(safeCropId)}${buildQueryString({ user_id: safeUserId })}`, {
+      method: 'GET',
+      timeoutMs: 30000,
+    })
+  },
+
+  createCrop: async (payload) => {
+    const userId = String(payload?.userId || '').trim()
+    const name = String(payload?.name || '').trim()
+    const expectedYieldKg = toFiniteNumber(payload?.expectedYieldKg)
+
+    if (!userId || !name || expectedYieldKg === null || expectedYieldKg < 0) {
+      throw new Error('userId, name, and expectedYieldKg are required to create a crop')
+    }
+
+    const usage = Array.isArray(payload?.cropInventoryUsage)
+      ? payload.cropInventoryUsage
+      : []
+
+    return requestJson('/api/crops', {
+      method: 'POST',
+      body: JSON.stringify({
+        user_id: userId,
+        name,
+        expected_yield_kg: expectedYieldKg,
+        area_hectares: toFiniteNumber(payload?.areaHectares) ?? 0,
+        planting_date: String(payload?.plantingDate || '').trim() || null,
+        status: String(payload?.status || 'growing').trim().toLowerCase(),
+        labor_cost_rm: toFiniteNumber(payload?.laborCostRm) ?? 0,
+        other_costs_rm: toFiniteNumber(payload?.otherCostsRm) ?? 0,
+        crop_inventory_usage: usage.map((item) => ({
+          inventory_id: String(item?.inventoryId || '').trim(),
+          quantity_used: toFiniteNumber(item?.quantityUsed) ?? 0,
+        })).filter((item) => item.inventory_id),
+      }),
+    })
+  },
+
+  updateCrop: async (cropId, payload) => {
+    const safeCropId = String(cropId || '').trim()
+    const userId = String(payload?.userId || '').trim()
+    if (!safeCropId || !userId) {
+      throw new Error('cropId and userId are required to update a crop')
+    }
+
+    const usage = Array.isArray(payload?.cropInventoryUsage)
+      ? payload.cropInventoryUsage
+      : null
+
+    return requestJson(`/api/crops/${encodeURIComponent(safeCropId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        user_id: userId,
+        name: payload?.name,
+        expected_yield_kg: toFiniteNumber(payload?.expectedYieldKg),
+        area_hectares: toFiniteNumber(payload?.areaHectares),
+        planting_date: payload?.plantingDate ?? undefined,
+        status: payload?.status ? String(payload.status).trim().toLowerCase() : undefined,
+        labor_cost_rm: toFiniteNumber(payload?.laborCostRm),
+        other_costs_rm: toFiniteNumber(payload?.otherCostsRm),
+        crop_inventory_usage: usage
+          ? usage.map((item) => ({
+            inventory_id: String(item?.inventoryId || '').trim(),
+            quantity_used: toFiniteNumber(item?.quantityUsed) ?? 0,
+          })).filter((item) => item.inventory_id)
+          : undefined,
+      }),
+    })
+  },
+
+  deleteCrop: async (cropId, { userId }) => {
+    const safeCropId = String(cropId || '').trim()
+    const safeUserId = String(userId || '').trim()
+
+    if (!safeCropId || !safeUserId) {
+      throw new Error('cropId and userId are required to delete a crop')
+    }
+
+    return requestJson(`/api/crops/${encodeURIComponent(safeCropId)}${buildQueryString({ user_id: safeUserId })}`, {
+      method: 'DELETE',
+    })
+  },
+
+  getInventory: async ({ userId }) => {
+    const safeUserId = String(userId || '').trim()
+    if (!safeUserId) {
+      throw new Error('userId is required for inventory lookup')
+    }
+
+    return requestJson(`/api/inventory${buildQueryString({ user_id: safeUserId })}`, {
+      method: 'GET',
+    })
+  },
+
+  updateInventoryItem: async (itemId, { userId, name, liters, description, unitCostRm, category }) => {
+    const safeItemId = String(itemId || '').trim()
+    const safeUserId = String(userId || '').trim()
+    const safeLiters = toFiniteNumber(liters)
+    const hasDescription = description !== undefined && description !== null
+    const safeDescription = hasDescription ? String(description).trim() : null
+
+    if (!safeItemId || !safeUserId) {
+      throw new Error('itemId and userId are required for inventory updates')
+    }
+
+    if (safeLiters === null || safeLiters < 0) {
+      throw new Error('liters must be a non-negative number')
+    }
+
+    const body = {
+      user_id: safeUserId,
+      liters: safeLiters,
+    }
+
+    if (hasDescription) {
+      body.description = safeDescription
+    }
+
+    const safeUnitCost = toFiniteNumber(unitCostRm)
+    if (safeUnitCost !== null && safeUnitCost >= 0) {
+      body.unit_cost_rm = safeUnitCost
+    }
+
+    const safeName = name !== undefined && name !== null ? String(name).trim() : null
+    if (safeName) {
+      body.name = safeName
+    }
+
+    const safeCategory = category !== undefined && category !== null ? String(category).trim() : null
+    if (safeCategory) {
+      body.category = safeCategory
+    }
+
+    return requestJson(`/api/inventory/${encodeURIComponent(safeItemId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    })
+  },
+
+  deleteInventoryItem: async (itemId, { userId }) => {
+    const safeItemId = String(itemId || '').trim()
+    const safeUserId = String(userId || '').trim()
+
+    if (!safeItemId || !safeUserId) {
+      throw new Error('itemId and userId are required for inventory removal')
+    }
+
+    return requestJson(`/api/inventory/${encodeURIComponent(safeItemId)}${buildQueryString({ user_id: safeUserId })}`, {
+      method: 'DELETE',
+    })
+  },
+
+  createInventoryItem: async ({ userId, name, quantity, usage, unit, costPerUnitRm, description }) => {
+    const safeUserId = String(userId || '').trim()
+    const safeName = String(name || '').trim()
+    const safeUsage = String(usage || '').trim()
+    const safeUnit = String(unit || '').trim()
+    const safeQuantity = toFiniteNumber(quantity)
+
+    if (!safeUserId || !safeName || !safeUsage || !safeUnit) {
+      throw new Error('userId, name, usage, and unit are required for inventory creation')
+    }
+
+    if (safeQuantity === null || safeQuantity < 0) {
+      throw new Error('quantity must be a non-negative number')
+    }
+
+    const safeCostPerUnit = toFiniteNumber(costPerUnitRm)
+
+    const safeDescription = description !== undefined && description !== null ? String(description).trim() : ''
+
+    return requestJson('/api/inventory', {
+      method: 'POST',
+      body: JSON.stringify({
+        user_id: safeUserId,
+        name: safeName,
+        quantity: safeQuantity,
+        usage: safeUsage,
+        unit: safeUnit,
+        cost_per_unit_rm: safeCostPerUnit !== null && safeCostPerUnit >= 0 ? safeCostPerUnit : 0,
+        description: safeDescription,
+      }),
+    })
+  },
+
+  getDashboardSummary: async (input) => {
+    const userId = String(input?.userId || '').trim()
+    const cropType = String(input?.cropType || 'Mixed crop').trim() || 'Mixed crop'
+    const treatmentPlan = String(input?.treatmentPlan || 'recommended treatment').trim() || 'recommended treatment'
+    const farmSizeInput = toFiniteNumber(input?.farmSizeHectares)
+    const survivalInput = toFiniteNumber(input?.survivalProb)
+
+    if (!userId) {
+      throw new Error('userId is required for dashboard summary')
+    }
+
+    const farmSizeHectares = farmSizeInput !== null && farmSizeInput > 0 ? farmSizeInput : 1
+    const survivalProb = survivalInput !== null && survivalInput >= 0 && survivalInput <= 1 ? survivalInput : 1
+
+    return requestJson('/api/dashboard/summary', {
+      method: 'POST',
+      timeoutMs: 30000,
+      body: JSON.stringify({
+        user_id: userId,
+        crop_type: cropType,
+        treatment_plan: treatmentPlan,
+        farm_size_hectares: farmSizeHectares,
+        survival_prob: survivalProb,
+        lat: toFiniteNumber(input?.lat),
+        lng: toFiniteNumber(input?.lng),
+      }),
+    })
+  },
+
+  getMeteorologistAdvisory: async ({ lat, lng, cropType }) => {
+    const safeLat = toFiniteNumber(lat)
+    const safeLng = toFiniteNumber(lng)
+
+    if (safeLat === null || safeLng === null) {
+      throw new Error('lat and lng are required for meteorologist advisory')
+    }
+
+    return requestJson('/swarm-api/runAction', {
+      method: 'POST',
+      timeoutMs: 30000,
+      body: JSON.stringify({
+        key: '/flow/meteorologist_flow',
+        input: {
+          lat: safeLat,
+          lng: safeLng,
+          crop_type: String(cropType || 'Rice').trim(),
+        },
+      }),
+    })
+  },
 }

@@ -59,6 +59,9 @@ class ReasoningAgent(BaseAgent):
             candidates = state.get("candidates", [])
             bbox = state.get("bbox", {})
             grid_id = state.get("grid_id")
+            recommended_pesticides: list[str] = []
+            recommendation_source: str | None = None
+            matched_pest_name: str | None = None
 
             # Use Vector Search result ID to fetch diagnosis fields from Firestore.
             if candidates:
@@ -77,19 +80,51 @@ class ReasoningAgent(BaseAgent):
                 disease = candidate_doc.get("disease", "Unknown disease")
                 gcs_uri = candidate_doc.get("gcs_uri", "")
 
-                if str(disease).lower() in ["healthy", "normal", "unknown", "unknown disease"]:
+                disease_normalized = str(disease).strip().lower()
+                if disease_normalized in ["healthy", "normal"]:
                     severity = "Low"
                     treatmentPlan = "None"
                     survivalProb = 0.95
+                    is_abnormal = False
+                    recommendation_source = "healthy-no-treatment"
+                elif disease_normalized in ["unknown", "unknown disease", ""]:
+                    severity = "Moderate"
+                    treatmentPlan = (
+                        "Inconclusive result. Please capture a closer, well-lit leaf photo and re-scan."
+                    )
+                    survivalProb = 0.5
+                    is_abnormal = False
+                    recommendation_source = "inconclusive"
                 else:
                     severity = "Moderate"
                     treatmentPlan = "Consult agrologist"
                     survivalProb = 0.6
+                    is_abnormal = True
+
+                    catalog_recommendation = await self._firestore_svc.get_pesticide_catalog_recommendation(
+                        str(disease),
+                    )
+                    if catalog_recommendation:
+                        recommended_pesticides = [
+                            str(item).strip()
+                            for item in (catalog_recommendation.get("recommendedPesticides") or [])
+                            if str(item).strip()
+                        ]
+                        matched_pest_name = str(
+                            catalog_recommendation.get("matchedPestName") or disease,
+                        ).strip() or str(disease)
+                        recommendation_source = str(
+                            catalog_recommendation.get("recommendationSource") or "pesticideCatalog",
+                        ).strip()
+                        if recommended_pesticides:
+                            treatmentPlan = "Recommended pesticides: " + ", ".join(recommended_pesticides)
+                    else:
+                        recommendation_source = "diagnosisFallback"
 
                 if gcs_uri:
-                    treatmentPlan = f"Reference image: {gcs_uri}"
+                    separator = " " if str(treatmentPlan).endswith((".", ":")) else ". "
+                    treatmentPlan = f"{treatmentPlan}{separator}Reference image: {gcs_uri}"
 
-                is_abnormal = disease.lower() not in ["healthy", "normal", "unknown"]
                 severityScore = score
                 
                 logger.info(
@@ -98,14 +133,15 @@ class ReasoningAgent(BaseAgent):
                 )
             else:
                 # No candidates found from vector search
-                logger.warning("[%s] No candidates found from vector search, defaulting to Healthy", self.name)
+                logger.warning("[%s] No candidates found from vector search, returning inconclusive", self.name)
                 cropType = "Unknown"
-                disease = "Healthy"
-                severity = "Low"
+                disease = "Inconclusive"
+                severity = "Moderate"
                 severityScore = 0.0
-                treatmentPlan = "None"
-                survivalProb = 1.0
+                treatmentPlan = "Inconclusive result. Please capture a clearer close-up photo and re-scan."
+                survivalProb = 0.5
                 is_abnormal = False
+                recommendation_source = "inconclusive"
 
             state["scan_result"] = {
                 "cropType": cropType,
@@ -115,6 +151,9 @@ class ReasoningAgent(BaseAgent):
                 "treatmentPlan": treatmentPlan,
                 "survivalProb": survivalProb,
                 "is_abnormal": is_abnormal,
+                "recommendedPesticides": recommended_pesticides,
+                "recommendationSource": recommendation_source,
+                "matchedPestName": matched_pest_name,
                 "bbox": bbox,
                 "grid_id": grid_id,
             }
@@ -143,6 +182,9 @@ class ReasoningAgent(BaseAgent):
             treatmentPlan = "Error in diagnosis pipeline"
             survivalProb = 0.0
             is_abnormal = False
+            recommended_pesticides = []
+            recommendation_source = "error"
+            matched_pest_name = None
             bbox = state.get("bbox", {})
             grid_id = state.get("grid_id")
             
@@ -154,6 +196,9 @@ class ReasoningAgent(BaseAgent):
                 "treatmentPlan": treatmentPlan,
                 "survivalProb": survivalProb,
                 "is_abnormal": is_abnormal,
+                "recommendedPesticides": recommended_pesticides,
+                "recommendationSource": recommendation_source,
+                "matchedPestName": matched_pest_name,
                 "bbox": bbox,
                 "grid_id": grid_id,
             }

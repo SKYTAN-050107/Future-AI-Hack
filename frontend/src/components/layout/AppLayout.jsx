@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { clearPostAuthPath, setLastAppPath } from '../../utils/navigationState'
 import BottomNav from '../BottomNav'
 import ThemeToggle from '../ui/ThemeToggle'
+import NotificationMenu from '../ui/NotificationMenu'
 
 function getPathRank(pathname) {
   if (pathname === '/app') {
@@ -22,7 +23,7 @@ function getPathRank(pathname) {
     return 2
   }
 
-  if (pathname.startsWith('/app/inventory') || pathname.startsWith('/app/treatment')) {
+  if (pathname.startsWith('/app/inventory') || pathname.startsWith('/app/treatment') || pathname.startsWith('/app/crops')) {
     return 3
   }
 
@@ -38,6 +39,8 @@ export default function AppLayout() {
   const [direction, setDirection] = useState('forward')
   const previousRankRef = useRef(getPathRank(location.pathname))
   const isScannerRoute = location.pathname.startsWith('/app/scan')
+  const isChatbotRoute = location.pathname.startsWith('/app/chatbot')
+  const showTopActions = !isScannerRoute && !isChatbotRoute
 
   useEffect(() => {
     const nextRank = getPathRank(location.pathname)
@@ -51,7 +54,12 @@ export default function AppLayout() {
 
   return (
     <div className="pg-shell">
-      {!isScannerRoute ? <ThemeToggle className="pg-theme-toggle-app" /> : null}
+      {showTopActions ? (
+        <div className="pg-top-actions">
+          <ThemeToggle />
+          <NotificationMenu />
+        </div>
+      ) : null}
       <main className={`pg-main-content ${isScannerRoute ? 'pg-main-content-scanner' : ''}`}>
         <div
           key={location.pathname}

@@ -6,12 +6,15 @@ import { useSessionContext } from '../hooks/useSessionContext'
 import { clearPostAuthPath, getLastAppPath, getPostAuthPath, setPostAuthPath } from '../utils/navigationState'
 import Dashboard from '../pages/app/Dashboard'
 import Chatbot from '../pages/app/Chatbot'
+import Crops from '../pages/app/Crops'
 import Inventory from '../pages/app/Inventory'
 import MapPage from '../pages/app/Map'
 import Profile from '../pages/app/Profile'
 import Report from '../pages/app/Report'
-import Scanner from '../pages/app/Scanner'
+import Scanner from '../pages/app/Scanner.jsx'
 import Treatment from '../pages/app/Treatment'
+import TreatmentPlan from '../pages/app/TreatmentPlan'
+import YieldPrediction from '../pages/app/YieldPrediction'
 import Weather from '../pages/app/Weather'
 import Onboarding from '../pages/onboarding/Onboarding'
 import Auth from '../pages/public/Auth'
@@ -23,16 +26,18 @@ function LaunchScreen() {
   useEffect(() => {
     const timeout = window.setTimeout(() => {
       navigate('/auth', { replace: true })
-    }, 1500)
+    }, 1800)
 
     return () => window.clearTimeout(timeout)
   }, [navigate])
 
   return (
-    <div className="pg-public-screen">
-      <section className="pg-launch">
-        <div className="pg-launch-orb" />
-        <h1 className="pg-launch-title">PadiGuard AI</h1>
+    <div className="pg-public-screen pg-ios-glass-bg">
+      <section className="pg-launch pg-glass-panel">
+        <div className="pg-launch-logo-container">
+          <img src="/futurehack.png" alt="AcreZen Logo" className="pg-launch-logo-img" />
+        </div>
+        <h1 className="pg-launch-title pg-caveat-title">AcreZen</h1>
         <p className="pg-launch-subtitle">Padi health help in your pocket</p>
       </section>
     </div>
@@ -45,16 +50,18 @@ function WebLaunchScreen() {
   useEffect(() => {
     const timeout = window.setTimeout(() => {
       navigate('/landing', { replace: true })
-    }, 1300)
+    }, 1600)
 
     return () => window.clearTimeout(timeout)
   }, [navigate])
 
   return (
-    <div className="pg-public-screen">
-      <section className="pg-launch">
-        <div className="pg-launch-orb" />
-        <h1 className="pg-launch-title">PadiGuard AI</h1>
+    <div className="pg-public-screen pg-ios-glass-bg">
+      <section className="pg-launch pg-glass-panel">
+        <div className="pg-launch-logo-container">
+          <img src="/futurehack.png" alt="AcreZen Logo" className="pg-launch-logo-img" />
+        </div>
+        <h1 className="pg-launch-title pg-caveat-title">AcreZen</h1>
         <p className="pg-launch-subtitle">Opening…</p>
       </section>
     </div>
@@ -73,10 +80,12 @@ function RequireAuth({ children }) {
 
   if (isAuthLoading) {
     return (
-      <div className="pg-public-screen">
-        <section className="pg-launch">
-          <div className="pg-launch-orb" />
-          <h1 className="pg-launch-title">PadiGuard AI</h1>
+      <div className="pg-public-screen pg-ios-glass-bg">
+        <section className="pg-launch pg-glass-panel">
+          <div className="pg-launch-logo-container">
+            <img src="/futurehack.png" alt="AcreZen Logo" className="pg-launch-logo-img" />
+          </div>
+          <h1 className="pg-launch-title pg-caveat-title">AcreZen</h1>
           <p className="pg-launch-subtitle">Checking session…</p>
         </section>
       </div>
@@ -95,10 +104,12 @@ function RequireOnboarding({ children }) {
 
   if (isAuthLoading) {
     return (
-      <div className="pg-public-screen">
-        <section className="pg-launch">
-          <div className="pg-launch-orb" />
-          <h1 className="pg-launch-title">PadiGuard AI</h1>
+      <div className="pg-public-screen pg-ios-glass-bg">
+        <section className="pg-launch pg-glass-panel">
+          <div className="pg-launch-logo-container">
+            <img src="/futurehack.png" alt="AcreZen Logo" className="pg-launch-logo-img" />
+          </div>
+          <h1 className="pg-launch-title pg-caveat-title">AcreZen</h1>
           <p className="pg-launch-subtitle">Loading profile…</p>
         </section>
       </div>
@@ -117,10 +128,12 @@ function RedirectAuthenticatedEntry() {
 
   if (isAuthLoading) {
     return (
-      <div className="pg-public-screen">
-        <section className="pg-launch">
-          <div className="pg-launch-orb" />
-          <h1 className="pg-launch-title">PadiGuard AI</h1>
+      <div className="pg-public-screen pg-ios-glass-bg">
+        <section className="pg-launch pg-glass-panel">
+          <div className="pg-launch-logo-container">
+            <img src="/futurehack.png" alt="AcreZen Logo" className="pg-launch-logo-img" />
+          </div>
+          <h1 className="pg-launch-title pg-caveat-title">AcreZen</h1>
           <p className="pg-launch-subtitle">Loading account…</p>
         </section>
       </div>
@@ -170,8 +183,12 @@ export const appRoutes = [
       { path: 'scan', element: <Scanner /> },
       { path: 'report', element: <Report /> },
       { path: 'treatment', element: <Treatment /> },
+      { path: 'roi', element: <Treatment /> },
+      { path: 'treatment-plan', element: <TreatmentPlan /> },
+      { path: 'yield-prediction', element: <YieldPrediction /> },
       { path: 'chatbot', element: <Chatbot /> },
       { path: 'inventory', element: <Inventory /> },
+      { path: 'crops', element: <Crops /> },
       { path: 'profile', element: <Profile /> },
     ],
   },

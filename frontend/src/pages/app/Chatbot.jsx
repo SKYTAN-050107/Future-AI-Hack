@@ -1,9 +1,30 @@
-import { useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { IconArrowLeft, IconList, IconSparkles } from '../../components/icons/UiIcons'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
+import {
+  collection,
+  deleteDoc,
+  doc,
+  getDocs,
+  onSnapshot,
+  query,
+  serverTimestamp,
+  setDoc,
+  where,
+} from 'firebase/firestore'
+import { IconArrowLeft, IconImage, IconList, IconSparkles } from '../../components/icons/UiIcons'
+import { scanAndAskAssistant } from '../../api/scan'
+import { sendAssistantMessage } from '../../api/assistant'
+import { db, isFirebaseConfigured } from '../../firebase'
 import { useScanHistory } from '../../hooks/useScanHistory'
+import { useScanReports } from '../../hooks/useScanReports'
+import { useSessionContext } from '../../hooks/useSessionContext'
+import { useFarmLocationCoordinates } from '../../hooks/useFarmLocationCoordinates'
+import { downloadUrlToDataUrl, loadUserScanCapture, persistUserScanCapture, createScanCaptureId } from '../../services/scanCaptureStore'
 
-const STORAGE_KEY = 'pg_chatbot_conversations_v1'
+const STORAGE_KEY_PREFIX = 'pg_chatbot_conversations_v2'
+const PENDING_CAPTURE_KEY = 'pg_pending_scan_capture_v1'
+const USERS_COLLECTION = 'users'
+const CONVERSATION_COLLECTION = 'conversations'
 
 const WELCOME_MESSAGE = {
   role: 'ai',
@@ -16,38 +37,305 @@ const QUICK_PROMPTS = [
   'Estimate treatment ROI from latest scan',
 ]
 
+const CAMERA_CAPTURE_USER_MESSAGE = 'I have captured this image. Please diagnose it and suggest what to do next.'
+
+const MAX_UPLOAD_BYTES = 12 * 1024 * 1024
+const ALLOWED_IMAGE_MIME = new Set([
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'image/webp',
+  'image/heic',
+  'image/heif',
+])
+
+function hasAllowedPhotoExtension(filename) {
+  return /\.(jpe?g|png|webp|heic|heif)$/i.test(String(filename || ''))
+}
+
+function isPhotoFile(file) {
+  if (!file) {
+    return false
+  }
+
+  const mime = String(file.type || '').toLowerCase()
+  if (mime && ALLOWED_IMAGE_MIME.has(mime)) {
+    return true
+  }
+
+  if (!mime) {
+    return hasAllowedPhotoExtension(file.name)
+  }
+
+  return false
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result || ''))
+    reader.onerror = () => reject(new Error('Unable to read selected photo.'))
+    reader.readAsDataURL(file)
+  })
+}
+
+function loadImage(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const image = new Image()
+    image.onload = () => resolve(image)
+    image.onerror = () => reject(new Error('Unable to decode selected photo.'))
+    image.src = dataUrl
+  })
+}
+
+async function fileToUploadDataUrl(file) {
+  const dataUrl = await readFileAsDataUrl(file)
+  const image = await loadImage(dataUrl)
+  const maxSide = 1280
+  const scale = Math.min(1, maxSide / Math.max(image.width || 1, image.height || 1))
+  const width = Math.max(1, Math.round((image.width || 1) * scale))
+  const height = Math.max(1, Math.round((image.height || 1) * scale))
+
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+
+  const context = canvas.getContext('2d')
+  if (!context) {
+    throw new Error('Unable to process selected photo.')
+  }
+
+  context.drawImage(image, 0, 0, width, height)
+  return canvas.toDataURL('image/jpeg', 0.86)
+}
+
 function createConversationId() {
   return `chat-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
 }
 
-function loadStoredConversations() {
+function toMillis(value) {
+  if (!value) {
+    return 0
+  }
+
+  if (typeof value?.toMillis === 'function') {
+    return value.toMillis()
+  }
+
+  if (value instanceof Date) {
+    return value.getTime()
+  }
+
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function normalizeMessage(raw) {
+  const role = raw?.role === 'user' ? 'user' : 'ai'
+  const text = String(raw?.text || '').trim()
+  if (!text) {
+    return null
+  }
+
+  return { role, text }
+}
+
+function normalizeConversationRecord(id, raw) {
+  const messages = Array.isArray(raw?.messages)
+    ? raw.messages.map(normalizeMessage).filter(Boolean)
+    : []
+
+  if (messages.length === 0) {
+    return null
+  }
+
+  const firstUserMessage = messages.find((message) => message.role === 'user')
+  return {
+    id: String(id),
+    title: String(raw?.title || firstUserMessage?.text?.slice(0, 56) || 'Conversation'),
+    updatedAt: toMillis(raw?.clientUpdatedAt || raw?.updatedAt || raw?.createdAt) || Date.now(),
+    messages,
+  }
+}
+
+function mergeConversationLists(primary, secondary) {
+  const byId = new Map()
+  const combinedEntries = [...(primary || []), ...(secondary || [])]
+
+  combinedEntries.forEach((entry) => {
+    const normalized = normalizeConversationRecord(entry?.id, entry)
+    if (!normalized) {
+      return
+    }
+
+    const existing = byId.get(normalized.id)
+    if (!existing || normalized.updatedAt >= existing.updatedAt) {
+      byId.set(normalized.id, normalized)
+    }
+  })
+
+  return [...byId.values()]
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .slice(0, 24)
+}
+
+function areConversationListsEqual(left, right) {
+  if (left.length !== right.length) {
+    return false
+  }
+
+  for (let i = 0; i < left.length; i += 1) {
+    const a = left[i]
+    const b = right[i]
+
+    if (!a || !b) {
+      return false
+    }
+
+    if (a.id !== b.id || a.title !== b.title || a.updatedAt !== b.updatedAt) {
+      return false
+    }
+
+    if (!Array.isArray(a.messages) || !Array.isArray(b.messages) || a.messages.length !== b.messages.length) {
+      return false
+    }
+
+    for (let j = 0; j < a.messages.length; j += 1) {
+      if (a.messages[j]?.role !== b.messages[j]?.role || a.messages[j]?.text !== b.messages[j]?.text) {
+        return false
+      }
+    }
+  }
+
+  return true
+}
+
+function getConversationStorageKey(uid) {
+  const safeUid = String(uid || '').trim() || 'anonymous'
+  return `${STORAGE_KEY_PREFIX}:${safeUid}`
+}
+
+function loadStoredConversations(storageKey) {
   if (typeof window === 'undefined') {
     return []
   }
 
+  if (!storageKey) {
+    return []
+  }
+
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY)
+    const raw = window.localStorage.getItem(storageKey)
     if (!raw) {
       return []
     }
 
     const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? parsed : []
+    return Array.isArray(parsed) ? mergeConversationLists([], parsed) : []
   } catch {
     return []
   }
 }
 
-function saveStoredConversations(conversations) {
+function saveStoredConversations(storageKey, conversations) {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  if (!storageKey) {
+    return
+  }
+
+  try {
+    const safeConversations = mergeConversationLists([], Array.isArray(conversations) ? conversations : [])
+    window.localStorage.setItem(storageKey, JSON.stringify(safeConversations))
+  } catch {
+    // Ignore write failures in private or constrained storage environments.
+  }
+}
+
+function loadPendingCapture() {
+  if (typeof window === 'undefined') {
+    return null
+  }
+
+  try {
+    const raw = window.sessionStorage.getItem(PENDING_CAPTURE_KEY)
+    if (!raw) {
+      return null
+    }
+
+    const payload = JSON.parse(raw)
+    if (!payload?.base64Image) {
+      return null
+    }
+
+    return payload
+  } catch {
+    return null
+  }
+}
+
+function clearPendingCapture() {
   if (typeof window === 'undefined') {
     return
   }
 
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(conversations))
+    window.sessionStorage.removeItem(PENDING_CAPTURE_KEY)
   } catch {
-    // Ignore write failures in private or constrained storage environments.
+    // Ignore storage cleanup failure.
   }
+}
+
+function savePendingCapture(payload) {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  try {
+    window.sessionStorage.setItem(PENDING_CAPTURE_KEY, JSON.stringify(payload))
+  } catch {
+    // Ignore storage failures and let chatbot run without auto-processing.
+  }
+}
+
+function getQueryParam(search, key) {
+  try {
+    return String(new URLSearchParams(search).get(key) || '').trim()
+  } catch {
+    return ''
+  }
+}
+
+async function hydratePendingCaptureFromFirestore(uid, captureId) {
+  const record = await loadUserScanCapture(uid, captureId)
+  if (!record?.downloadURL) {
+    return null
+  }
+
+  const base64Image = await downloadUrlToDataUrl(record.downloadURL)
+  const payload = {
+    source: record.source || 'camera',
+    captureId: String(record.captureId || captureId).trim(),
+    base64Image,
+    capturedAt: record.capturedAt || new Date().toISOString(),
+    userPrompt: record.userPrompt || 'I just captured this crop photo. Please diagnose and advise.',
+    ownerUid: record.ownerUid || uid,
+    captureDownloadURL: record.downloadURL || null,
+    captureStoragePath: record.storagePath || null,
+    gridId: record.gridId || null,
+    zoneAssignmentMode: record.zoneAssignmentMode || null,
+    zonePosition: record.zonePosition || null,
+    zonePositionLabel: record.zonePositionLabel || null,
+  }
+
+  savePendingCapture(payload)
+  return payload
+}
+
+function normalizeScanStatus(result) {
+  return Number(result?.severity || 0) >= 40 ? 'abnormal' : 'normal'
 }
 
 function formatConversationTime(value) {
@@ -59,51 +347,104 @@ function formatConversationTime(value) {
   }).format(new Date(value))
 }
 
-function buildAssistantReply(prompt, reports) {
-  const normalized = prompt.toLowerCase()
-  const asksHistory = normalized.includes('history') || normalized.includes('scan') || normalized.includes('report')
-  const asksTreatment = normalized.includes('treat') || normalized.includes('spray') || normalized.includes('cost')
-
-  if (asksHistory) {
-    if (reports.length === 0) {
-      return 'No scan history is available yet. Capture a leaf scan and I will summarize risk and next action.'
-    }
-
-    const latest = reports[0]
-    return `Latest scan: ${latest?.disease || 'Unknown issue'} at ${Number(latest?.severity || 0)}% severity with ${Number(latest?.confidence || 0)}% confidence. I can break down treatment options when you are ready.`
-  }
-
-  if (asksTreatment) {
-    if (reports.length === 0) {
-      return 'I need at least one scan result before recommending a treatment plan. Please run the scanner first.'
-    }
-
-    const latest = reports[0]
-    const severity = Number(latest?.severity || 0)
-    if (severity >= 60) {
-      return 'Risk is high. Prioritize treatment within 24 hours, check wind and rain windows, and verify stock before field application.'
-    }
-
-    if (severity >= 30) {
-      return 'Risk is moderate. Monitor for 24 to 48 hours, prepare spray inventory, and target calm weather for application timing.'
-    }
-
-    return 'Risk is low. Continue monitoring, avoid unnecessary chemical use, and log the next scan for trend tracking.'
-  }
-
-  return 'Request received. I can help with disease summary, scan trend interpretation, and treatment planning with inventory awareness.'
-}
-
 export default function Chatbot() {
+  const location = useLocation()
   const navigate = useNavigate()
+  const { user, profile, isAuthLoading } = useSessionContext()
   const { reports, timelineItems, isLoading, error } = useScanHistory()
-  const [conversationHistory, setConversationHistory] = useState(loadStoredConversations)
+  const { saveScanReport } = useScanReports()
+  const [conversationHistory, setConversationHistory] = useState([])
   const [activeConversationId, setActiveConversationId] = useState(createConversationId)
   const [messages, setMessages] = useState([WELCOME_MESSAGE])
   const [input, setInput] = useState('')
   const [isHistoryOpen, setIsHistoryOpen] = useState(false)
   const [isThinking, setIsThinking] = useState(false)
+  const [isAutoProcessing, setIsAutoProcessing] = useState(false)
   const threadRef = useRef(null)
+  const photoInputRef = useRef(null)
+  const autoScanTriggeredRef = useRef(false)
+  const processedAutoScanCaptureIdsRef = useRef(new Set())
+  const suppressConversationBootstrapRef = useRef(false)
+  const migratedConversationUsersRef = useRef(new Set())
+  const conversationStorageKey = getConversationStorageKey(user?.uid)
+  const farmLocation = String(profile?.onboarding?.location || '').trim()
+  const { coordinates } = useFarmLocationCoordinates({
+    locationText: farmLocation,
+    savedLat: profile?.onboarding?.locationLat,
+    savedLng: profile?.onboarding?.locationLng,
+  })
+
+  const persistConversationToFirestore = useCallback(async (uid, entry) => {
+    if (!uid || !entry || !db || !isFirebaseConfigured) {
+      return
+    }
+
+    try {
+      await setDoc(
+        doc(db, USERS_COLLECTION, uid, CONVERSATION_COLLECTION, entry.id),
+        {
+          id: entry.id,
+          ownerUid: uid,
+          title: entry.title,
+          messages: entry.messages,
+          clientUpdatedAt: entry.updatedAt,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true },
+      )
+    } catch {
+      // Keep local chat UX even if remote conversation sync fails.
+    }
+  }, [])
+
+  const migrateLegacyConversationsForUser = useCallback(async (uid) => {
+    if (!uid || !db || !isFirebaseConfigured || migratedConversationUsersRef.current.has(uid)) {
+      return
+    }
+
+    const legacyRootCollection = collection(db, CONVERSATION_COLLECTION)
+    const docsById = new Map()
+    const ownerFields = ['ownerUid', 'userId', 'uid']
+
+    try {
+      for (const fieldName of ownerFields) {
+        const snapshot = await getDocs(query(legacyRootCollection, where(fieldName, '==', uid)))
+        snapshot.docs.forEach((legacyDoc) => {
+          docsById.set(legacyDoc.id, legacyDoc)
+        })
+      }
+
+      const migrationTasks = [...docsById.values()].map(async (legacyDoc) => {
+        const legacyData = legacyDoc.data() || {}
+        const normalized = normalizeConversationRecord(legacyDoc.id, legacyData)
+
+        if (!normalized) {
+          return
+        }
+
+        await setDoc(
+          doc(db, USERS_COLLECTION, uid, CONVERSATION_COLLECTION, normalized.id),
+          {
+            id: normalized.id,
+            ownerUid: uid,
+            title: normalized.title,
+            messages: normalized.messages,
+            clientUpdatedAt: normalized.updatedAt,
+            updatedAt: serverTimestamp(),
+          },
+          { merge: true },
+        )
+
+        await deleteDoc(legacyDoc.ref)
+      })
+
+      await Promise.all(migrationTasks)
+    } catch (migrationError) {
+      console.warn('Legacy conversation migration skipped:', migrationError)
+    }
+
+    migratedConversationUsersRef.current.add(uid)
+  }, [])
 
   const firstSeverity = Number(reports[0]?.severity || 0)
   const lastSeverity = Number(reports[reports.length - 1]?.severity || 0)
@@ -122,8 +463,233 @@ export default function Chatbot() {
   }, [messages, isThinking])
 
   useEffect(() => {
-    saveStoredConversations(conversationHistory)
-  }, [conversationHistory])
+    if (suppressConversationBootstrapRef.current) {
+      return
+    }
+
+    const storedConversations = loadStoredConversations(conversationStorageKey)
+    const initialConversation = storedConversations[0] || null
+
+    setConversationHistory(storedConversations)
+    setActiveConversationId(initialConversation?.id || createConversationId())
+    setMessages(initialConversation?.messages || [WELCOME_MESSAGE])
+    setInput('')
+    setIsThinking(false)
+  }, [conversationStorageKey])
+
+  useEffect(() => {
+    saveStoredConversations(conversationStorageKey, conversationHistory)
+  }, [conversationHistory, conversationStorageKey])
+
+  useEffect(() => {
+    const uid = String(user?.uid || '').trim()
+    if (!uid || !db || !isFirebaseConfigured) {
+      return undefined
+    }
+
+    let unsubscribe = () => {}
+    let cancelled = false
+
+    const connectConversationStream = async () => {
+      try {
+        await migrateLegacyConversationsForUser(uid)
+      } catch (migrationError) {
+        console.warn('Legacy conversation migration skipped:', migrationError)
+      }
+
+      if (cancelled) {
+        return
+      }
+
+      const conversationsRef = collection(db, USERS_COLLECTION, uid, CONVERSATION_COLLECTION)
+      unsubscribe = onSnapshot(
+        conversationsRef,
+        (snapshot) => {
+          const remoteEntries = snapshot.docs
+            .map((item) => normalizeConversationRecord(item.id, item.data() || {}))
+            .filter(Boolean)
+
+          setConversationHistory((prev) => {
+            const merged = mergeConversationLists(prev, remoteEntries)
+            return areConversationListsEqual(prev, merged) ? prev : merged
+          })
+        },
+        () => {
+          // Keep local chat UX even if remote conversation sync fails.
+        },
+      )
+    }
+
+    connectConversationStream()
+
+    return () => {
+      cancelled = true
+      unsubscribe()
+    }
+  }, [migrateLegacyConversationsForUser, user?.uid])
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search)
+    const fromScan = params.get('fromScan') === '1'
+    const captureIdFromUrl = getQueryParam(location.search, 'captureId')
+
+    if (!fromScan || isAutoProcessing || isThinking || isAuthLoading) {
+      return
+    }
+
+    if (autoScanTriggeredRef.current) {
+      return
+    }
+
+    if (captureIdFromUrl && processedAutoScanCaptureIdsRef.current.has(captureIdFromUrl)) {
+      navigate('/app/chatbot', { replace: true })
+      clearPendingCapture()
+      return
+    }
+
+    const uid = String(user?.uid || '').trim()
+    let cancelled = false
+    const conversationId = activeConversationId || createConversationId()
+    const defaultUserPrompt = CAMERA_CAPTURE_USER_MESSAGE
+
+    autoScanTriggeredRef.current = true
+    suppressConversationBootstrapRef.current = true
+
+    if (activeConversationId !== conversationId) {
+      setActiveConversationId(conversationId)
+    }
+
+    setMessages((prev) => {
+      const lastMessage = prev[prev.length - 1]
+      if (lastMessage?.role === 'user' && lastMessage?.text === defaultUserPrompt) {
+        return prev
+      }
+
+      const next = [...prev, { role: 'user', text: defaultUserPrompt }]
+      persistConversation(conversationId, next)
+      return next
+    })
+
+    setIsAutoProcessing(true)
+    setIsThinking(true)
+    navigate('/app/chatbot', { replace: true })
+
+    const runAutoScan = async () => {
+      let pendingCapture = null
+      let resolvedCaptureId = captureIdFromUrl
+
+      try {
+        pendingCapture = loadPendingCapture()
+
+        if ((!pendingCapture?.base64Image || !pendingCapture?.captureId) && captureIdFromUrl && uid) {
+          try {
+            pendingCapture = await hydratePendingCaptureFromFirestore(uid, captureIdFromUrl)
+          } catch (captureLoadError) {
+            console.warn('Unable to hydrate scan capture from Firestore:', captureLoadError)
+          }
+        }
+
+        if (cancelled) {
+          return
+        }
+
+        const pendingCaptureId = String(pendingCapture?.captureId || '').trim()
+        resolvedCaptureId = pendingCaptureId || captureIdFromUrl
+        if (resolvedCaptureId && processedAutoScanCaptureIdsRef.current.has(resolvedCaptureId)) {
+          return
+        }
+
+        if (resolvedCaptureId) {
+          processedAutoScanCaptureIdsRef.current.add(resolvedCaptureId)
+        }
+
+        if (!pendingCapture?.base64Image) {
+          const missingCaptureMessage = {
+            role: 'ai',
+            text: 'I could not find the captured photo. Please capture again and retry.',
+          }
+          setMessages((prev) => {
+            const next = [...prev, missingCaptureMessage]
+            persistConversation(conversationId, next)
+            return next
+          })
+          return
+        }
+
+        const userPrompt = String(pendingCapture.userPrompt || defaultUserPrompt).trim() || defaultUserPrompt
+
+        const response = await scanAndAskAssistant({
+          source: pendingCapture.source || 'camera',
+          gridId: pendingCapture.gridId || null,
+          userId: uid || null,
+          base64Image: pendingCapture.base64Image,
+          userPrompt,
+        })
+
+        try {
+          await saveScanReport({
+            ...response,
+            ownerUid: uid || null,
+            source: pendingCapture.source || 'camera',
+            status: normalizeScanStatus(response),
+            gridId: pendingCapture.gridId || response?.gridId || response?.zone || null,
+            zone: pendingCapture.gridId || response?.zone || null,
+            zoneAssignmentMode: pendingCapture.zoneAssignmentMode || null,
+            zonePosition: pendingCapture.zonePosition || null,
+            zonePositionLabel: pendingCapture.zonePositionLabel || null,
+            captureId: resolvedCaptureId || null,
+            captureDownloadURL: pendingCapture.captureDownloadURL || null,
+            captureStoragePath: pendingCapture.captureStoragePath || null,
+            captureCapturedAt: pendingCapture.capturedAt || null,
+          })
+        } catch {
+          // Keep chat flow smooth even when persistence fails.
+        }
+
+        const diagnosisLine = `Diagnosis: ${response.disease} | Severity ${response.severity}% | Confidence ${response.confidence}% | Risk ${response.spread_risk}.`
+        const assistantText = `${response.assistant_reply}\n\n${diagnosisLine}`
+
+        const aiMessage = { role: 'ai', text: assistantText }
+        setMessages((prev) => {
+          const next = [...prev, aiMessage]
+          persistConversation(conversationId, next)
+          return next
+        })
+      } catch (scanError) {
+        const aiMessage = {
+          role: 'ai',
+          text: scanError?.message || 'I could not process that photo right now. Please capture again and retry.',
+        }
+        setMessages((prev) => {
+          const next = [...prev, aiMessage]
+          persistConversation(conversationId, next)
+          return next
+        })
+      } finally {
+        clearPendingCapture()
+        if (!cancelled) {
+          setIsAutoProcessing(false)
+          setIsThinking(false)
+        }
+        suppressConversationBootstrapRef.current = false
+      }
+    }
+
+    runAutoScan()
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    activeConversationId,
+    isAuthLoading,
+    isAutoProcessing,
+    isThinking,
+    location.search,
+    navigate,
+    saveScanReport,
+    user?.uid,
+  ])
 
   const persistConversation = (conversationId, nextMessages) => {
     const firstUserMessage = nextMessages.find((message) => message.role === 'user')
@@ -138,13 +704,18 @@ export default function Chatbot() {
       messages: nextMessages,
     }
 
+    const uid = String(user?.uid || '').trim()
+    if (uid) {
+      void persistConversationToFirestore(uid, nextEntry)
+    }
+
     setConversationHistory((prev) => [
       nextEntry,
       ...prev.filter((item) => item.id !== conversationId),
     ].slice(0, 24))
   }
 
-  const handleSend = (rawText = input) => {
+  const handleSend = async (rawText = input) => {
     const trimmed = rawText.trim()
     if (!trimmed || isThinking) {
       return
@@ -164,15 +735,146 @@ export default function Chatbot() {
     setInput('')
     setIsThinking(true)
 
-    window.setTimeout(() => {
-      const aiResponse = { role: 'ai', text: buildAssistantReply(trimmed, reports) }
-      setMessages((prev) => {
-        const next = [...prev, aiResponse]
-        persistConversation(conversationId, next)
-        return next
+    try {
+      const resolvedLat = Number(coordinates?.lat)
+      const resolvedLng = Number(coordinates?.lng)
+      const response = await sendAssistantMessage({
+        userPrompt: trimmed,
+        userId: String(user?.uid || '').trim(),
+        zone: reports[0]?.gridId || reports[0]?.zone || null,
+        location: farmLocation,
+        lat: Number.isFinite(resolvedLat) ? resolvedLat : null,
+        lng: Number.isFinite(resolvedLng) ? resolvedLng : null,
       })
+
+      const assistantText = String(response?.assistant_reply || '').trim() || 'No assistant response received.'
+      appendAssistantMessage(conversationId, assistantText)
+    } catch (messageError) {
+      appendAssistantMessage(
+        conversationId,
+        messageError?.message || 'I could not process your request right now. Please try again.',
+      )
+    } finally {
       setIsThinking(false)
-    }, 900)
+    }
+  }
+
+  const appendAssistantMessage = (conversationId, text) => {
+    const aiMessage = { role: 'ai', text }
+    setMessages((prev) => {
+      const next = [...prev, aiMessage]
+      persistConversation(conversationId, next)
+      return next
+    })
+  }
+
+  const handlePhotoUpload = async (file) => {
+    if (!file || isThinking) {
+      return
+    }
+
+    const conversationId = activeConversationId || createConversationId()
+    if (activeConversationId !== conversationId) {
+      setActiveConversationId(conversationId)
+    }
+
+    if (!isPhotoFile(file)) {
+      appendAssistantMessage(conversationId, '仅支持照片格式上传（JPG、PNG、WEBP、HEIC、HEIF）。')
+      if (photoInputRef.current) {
+        photoInputRef.current.value = ''
+      }
+      return
+    }
+
+    if (Number(file.size || 0) > MAX_UPLOAD_BYTES) {
+      appendAssistantMessage(conversationId, '照片体积过大，请上传 12MB 以内的图片。')
+      if (photoInputRef.current) {
+        photoInputRef.current.value = ''
+      }
+      return
+    }
+
+    const userPrompt = '我刚上传了一张作物照片，请告诉我这是什么问题，并给出治疗方案。'
+    const userMessage = {
+      role: 'user',
+      text: `已上传照片：${file.name}`,
+    }
+
+    setMessages((prev) => {
+      const next = [...prev, userMessage]
+      persistConversation(conversationId, next)
+      return next
+    })
+
+    setIsThinking(true)
+
+    try {
+      const base64Image = await fileToUploadDataUrl(file)
+      const uid = String(user?.uid || '').trim()
+      const captureId = createScanCaptureId()
+      let persistedCapture = { captureId, persisted: false, downloadURL: null, storagePath: null }
+
+      if (uid) {
+        try {
+          persistedCapture = await persistUserScanCapture({
+            uid,
+            captureId,
+            base64Image,
+            capturedAt: new Date().toISOString(),
+            source: 'upload',
+            userPrompt,
+            gridId: reports[0]?.gridId || reports[0]?.zone || null,
+            conversationId,
+          })
+        } catch (captureError) {
+          console.warn('Failed to persist uploaded scan capture:', captureError)
+        }
+      }
+
+      const response = await scanAndAskAssistant({
+        source: 'upload',
+        userId: uid || null,
+        base64Image,
+        userPrompt,
+      })
+
+      try {
+        await saveScanReport({
+          ...response,
+          ownerUid: uid || null,
+          source: 'upload',
+          status: normalizeScanStatus(response),
+          captureId: persistedCapture.captureId,
+          captureDownloadURL: persistedCapture.downloadURL || null,
+          captureStoragePath: persistedCapture.storagePath || null,
+          captureCapturedAt: new Date().toISOString(),
+        })
+      } catch {
+        // Keep chat response flow even if report persistence fails.
+      }
+
+      const diagnosisLine = `Diagnosis: ${response.disease} | Severity ${response.severity}% | Confidence ${response.confidence}% | Risk ${response.spread_risk}.`
+      appendAssistantMessage(conversationId, `${response.assistant_reply}\n\n${diagnosisLine}`)
+    } catch (uploadError) {
+      appendAssistantMessage(
+        conversationId,
+        uploadError?.message || '照片分析失败，请稍后重试。',
+      )
+    } finally {
+      setIsThinking(false)
+      if (photoInputRef.current) {
+        photoInputRef.current.value = ''
+      }
+    }
+  }
+
+  const handlePhotoInputChange = (event) => {
+    const file = event.target?.files?.[0]
+    if (!file) {
+      return
+    }
+
+    handlePhotoUpload(file)
   }
 
   const handleKeyDown = (event) => {
@@ -360,6 +1062,24 @@ export default function Chatbot() {
 
         <footer className="pg-chatbot-composer-wrap">
           <div className="pg-chatbot-composer">
+            <input
+              ref={photoInputRef}
+              type="file"
+              accept="image/*"
+              className="pg-chatbot-photo-input"
+              onChange={handlePhotoInputChange}
+              aria-label="Upload crop photo"
+            />
+            <button
+              type="button"
+              className="pg-chatbot-upload-btn"
+              onClick={() => photoInputRef.current?.click()}
+              disabled={isThinking}
+              aria-label="Upload photo"
+              title="Upload photo"
+            >
+              <IconImage className="pg-icon" />
+            </button>
             <input
               type="text"
               className="pg-chatbot-input"

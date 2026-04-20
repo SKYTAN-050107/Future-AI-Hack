@@ -1,106 +1,86 @@
-# PadiGuard AI Diagnosis Backend
+# PadiGuard Diagnosis Backend
 
-实时病虫害诊断后端（FastAPI + Google ADK + Vertex AI），通过 `WS /ws/scan` 接收前端裁剪图并返回结构化诊断结果。
+FastAPI backend for crop diagnosis, assistant responses, weather intelligence, treatment ROI, inventory, and dashboard aggregation.
 
-## Current Diagnosis Flow (最新)
+## Runtime Surface
 
-每个 region 走同一条 ADK 顺序流水线：
+HTTP routes:
 
-1. `CropEmbedAgent`：base64 图像解码 -> Vertex AI Multimodal Embedding（1408 维）
-2. `VectorMatchAgent`：Vertex AI Vector Search Top-K 检索 + 置信度阈值过滤
-3. `ReasoningAgent`：使用最高分候选 `id` 到 Firestore 查询 `cropType`/`disease` 后生成最终诊断
+- `GET /health`
+- `POST /api/scan`
+- `POST /api/assistant/scan`
+- `POST /api/assistant/scan-multi`
+- `POST /api/assistant/message`
+- `GET /api/weather`
+- `GET /api/v1/weather`
+- `POST /api/treatment`
+- `POST /api/inventory`
+- `POST /api/v1/inventory`
+- `GET /api/inventory`
+- `GET /api/v1/inventory`
+- `PATCH /api/inventory/{item_id}`
+- `PATCH /api/v1/inventory/{item_id}`
+- `GET /api/zones`
+- `GET /api/zones/summary`
+- `GET /api/v1/zones/summary`
+- `POST /api/dashboard/summary`
 
-> 当前主路径是 **Vector-first, Firestore-enriched**。`services/llm_service.py` 存在但不在这条线上被调用。
+WebSocket route:
 
-## Runtime Architecture
+- `WS /ws/scan`
 
-```text
-Frontend (MediaPipe bbox + crop b64)
-        |
-        |  WS /ws/scan
-        v
-FastAPI Router
-  - parse ScanFrame
-  - concurrent per-region pipeline
-        |
-        v
-LiveScanPipeline (Google ADK SequentialAgent)
-  CropEmbed -> VectorMatch -> Reasoning
-        |
-        v
-ScanResponse (frame_number + results[])
-        |
-        +--> if is_abnormal: Firestore scanReports + grids update
-```
+## Diagnosis Pipeline
 
-## WebSocket Contract
+Each crop region is processed through the same ADK pipeline:
 
-### Client -> Server (`ScanFrame`)
+1. `CropEmbedAgent`: image region to embedding.
+2. `VectorMatchAgent`: embedding to nearest candidates from Vector Search.
+3. `ReasoningAgent`: top candidate enrichment and diagnosis shaping.
 
-```json
-{
-  "grid_id": "section_A1",
-  "frame_number": 120,
-  "regions": [
-    {
-      "cropped_image_b64": "...",
-      "bbox": {
-        "x": 0.1,
-        "y": 0.2,
-        "width": 0.3,
-        "height": 0.4,
-        "mediapipe_label": "leaf",
-        "detection_score": 0.9
-      }
-    }
-  ]
-}
-```
+The REST and WebSocket scanner routes both use this pipeline.
 
-### Server -> Client (`ScanResponse`)
+## Assistant Flows
 
-```json
-{
-  "frame_number": 120,
-  "results": [
-    {
-      "cropType": "Rice",
-      "disease": "Rice Blast",
-      "severity": "Moderate",
-      "severityScore": 0.91,
-      "treatmentPlan": "Reference image: gs://...",
-      "survivalProb": 0.6,
-      "is_abnormal": true,
-      "bbox": {
-        "x": 0.1,
-        "y": 0.2,
-        "width": 0.3,
-        "height": 0.4,
-        "mediapipe_label": "leaf",
-        "detection_score": 0.9
-      }
-    }
-  ]
-}
-```
+- `POST /api/assistant/scan`: photo diagnosis plus generated assistant reply.
+- `POST /api/assistant/scan-multi`: multi-region photo diagnosis and consolidated reply.
+- `POST /api/assistant/message`: text-only assistant message based on real scan history.
 
-## Key Env Variables
+## Agronomy and Business Flows
 
-`config/settings.py` 当前依赖：
+- `GET /api/weather`: forecast and spray advisory from Tomorrow.io.
+- `POST /api/treatment`: treatment recommendation and ROI from market + inventory + weather context.
+- `GET /api/inventory`: user inventory from Firestore.
+- `PATCH /api/inventory/{item_id}`: update inventory quantity.
+- `POST /api/dashboard/summary`: aggregated weather, zone health, and financial summary.
+
+## Key Configuration
+
+Primary settings are in `config/settings.py`.
+
+Core:
 
 - `GCP_PROJECT_ID`
-- `GCP_REGION` (default: `us-central1`)
-- `GOOGLE_APPLICATION_CREDENTIALS` (optional string path, but usually needed for local run)
+- `GCP_REGION`
+- `GOOGLE_APPLICATION_CREDENTIALS`
 - `VECTOR_SEARCH_INDEX_ENDPOINT`
 - `VECTOR_SEARCH_DEPLOYED_INDEX_ID`
-- `VECTOR_SEARCH_CONFIDENCE_THRESHOLD` (default `0.65`)
-- `VECTOR_SEARCH_FAST_MATCH_THRESHOLD` (default `0.85`)
-- `FIRESTORE_GRID_COLLECTION` (default `grids`)
-- `FIRESTORE_REPORT_COLLECTION` (default `scanReports`)
-- `FIRESTORE_CANDIDATE_COLLECTION` (default `candidateMetadata`，文档 ID 需等于 Vector candidate id)
-- `DEFAULT_TOP_K` (default `5`)
+
+Firestore:
+
+- `FIRESTORE_GRID_COLLECTION`
+- `FIRESTORE_REPORT_COLLECTION`
+- `FIRESTORE_CANDIDATE_COLLECTION`
+- `FIRESTORE_PESTICIDE_COLLECTION`
+
+External services:
+
+- `TOMORROW_IO_API_KEY`
+- `TOMORROW_IO_BASE_URL`
+- `MCP_SERVER_URL`
 
 ## Local Run
+
+Backend only:
 
 ```bash
 cd backend/diagnosis
@@ -108,12 +88,18 @@ pip install -r requirements.txt
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-健康检查：`GET /health`
+Frontend + backend one command (from frontend workspace):
 
-## Upload Metadata To Firestore
+```bash
+cd frontend
+npm run dev:full
+```
 
-When ReasoningAgent receives a Vector Search candidate id, it reads diagnosis labels from Firestore.
-You can bulk upload your metadata JSON/JSONL file with:
+This runs Vite and diagnosis backend together; Vite proxies `/api`, `/health`, and `/ws` to the backend target.
+
+## Firestore Candidate Metadata Upload
+
+Use this script to upload candidate metadata referenced by vector IDs:
 
 ```bash
 cd backend/diagnosis
@@ -122,33 +108,46 @@ python scripts/upload_candidate_metadata.py --input ../../my_metadata.json
 
 Optional flags:
 
-- `--collection candidateMetadata` (default from `.env` -> `FIRESTORE_CANDIDATE_COLLECTION`)
-- `--id-field id` (field used as Firestore document id)
-- `--dry-run` (validate without writing)
+- `--collection candidateMetadata`
+- `--id-field id`
+- `--dry-run`
 
-Required data rule:
+## Pesticide Catalog Priority
 
-- Every item must include `id`, and that value must match Vector Search neighbor id.
+Photo diagnosis treatment guidance now resolves pesticide recommendations in this order:
 
-## Project Structure (Diagnosis Module)
+1. `pesticideCatalog` in Firestore (configurable by `FIRESTORE_PESTICIDE_COLLECTION`).
+2. Diagnosis fallback guidance from pipeline defaults when no catalog match is found.
+
+When a catalog match exists, the scan result includes:
+
+- `recommendedPesticides`
+- `recommendationSource` (`pesticideCatalog`)
+- `matchedPestName`
+
+The `/api/scan` and `/api/assistant/scan` responses expose these fields so frontend and assistant layers can keep recommendations consistent.
+
+To import or refresh the catalog from CSV:
+
+```bash
+cd backend/diagnosis
+python scripts/import_pesticide_catalog.py --input gs://disease_dataset_pd/Pesticide_Dataset/Pesticides.csv
+```
+
+## Module Layout
 
 ```text
 backend/diagnosis/
 ├── main.py
 ├── api/router.py
-├── orchestration/pipeline.py
-├── agents/
-│   ├── crop_embed_agent.py
-│   ├── vector_match_agent.py
-│   └── reasoning_agent.py
-├── services/
-│   ├── embedding_service.py
-│   ├── vector_search_service.py
-│   ├── firestore_service.py
-│   └── llm_service.py
-├── models/
-│   ├── scan_models.py
-│   └── candidate.py
 ├── config/settings.py
-└── tests/test_pipeline.py
+├── models/scan_models.py
+├── orchestration/pipeline.py
+├── services/
+│   ├── weather_service.py
+│   ├── treatment_service.py
+│   ├── inventory_service.py
+│   ├── dashboard_service.py
+│   └── assistant_message_service.py
+└── tests/
 ```

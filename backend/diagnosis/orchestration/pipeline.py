@@ -172,6 +172,9 @@ class LiveScanPipeline:
                 "treatmentPlan": "None",
                 "survivalProb": 1.0,
                 "is_abnormal": False,
+                "recommendedPesticides": [],
+                "recommendationSource": "fallback",
+                "matchedPestName": None,
                 "bbox": final_session.state.get("bbox", {}),
                 "grid_id": final_session.state.get("grid_id"),
             }

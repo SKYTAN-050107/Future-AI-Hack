@@ -1,0 +1,11 @@
+{
+  "scripts": {
+    "dev:backend:swarm": "cd ../backend/swarm && python main.py",
+    "dev:backend:diagnosis": "cd ../backend/diagnosis && python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000",
+    "dev:backend": "concurrently -k -n DIAGNOSIS,SWARM -c blue,magenta \"npm:dev:backend:diagnosis\" \"npm:dev:backend:swarm\""
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "shadcn": "^4.3.0"
+  }
+}
