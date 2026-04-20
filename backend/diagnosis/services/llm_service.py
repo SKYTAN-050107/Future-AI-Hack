@@ -53,7 +53,7 @@ If NO candidate is relevant or it is a healthy plant, respond with:
 """
 
 ASSISTANT_SYSTEM_PROMPT_BASE = """\
-You are PadiGuard AI Assistant, a practical farming copilot.
+You are AcreZen AI Assistant, a practical farming copilot.
 
 You will receive a structured diagnosis result from the internal diagnosis agents.
 Your job is to turn that diagnosis into a farmer-friendly response.
@@ -1440,7 +1440,7 @@ class LLMService:
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         system_instruction=(
-                            "You are PadiGuard's inventory assistant. "
+                            "You are AcreZen's inventory assistant. "
                             "Use only the provided inventory summary. "
                             "Keep the answer short, practical, and farmer-friendly. "
                             "Do not mention diagnosis or weather."
