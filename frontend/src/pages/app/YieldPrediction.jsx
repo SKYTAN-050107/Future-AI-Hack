@@ -2,11 +2,13 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import SectionHeader from '../../components/ui/SectionHeader'
 import BackButton from '../../components/navigation/BackButton'
+import SkeletonBlock from '../../components/feedback/SkeletonBlock'
 import { getCrops } from '../../api/crops'
 import { runSwarmOrchestrator } from '../../api/swarm'
 import { useSessionContext } from '../../hooks/useSessionContext'
 import { useScanHistory } from '../../hooks/useScanHistory'
 import { useGrids } from '../../hooks/useGrids'
+import { getYieldForecastCache, saveYieldForecastCache, YIELD_FORECAST_CACHE_TTL_MS } from '../../utils/yieldForecastCache'
 
 function toSafeNumber(value, fallback = 0) {
   const parsed = Number(value)
@@ -53,11 +55,50 @@ function ConfidenceBar({ value }) {
   )
 }
 
+function YieldForecastSkeleton() {
+  return (
+    <>
+      <article className="pg-card">
+        <h2>Predicted Yield</h2>
+        <div style={{ margin: '10px 0 8px' }}>
+          <SkeletonBlock width={170} height={34} rounded={10} />
+        </div>
+        <SkeletonBlock width={190} height={13} rounded={8} />
+      </article>
+
+      <article className="pg-card">
+        <h2>Confidence &amp; Loss Context</h2>
+        <SkeletonBlock width={130} height={13} rounded={8} />
+        <div style={{ marginTop: 8 }}>
+          <SkeletonBlock width="100%" height={10} rounded={999} />
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <SkeletonBlock width={78} height={13} rounded={8} />
+        </div>
+        <div style={{ marginTop: 12 }}>
+          <SkeletonBlock width={210} height={13} rounded={8} />
+        </div>
+      </article>
+
+      <article className="pg-card">
+        <h2>Source Transparency</h2>
+        <SkeletonBlock width="86%" height={13} rounded={8} />
+        <div style={{ marginTop: 8, display: 'grid', gap: 6 }}>
+          <SkeletonBlock width="72%" height={13} rounded={8} />
+          <SkeletonBlock width="64%" height={13} rounded={8} />
+          <SkeletonBlock width="58%" height={13} rounded={8} />
+          <SkeletonBlock width="69%" height={13} rounded={8} />
+        </div>
+      </article>
+    </>
+  )
+}
+
 export default function YieldPrediction() {
   const navigate = useNavigate()
   const { user, profile } = useSessionContext()
-  const { latestReport } = useScanHistory()
-  const { grids } = useGrids()
+  const { latestReport, isLoading: isScanHistoryLoading } = useScanHistory()
+  const { grids, isLoading: isGridsLoading } = useGrids()
 
   const [crops, setCrops] = useState([])
   const [selectedCropId, setSelectedCropId] = useState('')
@@ -68,6 +109,7 @@ export default function YieldPrediction() {
   const [isForecastLoading, setIsForecastLoading] = useState(false)
 
   const userId = String(user?.uid || '').trim()
+  const isPrerequisiteLoading = isLoadingCrops || isScanHistoryLoading || isGridsLoading
 
   const firstGridWithCentroid = useMemo(
     () => grids.find((g) => Number.isFinite(g?.centroid?.lat) && Number.isFinite(g?.centroid?.lng)),
@@ -108,6 +150,14 @@ export default function YieldPrediction() {
   }, [selectedCrop?.areaHectares, totalAreaHectares])
 
   const forecastPayload = useMemo(() => {
+    if (isPrerequisiteLoading) {
+      return {
+        payload: null,
+        missing: [],
+        waiting: true,
+      }
+    }
+
     const gridId = String(latestReport?.gridId || latestReport?.zone || firstGridWithCentroid?.id || '').trim()
     const cropType = String(selectedCrop?.name || '').trim()
     const disease = String(latestReport?.disease || '').trim()
@@ -124,7 +174,13 @@ export default function YieldPrediction() {
     if (!resolvedFarmSize || resolvedFarmSize <= 0) missing.push('Add farm size via crop profile or mapped grids')
     if (survivalProb === null) missing.push('Latest scan needs severity data')
 
-    if (missing.length > 0) return { payload: null, missing }
+    if (missing.length > 0) {
+      return {
+        payload: null,
+        missing,
+        waiting: false,
+      }
+    }
 
     const severityPercent = Number(latestReport?.severity)
     const severityScore = Number.isFinite(Number(latestReport?.severityScore))
@@ -149,46 +205,65 @@ export default function YieldPrediction() {
         wind_direction: 'N',
       },
       missing: [],
+      waiting: false,
     }
-  }, [firstGridWithCentroid, latestReport, resolvedFarmSize, selectedCrop, userId])
+  }, [firstGridWithCentroid, isPrerequisiteLoading, latestReport, resolvedFarmSize, selectedCrop, userId])
 
   useEffect(() => {
     let active = true
-    if (!forecastPayload.payload) {
+    const payload = forecastPayload.payload
+
+    if (!payload) {
       setYieldForecast(null)
       setForecastError('')
       setIsForecastLoading(false)
       return undefined
     }
+
+    const cachedForecast = getYieldForecastCache({
+      userId,
+      payload,
+      ttlMs: YIELD_FORECAST_CACHE_TTL_MS,
+      includeStale: true,
+    })
+
+    if (cachedForecast?.forecast) {
+      setYieldForecast(cachedForecast.forecast)
+      setForecastError('')
+      if (cachedForecast.isFresh) {
+        setIsForecastLoading(false)
+        return () => { active = false }
+      }
+    }
+
     setIsForecastLoading(true)
     setForecastError('')
-    runSwarmOrchestrator(forecastPayload.payload)
+    runSwarmOrchestrator(payload)
       .then((res) => {
         if (!active) return
         const forecast = res?.yield_forecast && typeof res.yield_forecast === 'object' ? res.yield_forecast : null
         if (!forecast) { setForecastError('Yield forecast unavailable in swarm response.'); return }
         setYieldForecast(forecast)
+        saveYieldForecastCache({ userId, payload, forecast })
       })
       .catch((err) => {
         if (!active) return
-        setForecastError(err?.message || 'Unable to fetch yield forecast from swarm.')
+        if (!cachedForecast?.forecast) {
+          setYieldForecast(null)
+        }
+        setForecastError(
+          cachedForecast?.forecast
+            ? 'Showing cached forecast. Live refresh failed.'
+            : (err?.message || 'Unable to fetch yield forecast from swarm.'),
+        )
       })
       .finally(() => { if (active) setIsForecastLoading(false) })
     return () => { active = false }
-  }, [forecastPayload.payload])
+  }, [forecastPayload.payload, userId])
 
   const predictedYieldKg = toSafeNumber(yieldForecast?.predicted_yield_kg, 0)
   const confidence = toSafeNumber(yieldForecast?.confidence, 0)
   const yieldLossPercent = toSafeNumber(yieldForecast?.yield_loss_percent, 0)
-
-  if (isLoadingCrops) {
-    return (
-      <section className="pg-page pg-page-yield-prediction pg-glass-deep-dive">
-        <SectionHeader title="Yield Prediction" align="center" leadingAction={<BackButton fallback="/app" label="Back to home" />} />
-        <article className="pg-card"><p>Loading...</p></article>
-      </section>
-    )
-  }
 
   return (
     <section className="pg-page pg-page-yield-prediction pg-glass-deep-dive">
@@ -198,7 +273,17 @@ export default function YieldPrediction() {
         leadingAction={<BackButton fallback="/app" label="Back to home" />}
       />
 
-      {crops.length > 0 ? (
+      {isLoadingCrops ? (
+        <article className="pg-card">
+          <label className="pg-field-label" htmlFor="pg-yp-crop-loading">Crop</label>
+          <select id="pg-yp-crop-loading" className="pg-input" value="" disabled>
+            <option>Loading crops...</option>
+          </select>
+          <div style={{ marginTop: 10 }}>
+            <SkeletonBlock width="62%" height={12} rounded={8} />
+          </div>
+        </article>
+      ) : crops.length > 0 ? (
         <article className="pg-card">
           <label className="pg-field-label" htmlFor="pg-yp-crop">Crop</label>
           <select
@@ -221,7 +306,7 @@ export default function YieldPrediction() {
         </article>
       )}
 
-      {forecastPayload.missing.length > 0 ? (
+      {!forecastPayload.waiting && forecastPayload.missing.length > 0 ? (
         <article className="pg-card">
           <h2>Missing Inputs</h2>
           <p>The following inputs are needed before a yield forecast can run:</p>
@@ -231,8 +316,8 @@ export default function YieldPrediction() {
         </article>
       ) : null}
 
-      {isForecastLoading ? (
-        <article className="pg-card"><p>Fetching yield forecast from swarm...</p></article>
+      {forecastPayload.waiting || (isForecastLoading && !yieldForecast) ? (
+        <YieldForecastSkeleton />
       ) : forecastError ? (
         <article className="pg-card"><p>{forecastError}</p></article>
       ) : yieldForecast ? (
@@ -254,6 +339,11 @@ export default function YieldPrediction() {
             <p style={{ marginTop: 4, fontSize: 13, opacity: 0.8 }}>
               Loss estimate is derived from disease severity and survival probability in the latest scan.
             </p>
+            {isForecastLoading ? (
+              <p style={{ marginTop: 10, fontSize: 13, opacity: 0.75 }}>
+                Refreshing forecast in background...
+              </p>
+            ) : null}
           </article>
 
           <article className="pg-card">

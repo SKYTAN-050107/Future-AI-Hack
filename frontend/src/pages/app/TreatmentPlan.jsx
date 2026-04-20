@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import SectionHeader from '../../components/ui/SectionHeader'
 import BackButton from '../../components/navigation/BackButton'
+import SkeletonBlock from '../../components/feedback/SkeletonBlock'
 import { getCropById, getCrops } from '../../api/crops'
 import { getCachedTreatmentPlan, getTreatmentPlan, setCachedTreatmentPlan } from '../../api/treatment'
 import { getTreatmentFormSnapshot, saveTreatmentFormSnapshot, saveTreatmentRoiSnapshot } from '../../utils/treatmentRoiCache'
@@ -99,17 +100,25 @@ export default function TreatmentPlan() {
     }
 
     const cached = getCachedTreatmentPlan(userId)
-    if (!cached) {
-      return undefined
-    }
-
     const cachedCropId = String(cached?.input?.cropId || '').trim()
+    const cachedPlan = cached?.plan && typeof cached.plan === 'object' ? cached.plan : null
+
+    const persistedForm = getTreatmentFormSnapshot(userId)
+    const persistedCropId = String(persistedForm?.selectedCropId || '').trim()
+    const persistedPlan = persistedForm?.values?.plan && typeof persistedForm.values.plan === 'object'
+      ? persistedForm.values.plan
+      : null
+
     if (cachedCropId) {
       setSelectedCropId((current) => current || cachedCropId)
+    } else if (persistedCropId) {
+      setSelectedCropId((current) => current || persistedCropId)
     }
 
-    if (cached.plan && typeof cached.plan === 'object') {
-      setPlan(cached.plan)
+    if (cachedPlan) {
+      setPlan(cachedPlan)
+    } else if (persistedPlan) {
+      setPlan(persistedPlan)
     }
 
     return undefined
@@ -255,15 +264,6 @@ export default function TreatmentPlan() {
       .finally(() => setIsLoading(false))
   }
 
-  if (isLoadingCrops && !plan) {
-    return (
-      <section className="pg-page pg-page-treatment-plan pg-glass-deep-dive">
-        <SectionHeader title="Treatment Plan" align="center" leadingAction={<BackButton fallback="/app" label="Back to home" />} />
-        <article className="pg-card"><p>Loading...</p></article>
-      </section>
-    )
-  }
-
   return (
     <section className="pg-page pg-page-treatment-plan pg-glass-deep-dive">
       <SectionHeader
@@ -284,7 +284,18 @@ export default function TreatmentPlan() {
         </article>
       ) : (
         <>
-          {crops.length > 0 ? (
+          {isLoadingCrops ? (
+            <article className="pg-card">
+              <label className="pg-field-label" htmlFor="pg-tp-crop-loading">Crop</label>
+              <select id="pg-tp-crop-loading" className="pg-input" value="" disabled>
+                <option>Loading crops...</option>
+              </select>
+              <div style={{ marginTop: 10, display: 'grid', gap: 8 }}>
+                <SkeletonBlock width="58%" height={12} rounded={8} />
+                <SkeletonBlock width="32%" height={34} rounded={10} />
+              </div>
+            </article>
+          ) : crops.length > 0 ? (
             <article className="pg-card">
               <label className="pg-field-label" htmlFor="pg-tp-crop">Crop</label>
               <select
@@ -300,7 +311,7 @@ export default function TreatmentPlan() {
                   type="button"
                   className="pg-btn pg-btn-primary"
                   onClick={handleCalculate}
-                  disabled={!selectedCropId || !cropDetail || isLoading}
+                  disabled={!selectedCropId || !cropDetail || isLoading || isLoadingCrops}
                 >
                   {isLoading ? 'Loading...' : 'Load Plan'}
                 </button>
@@ -347,7 +358,14 @@ export default function TreatmentPlan() {
             </>
           ) : (
             <article className="pg-card">
-              <p>Select a crop and click Load Plan to view treatment guidance.</p>
+              {isLoadingCrops ? (
+                <div style={{ display: 'grid', gap: 8 }}>
+                  <SkeletonBlock width="74%" height={13} rounded={8} />
+                  <SkeletonBlock width="66%" height={13} rounded={8} />
+                </div>
+              ) : (
+                <p>Select a crop and click Load Plan to view treatment guidance.</p>
+              )}
             </article>
           )}
 

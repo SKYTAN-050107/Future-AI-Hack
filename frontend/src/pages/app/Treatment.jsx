@@ -3,10 +3,12 @@ import { useNavigate } from 'react-router-dom'
 import SectionHeader from '../../components/ui/SectionHeader'
 import MetricTile from '../../components/ui/MetricTile'
 import BackButton from '../../components/navigation/BackButton'
+import SkeletonBlock from '../../components/feedback/SkeletonBlock'
 import { getCropById, getCrops, updateCrop } from '../../api/crops'
 import { runSwarmOrchestrator } from '../../api/swarm'
 import { getTreatmentPlan } from '../../api/treatment'
 import { getTreatmentFormSnapshot, saveTreatmentFormSnapshot, saveTreatmentRoiSnapshot } from '../../utils/treatmentRoiCache'
+import { getYieldForecastCache, saveYieldForecastCache, YIELD_FORECAST_CACHE_TTL_MS } from '../../utils/yieldForecastCache'
 import { useSessionContext } from '../../hooks/useSessionContext'
 import { useScanHistory } from '../../hooks/useScanHistory'
 import { useGrids } from '../../hooks/useGrids'
@@ -82,8 +84,8 @@ function deriveSurvivalProbability(report) {
 export default function Treatment() {
   const navigate = useNavigate()
   const { user, profile } = useSessionContext()
-  const { latestReport } = useScanHistory()
-  const { grids } = useGrids()
+  const { latestReport, isLoading: isScanHistoryLoading } = useScanHistory()
+  const { grids, isLoading: isGridsLoading } = useGrids()
 
   const [crops, setCrops] = useState([])
   const [selectedCropId, setSelectedCropId] = useState('')
@@ -108,6 +110,7 @@ export default function Treatment() {
   const [isLoadingCrops, setIsLoadingCrops] = useState(true)
 
   const userId = String(user?.uid || '').trim()
+  const isPrerequisiteLoading = isLoadingCrops || isScanHistoryLoading || isGridsLoading
 
   const firstGridWithCentroid = useMemo(
     () => grids.find((grid) => Number.isFinite(grid?.centroid?.lat) && Number.isFinite(grid?.centroid?.lng)),
@@ -284,6 +287,14 @@ export default function Treatment() {
   }, [selectedCropId, userId])
 
   const yieldForecastRequest = useMemo(() => {
+    if (isPrerequisiteLoading) {
+      return {
+        payload: null,
+        error: '',
+        waiting: true,
+      }
+    }
+
     const gridId = String(latestReport?.gridId || latestReport?.zone || firstGridWithCentroid?.id || '').trim()
     const cropType = String(cropDetail?.name || '').trim()
     const treatmentPlan = String(
@@ -300,6 +311,7 @@ export default function Treatment() {
       return {
         payload: null,
         error: 'Yield forecast needs signed-in user, mapped grid centroid, and selected crop.',
+        waiting: false,
       }
     }
 
@@ -307,6 +319,7 @@ export default function Treatment() {
       return {
         payload: null,
         error: 'Yield forecast is waiting for a diagnosis result from your latest scan.',
+        waiting: false,
       }
     }
 
@@ -314,6 +327,7 @@ export default function Treatment() {
       return {
         payload: null,
         error: 'Yield forecast needs farm size from crop profile or mapped grids.',
+        waiting: false,
       }
     }
 
@@ -321,6 +335,7 @@ export default function Treatment() {
       return {
         payload: null,
         error: 'Yield forecast needs survival probability from the latest scan.',
+        waiting: false,
       }
     }
 
@@ -347,6 +362,7 @@ export default function Treatment() {
         wind_direction: 'N',
       },
       error: '',
+      waiting: false,
     }
   }, [
     cropDetail?.name,
@@ -354,6 +370,7 @@ export default function Treatment() {
     firstGridWithCentroid?.centroid?.lat,
     firstGridWithCentroid?.centroid?.lng,
     firstGridWithCentroid?.id,
+    isPrerequisiteLoading,
     latestReport,
     resolvedFarmSizeHectares,
     userId,
@@ -361,18 +378,47 @@ export default function Treatment() {
 
   useEffect(() => {
     let active = true
+    const payload = yieldForecastRequest.payload
 
-    if (!yieldForecastRequest.payload) {
+    if (!payload) {
       setYieldForecast(null)
       setYieldForecastError(yieldForecastRequest.error)
       setIsYieldForecastLoading(false)
       return undefined
     }
 
+    const cachedForecast = getYieldForecastCache({
+      userId,
+      payload,
+      ttlMs: YIELD_FORECAST_CACHE_TTL_MS,
+      includeStale: true,
+    })
+
+    if (cachedForecast?.forecast) {
+      setYieldForecast(cachedForecast.forecast)
+      setYieldForecastError('')
+
+      const cachedPredictedYield = toSafeNumber(cachedForecast.forecast?.predicted_yield_kg, 0)
+      if (cachedPredictedYield > 0 && !hasManualYieldInput) {
+        setYieldKg(cachedPredictedYield)
+      }
+
+      if (cachedPredictedYield > 0 && !hasManualActualSoldInput) {
+        setActualSoldKg(String(cachedPredictedYield))
+      }
+
+      if (cachedForecast.isFresh) {
+        setIsYieldForecastLoading(false)
+        return () => {
+          active = false
+        }
+      }
+    }
+
     setIsYieldForecastLoading(true)
     setYieldForecastError('')
 
-    runSwarmOrchestrator(yieldForecastRequest.payload)
+    runSwarmOrchestrator(payload)
       .then((response) => {
         if (!active) {
           return
@@ -389,6 +435,7 @@ export default function Treatment() {
         }
 
         setYieldForecast(forecast)
+        saveYieldForecastCache({ userId, payload, forecast })
 
         const predicted = toSafeNumber(forecast?.predicted_yield_kg, 0)
         if (predicted > 0 && !hasManualYieldInput) {
@@ -404,8 +451,14 @@ export default function Treatment() {
           return
         }
 
-        setYieldForecast(null)
-        setYieldForecastError(loadError?.message || 'Unable to fetch yield forecast from swarm.')
+        if (!cachedForecast?.forecast) {
+          setYieldForecast(null)
+        }
+        setYieldForecastError(
+          cachedForecast?.forecast
+            ? 'Showing cached forecast. Live refresh failed.'
+            : (loadError?.message || 'Unable to fetch yield forecast from swarm.'),
+        )
       })
       .finally(() => {
         if (active) {
@@ -421,6 +474,7 @@ export default function Treatment() {
     hasManualYieldInput,
     yieldForecastRequest.error,
     yieldForecastRequest.payload,
+    userId,
   ])
 
   useEffect(() => {
@@ -588,20 +642,7 @@ export default function Treatment() {
     setCalculationInput(buildCalculationInput())
   }
 
-  if (isLoadingCrops) {
-    return (
-      <section className="pg-page pg-page-roi-deep-dive pg-glass-deep-dive">
-        <SectionHeader
-          title="ROI Deep Dive"
-          align="center"
-          leadingAction={<BackButton fallback="/app" label="Back to home" />}
-        />
-        <article className="pg-card">
-          <p>Loading crop ROI setup...</p>
-        </article>
-      </section>
-    )
-  }
+  const showEmptyState = !isLoadingCrops && crops.length === 0
 
   return (
     <section className="pg-page pg-page-roi-deep-dive pg-glass-deep-dive">
@@ -617,7 +658,7 @@ export default function Treatment() {
         </article>
       ) : null}
 
-      {crops.length === 0 ? (
+      {showEmptyState ? (
         <article className="pg-card">
           <h2>Add your first crop</h2>
           <p>Complete setup looks good. Next step: add a crop profile to unlock crop-level ROI and treatment economics.</p>
@@ -685,7 +726,11 @@ export default function Treatment() {
                 </details>
               </>
             ) : (
-              <p>Save your inputs in the Inputs &amp; Assumptions section below to see the full cost breakdown.</p>
+              <p>
+                {isLoadingCrops
+                  ? 'Loading crop ROI setup...'
+                  : 'Save your inputs in the Inputs &amp; Assumptions section below to see the full cost breakdown.'}
+              </p>
             )}
           </article>
 
@@ -714,7 +759,7 @@ export default function Treatment() {
                 type="button"
                 className="pg-btn"
                 onClick={handleRecalculateOnly}
-                disabled={!selectedCropId || !cropDetail || isLoading || isSavingCrop}
+                disabled={!selectedCropId || !cropDetail || isLoading || isSavingCrop || isLoadingCrops}
               >
                 {isLoading ? 'Calculating...' : 'Recalculate Only'}
               </button>
@@ -722,7 +767,7 @@ export default function Treatment() {
                 type="button"
                 className="pg-btn pg-btn-primary"
                 onClick={handleSaveAndCalculate}
-                disabled={!selectedCropId || !cropDetail || isLoading || isSavingCrop}
+                disabled={!selectedCropId || !cropDetail || isLoading || isSavingCrop || isLoadingCrops}
               >
                 {isSavingCrop ? 'Saving...' : isLoading ? 'Calculating...' : 'Save & Recalculate'}
               </button>
@@ -736,17 +781,31 @@ export default function Treatment() {
           <article className="pg-card">
             <h2>Inputs &amp; Assumptions</h2>
 
-            <label className="pg-field-label" htmlFor="pg-treatment-crop">Crop</label>
-            <select
-              id="pg-treatment-crop"
-              className="pg-input"
-              value={selectedCropId}
-              onChange={(event) => setSelectedCropId(event.target.value)}
-            >
-              {crops.map((crop) => (
-                <option key={crop.id} value={crop.id}>{crop.name}</option>
-              ))}
-            </select>
+            {isLoadingCrops ? (
+              <>
+                <label className="pg-field-label" htmlFor="pg-treatment-crop-loading">Crop</label>
+                <select id="pg-treatment-crop-loading" className="pg-input" value="" disabled>
+                  <option>Loading crops...</option>
+                </select>
+                <div style={{ marginTop: 10 }}>
+                  <SkeletonBlock width="58%" height={12} rounded={8} />
+                </div>
+              </>
+            ) : (
+              <>
+                <label className="pg-field-label" htmlFor="pg-treatment-crop">Crop</label>
+                <select
+                  id="pg-treatment-crop"
+                  className="pg-input"
+                  value={selectedCropId}
+                  onChange={(event) => setSelectedCropId(event.target.value)}
+                >
+                  {crops.map((crop) => (
+                    <option key={crop.id} value={crop.id}>{crop.name}</option>
+                  ))}
+                </select>
+              </>
+            )}
 
             <label className="pg-field-label" htmlFor="pg-treatment-yield">Expected yield: {toSafeNumber(yieldKg).toFixed(1)}kg</label>
             <input
@@ -764,7 +823,9 @@ export default function Treatment() {
             />
 
             <small style={{ display: 'block', marginTop: 4, opacity: 0.82 }}>
-              {isYieldForecastLoading
+              {isPrerequisiteLoading
+                ? 'Loading yield forecast inputs...'
+                : isYieldForecastLoading
                 ? 'Syncing yield forecast from swarm...'
                 : hasManualYieldInput
                   ? 'Yield source: manual input (forecast auto-fill paused).'
