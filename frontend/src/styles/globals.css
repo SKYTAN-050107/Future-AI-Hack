@@ -4465,10 +4465,20 @@ html:not(.dark) .pg-glass-deep-dive .pg-btn:focus-visible {
   padding: 12px 14px;
 }
 
-.pg-chatbot-message-bubble p {
+.pg-chatbot-message-text {
   margin: 0;
   font-size: 0.92rem;
   line-height: 1.45;
+  white-space: pre-line;
+}
+
+.pg-chatbot-message-meta {
+  margin: 8px 0 0;
+  padding-top: 8px;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  color: var(--text-secondary);
+  border-top: 1px solid rgba(var(--border-rgb), 0.5);
 }
 
 .pg-chatbot-message.is-user .pg-chatbot-message-bubble {
@@ -4476,8 +4486,13 @@ html:not(.dark) .pg-glass-deep-dive .pg-btn:focus-visible {
   border-color: #0F766E;
 }
 
-.pg-chatbot-message.is-user .pg-chatbot-message-bubble p {
+.pg-chatbot-message.is-user .pg-chatbot-message-text {
   color: #FFFFFF;
+}
+
+.pg-chatbot-message.is-user .pg-chatbot-message-meta {
+  color: rgba(255, 255, 255, 0.86);
+  border-top-color: rgba(255, 255, 255, 0.28);
 }
 
 .pg-chatbot-typing {

@@ -496,28 +496,54 @@ def _to_http_scan_response(
 def _assistant_reply_from_scan(result: ScanResult) -> str:
     """Deterministic assistant reply from real diagnosis result only."""
     severity_percent = _severity_to_percent(result.severityScore, result.severity)
+    spread_risk = _spread_risk_from_severity(severity_percent)
     return (
-        f"Detected {result.disease} on {result.cropType}. "
-        f"Severity is {severity_percent}% with spread risk {_spread_risk_from_severity(severity_percent)}. "
-        f"Recommended action: {result.treatmentPlan}."
+        "Finding\n"
+        f"- {result.disease} was detected on {result.cropType}.\n"
+        f"- Current severity is estimated at {severity_percent}% with {spread_risk} spread risk.\n\n"
+        "Actions\n"
+        "- Isolate visibly affected plants to reduce cross-spread.\n"
+        "- Check nearby plants for similar symptoms today.\n"
+        "- Prepare treatment materials before field application.\n\n"
+        "Treatment\n"
+        f"- {result.treatmentPlan}.\n\n"
+        "Recheck\n"
+        "- Retake a photo of the same area in 24 to 48 hours to verify progress."
     )
 
 
 def _assistant_reply_from_regions(results: list[ScanResult]) -> str:
     if not results:
-        return "No diagnosable crop region was found in this submission."
+        return (
+            "Finding\n"
+            "- No diagnosable crop region was found in this submission.\n\n"
+            "Actions\n"
+            "- Capture a clearer close-up image with steady lighting.\n"
+            "- Keep affected plants separated until the next scan.\n\n"
+            "Treatment\n"
+            "- No treatment recommendation can be confirmed from this scan.\n\n"
+            "Recheck\n"
+            "- Upload a new photo after improving focus and lighting."
+        )
 
     summary_parts = []
     for item in results:
         severity_percent = _severity_to_percent(item.severityScore, item.severity)
-        summary_parts.append(
-            f"{item.cropType}: {item.disease} ({severity_percent}% severity)"
-        )
+        summary_parts.append(f"- {item.cropType}: {item.disease} ({severity_percent}% severity).")
 
     return (
-        "Detected multiple regions. "
-        + "; ".join(summary_parts)
-        + ". Prioritize treatment for highest-severity regions first."
+        "Finding\n"
+        "- Multiple crop regions were detected in this scan.\n"
+        + "\n".join(summary_parts)
+        + "\n\n"
+        "Actions\n"
+        "- Prioritize treatment for the highest-severity region first.\n"
+        "- Isolate the most affected plants before broader field work.\n"
+        "- Track each region separately for follow-up scans.\n\n"
+        "Treatment\n"
+        "- Apply targeted treatment per region based on severity order.\n\n"
+        "Recheck\n"
+        "- Retake region-by-region photos in 24 to 48 hours to confirm response."
     )
 
 

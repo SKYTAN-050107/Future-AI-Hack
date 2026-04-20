@@ -67,30 +67,90 @@ Rules:
 """
 
 ENGLISH_REPLY_HEADERS = (
-    "What This Is",
-    "Treatment Plan",
-    "Immediate Actions",
-    "Recheck Time",
+    "Finding",
+    "Actions",
+    "Treatment",
+    "Recheck",
 )
 
 MALAY_REPLY_HEADERS = (
-    "Apa Ini",
-    "Pelan Rawatan",
-    "Tindakan Segera",
-    "Masa Semakan Semula",
+    "Penemuan",
+    "Tindakan",
+    "Rawatan",
+    "Semakan Semula",
 )
 
 LOW_CONFIDENCE_ENGLISH_REPLY_HEADERS = (
-    "What This Looks Like",
-    "Why Confidence Is Low",
-    "Next Step",
+    "Finding",
+    "Actions",
+    "Treatment",
+    "Recheck",
 )
 
 LOW_CONFIDENCE_MALAY_REPLY_HEADERS = (
-    "Apa Yang Kelihatan",
-    "Kenapa Keyakinan Rendah",
-    "Langkah Seterusnya",
+    "Penemuan",
+    "Tindakan",
+    "Rawatan",
+    "Semakan Semula",
 )
+
+ENGLISH_QUESTION_HEADER = "Question"
+MALAY_QUESTION_HEADER = "Soalan"
+
+REPLY_VALIDATION_SYSTEM_PROMPT = """\
+You are AcreZen Reply Validation Agent.
+
+Evaluate whether the assistant reply is complete, grounded in context, and farmer-friendly.
+Return valid JSON only with this schema:
+{
+  "verdict": "pass" | "rewrite" | "clarify",
+  "score": <0-100>,
+  "reason": "<short reason>",
+  "missing_requirements": ["<item>"],
+  "unsupported_claims": ["<item>"],
+  "truncated": <true|false>,
+  "needs_specific_date": <true|false>,
+  "repair_instruction": "<what to fix>",
+  "follow_up_question": "<optional one question>"
+}
+
+Rules:
+- Mark verdict="rewrite" if markdown heading markers (#, ##, ###) appear.
+- Mark verdict="rewrite" if required sections are missing: Finding, Actions, Treatment, Recheck, or Malay equivalents Penemuan, Tindakan, Rawatan, Semakan Semula.
+- Mark verdict="rewrite" if unsupported claims or contradictory advice appears.
+- Mark verdict="clarify" only when context is genuinely insufficient.
+- Keep reason and repair_instruction concise and actionable.
+"""
+
+REPLY_REWRITE_SYSTEM_PROMPT_BASE = """\
+You are AcreZen Reply Rewrite Agent.
+
+Rewrite the assistant reply so it is complete, accurate, and easy to read.
+
+Formatting rules (strict):
+- Plain text only.
+- No markdown markers (#, ##, ###, **, *, `_`).
+- Use subheadings on separate lines: Finding, Actions, Treatment, Recheck.
+- Under each heading, write short point-form lines prefixed with "- ".
+- Keep Actions to at most 3 bullets.
+- Keep the response interactive by adding one optional Question heading with one bullet question only when clarification is necessary.
+- Do not invent facts beyond provided context.
+"""
+
+AGRICULTURE_ADVICE_SYSTEM_PROMPT_BASE = """\
+You are AcreZen Agriculture Assistant.
+
+Answer only agriculture-related questions with practical, concise advice.
+
+Formatting rules (strict):
+- Plain text only.
+- No markdown markers (#, ##, ###, **, *, `_`).
+- Use subheadings on separate lines: Finding, Actions, Treatment, Recheck.
+- Under each heading, write short point-form lines prefixed with "- ".
+- Keep Actions to at most 3 bullets.
+- Add one optional Question heading with one bullet question only when required details are missing.
+- Refuse politely if the question is not agriculture-related.
+"""
 
 _MALAY_HINT_WORDS = {
     "apa",
@@ -206,6 +266,92 @@ def _trim_text(value: Any, default: str = "Unknown") -> str:
     return text or default
 
 
+def _to_percent_int(value: Any) -> int | None:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+
+    if numeric <= 1.0:
+        numeric *= 100.0
+
+    numeric = max(0.0, min(100.0, numeric))
+    return int(round(numeric))
+
+
+def _format_percent(value: Any, default: str = "N/A") -> str:
+    percent = _to_percent_int(value)
+    if percent is None:
+        return default
+    return f"{percent}%"
+
+
+def _get_question_header(language: str) -> str:
+    return MALAY_QUESTION_HEADER if language == "ms" else ENGLISH_QUESTION_HEADER
+
+
+def _has_required_headings(text: str, headings: tuple[str, ...]) -> bool:
+    normalized_text = str(text or "")
+    for heading in headings:
+        pattern = rf"(?im)^\s*{re.escape(heading)}\s*:?\s*$"
+        if not re.search(pattern, normalized_text):
+            return False
+    return True
+
+
+def _clean_reply_format(text: Any, language: str) -> str:
+    raw_text = str(text or "").replace("\r\n", "\n").strip()
+    if not raw_text:
+        return ""
+
+    section_1, section_2, section_3, section_4 = _get_reply_headers(language)
+    question_heading = _get_question_header(language)
+    heading_aliases = {
+        "finding": section_1,
+        "what this is": section_1,
+        "what what this is": section_1,
+        "what this looks like": section_1,
+        "apa ini": section_1,
+        "apa yang kelihatan": section_1,
+        "penemuan": section_1,
+        "actions": section_2,
+        "immediate actions": section_2,
+        "tindakan segera": section_2,
+        "tindakan": section_2,
+        "treatment": section_3,
+        "treatment plan": section_3,
+        "pelan rawatan": section_3,
+        "rawatan": section_3,
+        "recheck": section_4,
+        "recheck time": section_4,
+        "next step": section_4,
+        "masa semakan semula": section_4,
+        "langkah seterusnya": section_4,
+        "semakan semula": section_4,
+        "question": question_heading,
+        "soalan": question_heading,
+    }
+
+    cleaned_lines: list[str] = []
+    for raw_line in raw_text.split("\n"):
+        line = raw_line.rstrip()
+        normalized = re.sub(r"^\s{0,3}#{1,6}\s*", "", line.strip())
+        normalized = re.sub(r"^\s*\d+\s*[\.)]\s*", "", normalized)
+        heading_key = normalized.rstrip(":").strip().lower()
+
+        canonical_heading = heading_aliases.get(heading_key)
+        if canonical_heading:
+            cleaned_lines.append(canonical_heading)
+            continue
+
+        bullet_normalized = re.sub(r"^\s*[\*•]\s+", "- ", line)
+        cleaned_lines.append(bullet_normalized)
+
+    cleaned_text = "\n".join(cleaned_lines).strip()
+    cleaned_text = re.sub(r"\n{3,}", "\n\n", cleaned_text)
+    return cleaned_text
+
+
 def _looks_agriculture_prompt(user_prompt: str) -> bool:
     text = (user_prompt or "").lower()
     if any(phrase in text for phrase in ("farm management", "crop management", "planting", "orchard", "soil", "fertilizer", "fertiliser", "irrigation", "pest control", "weed control", "harvest", "pruning")):
@@ -216,17 +362,49 @@ def _looks_agriculture_prompt(user_prompt: str) -> bool:
 
 
 def _agriculture_refusal(language: str) -> str:
-    if language == "ms":
-        return "Pembantu ini hanya menjawab soalan berkaitan pertanian. Sila tanya tentang tanaman, penanaman, tanah, pengairan, perosak, baja, tuaian, atau pengurusan ladang."
+    section_1, section_2, section_3, section_4 = _get_reply_headers(language)
+    question_heading = _get_question_header(language)
 
-    return "This assistant only answers agriculture-related questions. Please ask about crops, planting, soil, irrigation, pests, fertilizer, harvesting, or farm management."
+    if language == "ms":
+        return (
+            f"{section_1}\n- Permintaan ini di luar skop pertanian.\n\n"
+            f"{section_2}\n- Tanya soalan berkaitan tanaman, tanah, pengairan, perosak, baja, atau tuaian.\n\n"
+            f"{section_3}\n- Tiada cadangan rawatan boleh diberikan untuk topik bukan pertanian.\n\n"
+            f"{section_4}\n- Hantar semula soalan dalam konteks ladang untuk jawapan praktikal.\n\n"
+            f"{question_heading}\n- Soalan pertanian apa yang anda mahu saya bantu sekarang?"
+        )
+
+    return (
+        f"{section_1}\n- This request is outside the agriculture scope.\n\n"
+        f"{section_2}\n- Ask about crops, soil, irrigation, pests, fertilizer, harvest, or farm management.\n\n"
+        f"{section_3}\n- No treatment recommendation can be provided for non-agriculture topics.\n\n"
+        f"{section_4}\n- Recheck by sending a farm-related question for practical guidance.\n\n"
+        f"{question_heading}\n- What agriculture topic would you like help with now?"
+    )
 
 
 def _agriculture_fallback(language: str) -> str:
-    if language == "ms":
-        return "Sila beritahu tanaman, lokasi, dan tahap pertumbuhan supaya saya boleh beri cadangan yang lebih tepat."
+    section_1, section_2, section_3, section_4 = _get_reply_headers(language)
+    question_heading = _get_question_header(language)
 
-    return "Please share the crop, location, and growth stage so I can give a more specific recommendation."
+    if language == "ms":
+        return (
+            f"{section_1}\n- Maklumat semasa belum mencukupi untuk cadangan khusus.\n\n"
+            f"{section_2}\n- Kongsi jenis tanaman, lokasi ladang, dan tahap pertumbuhan.\n"
+            f"- Nyatakan gejala utama atau masalah yang sedang berlaku.\n\n"
+            f"{section_3}\n- Pelan rawatan boleh dipadankan selepas butiran asas diterima.\n\n"
+            f"{section_4}\n- Semak semula selepas maklumat tambahan dikongsi.\n\n"
+            f"{question_heading}\n- Boleh kongsi tanaman, lokasi, dan tahap pertumbuhan sekarang?"
+        )
+
+    return (
+        f"{section_1}\n- Current details are not enough for a specific recommendation.\n\n"
+        f"{section_2}\n- Share the crop type, farm location, and growth stage.\n"
+        f"- Include the main symptom or issue you are seeing now.\n\n"
+        f"{section_3}\n- A treatment plan can be tailored once these basics are provided.\n\n"
+        f"{section_4}\n- Recheck after sharing the missing details.\n\n"
+        f"{question_heading}\n- Can you share your crop, location, and growth stage now?"
+    )
 
 
 def detect_farmer_language(user_prompt: str) -> str:
@@ -257,12 +435,13 @@ def _get_reply_headers(language: str) -> tuple[str, str, str, str]:
     return MALAY_REPLY_HEADERS if language == "ms" else ENGLISH_REPLY_HEADERS
 
 
-def _get_low_confidence_reply_headers(language: str) -> tuple[str, str, str]:
+def _get_low_confidence_reply_headers(language: str) -> tuple[str, str, str, str]:
     return LOW_CONFIDENCE_MALAY_REPLY_HEADERS if language == "ms" else LOW_CONFIDENCE_ENGLISH_REPLY_HEADERS
 
 
 def _build_assistant_system_prompt(language: str) -> str:
     section_1, section_2, section_3, section_4 = _get_reply_headers(language)
+    question_heading = _get_question_header(language)
 
     if language == "ms":
         language_rules = (
@@ -278,16 +457,22 @@ def _build_assistant_system_prompt(language: str) -> str:
     return (
         f"{ASSISTANT_SYSTEM_PROMPT_BASE}\n"
         f"{language_rules}"
-        "- You MUST include these section headers exactly:\n"
-        f"    1) {section_1}\n"
-        f"    2) {section_2}\n"
-        f"    3) {section_3}\n"
-        f"    4) {section_4}"
+        "- Output plain text only. Do not use markdown markers (#, ##, ###, **, *, `_`).\n"
+        "- Use this exact structure with subheadings on separate lines:\n"
+        f"    {section_1}\n"
+        f"    {section_2}\n"
+        f"    {section_3}\n"
+        f"    {section_4}\n"
+        "- Under each subheading, write short point-form lines prefixed with '- '.\n"
+        f"- Keep {section_2} to at most 3 bullet points.\n"
+        "- Keep percentages readable when present in context (for example, confidence or severity as %).\n"
+        f"- Keep it interactive: add optional '{question_heading}' with exactly one bullet question only when clarification is needed."
     )
 
 
 def _build_low_confidence_system_prompt(language: str) -> str:
-    section_1, section_2, section_3 = _get_low_confidence_reply_headers(language)
+    section_1, section_2, section_3, section_4 = _get_low_confidence_reply_headers(language)
+    question_heading = _get_question_header(language)
 
     if language == "ms":
         language_rules = (
@@ -305,10 +490,15 @@ def _build_low_confidence_system_prompt(language: str) -> str:
         f"{language_rules}"
         "- The photo confidence is low, so you MUST be cautious and explicit about uncertainty.\n"
         "- Do NOT present the diagnosis as certain.\n"
-        "- You MUST include these section headers exactly:\n"
-        f"    1) {section_1}\n"
-        f"    2) {section_2}\n"
-        f"    3) {section_3}"
+        "- Output plain text only. Do not use markdown markers (#, ##, ###, **, *, `_`).\n"
+        "- Use this exact structure with subheadings on separate lines:\n"
+        f"    {section_1}\n"
+        f"    {section_2}\n"
+        f"    {section_3}\n"
+        f"    {section_4}\n"
+        "- Under each subheading, write short point-form lines prefixed with '- '.\n"
+        f"- Keep {section_2} to at most 3 bullet points.\n"
+        f"- Add optional '{question_heading}' with one bullet question if the farmer must retake a photo before treatment confirmation."
     )
 
 
@@ -512,6 +702,9 @@ STYLE AND FORMAT
 
 
 def _build_supervisor_system_prompt(language: str) -> str:
+    section_1, section_2, section_3, section_4 = _get_reply_headers(language)
+    question_heading = _get_question_header(language)
+
     if language == "ms":
         language_rules = (
             "- You MUST answer in Malay (Bahasa Melayu) only.\n"
@@ -523,7 +716,20 @@ def _build_supervisor_system_prompt(language: str) -> str:
             "- Use only English sentences. Do not mix in Malay or Chinese, except unavoidable crop, disease, or product names from diagnosis data.\n"
         )
 
-    return f"{SUPERVISOR_SYSTEM_PROMPT_BASE}\n{language_rules}"
+    return (
+        f"{SUPERVISOR_SYSTEM_PROMPT_BASE}\n"
+        f"{language_rules}"
+        "- Format override (apply even if any earlier line conflicts):\n"
+        "- Output plain text only. Do not use markdown markers (#, ##, ###, **, *, `_`).\n"
+        "- Use this exact structure with subheadings on separate lines:\n"
+        f"    {section_1}\n"
+        f"    {section_2}\n"
+        f"    {section_3}\n"
+        f"    {section_4}\n"
+        "- Under each subheading, write short point-form lines prefixed with '- '.\n"
+        f"- Keep {section_2} to at most 3 bullet points.\n"
+        f"- If clarification is required, add optional '{question_heading}' with exactly one bullet question."
+    )
 
 
 def _format_reason_suffix(language: str, reason: str | None) -> str:
@@ -546,13 +752,19 @@ def build_farmer_fallback_dialogue(
 ) -> str:
     """Build a deterministic fallback reply in English or Malay."""
     language = detect_farmer_language(user_prompt)
+    section_1, section_2, section_3, section_4 = _get_reply_headers(language)
+    question_heading = _get_question_header(language)
 
     disease = str(scan_result.get("disease", "Unknown")).strip() or "Unknown"
     crop_type = str(scan_result.get("cropType", "Unknown")).strip() or "Unknown"
     severity_raw = str(scan_result.get("severity", "Moderate")).strip() or "Moderate"
-    severity_score = _safe_float(scan_result.get("severityScore", 0.0), 0.0)
+    severity_percent = _format_percent(
+        scan_result.get("severity_percent", scan_result.get("severityScore")),
+        default="",
+    )
+    confidence_percent = _format_percent(scan_result.get("confidence"), default="")
+    survival_percent = _format_percent(scan_result.get("survivalProb"), default="")
     treatment_plan = str(scan_result.get("treatmentPlan", "Consult agrologist")).strip()
-    survival_prob = _safe_float(scan_result.get("survivalProb", 0.0), 0.0)
     recommended_raw = scan_result.get("recommendedPesticides", scan_result.get("recommended_pesticides", []))
     if not isinstance(recommended_raw, list):
         recommended_raw = []
@@ -565,16 +777,19 @@ def build_farmer_fallback_dialogue(
         scan_result.get("recommendationSource", scan_result.get("recommendation_source", "")),
     ).strip().lower()
     disease_normalized = disease.lower()
+    reason_text = _trim_text(reason, default="") if reason else ""
 
     if language == "ms":
         disease_label = disease if disease else "Tidak Konklusif"
         severity_label = _SEVERITY_TO_MALAY.get(severity_raw.lower(), severity_raw)
-        plan_text = treatment_plan or "Sila ambil semula gambar close-up yang jelas sebelum memilih rawatan."
+        plan_text = treatment_plan or "Ambil semula gambar close-up yang jelas sebelum memilih rawatan."
+        need_question = False
 
         if disease_normalized in {"healthy", "normal"}:
-            plan_text = "Buat masa ini jangan guna racun dahulu. Teruskan pemantauan dan catat gejala baru."
+            plan_text = "Belum perlu guna racun. Teruskan pemantauan dan catat gejala baru."
         elif disease_normalized in {"unknown", "unknown disease", "inconclusive", "error", ""}:
             disease_label = "Tidak Konklusif"
+            need_question = True
             plan_text = (
                 "Keputusan belum jelas. Ambil semula gambar close-up kawasan simptom dalam pencahayaan baik sebelum pilih rawatan."
             )
@@ -585,25 +800,58 @@ def build_farmer_fallback_dialogue(
                 + ". Ikut kadar label dan tempoh pra-tuai sebelum aplikasi."
             )
 
-        reason_suffix = _format_reason_suffix(language, reason)
+        finding_lines = [f"- {disease_label} dikesan pada {crop_type}."]
+        if severity_percent:
+            finding_lines.append(f"- Tahap semasa: {severity_label} ({severity_percent}).")
+        else:
+            finding_lines.append(f"- Tahap semasa: {severity_label}.")
+        if confidence_percent:
+            finding_lines.append(f"- Keyakinan anggaran: {confidence_percent}.")
+
+        actions_lines = [
+            "- Asingkan daun atau pokok yang jelas bergejala untuk kurangkan jangkitan silang.",
+            "- Semak kawasan sekeliling untuk gejala baharu sebelum rawatan susulan.",
+            "- Rekod perubahan gejala supaya keputusan rawatan berikutnya lebih tepat.",
+        ]
+
+        treatment_lines = [f"- {plan_text}"]
+        if recommended_pesticides and recommendation_source == "pesticidecatalog":
+            treatment_lines.append(
+                "- Pilihan produk: " + ", ".join(recommended_pesticides) + "."
+            )
+
+        recheck_lines = [
+            "- Ambil semula gambar kawasan sama dalam 24 hingga 48 jam untuk semakan kemajuan.",
+        ]
+        if survival_percent:
+            recheck_lines.append(f"- Kebarangkalian pulih semasa: {survival_percent}.")
+        if reason_text:
+            recheck_lines.append("- Nota sistem: semak semula kerana mod diagnosis terhad.")
+
+        question_block = ""
+        if need_question:
+            question_block = (
+                f"\n\n{question_heading}\n"
+                "- Boleh kongsi gambar close-up bahagian simptom dengan pencahayaan lebih terang?"
+            )
+
         return (
-            f"Apa Ini\n{disease_label} (Jenis tanaman: {crop_type}, Tahap keterukan: {severity_label}, Skor: {severity_score:.2f})\n\n"
-            f"Pelan Rawatan\n{plan_text}\n\n"
-            "Tindakan Segera\n"
-            "1. Asingkan daun atau pokok yang jelas bergejala untuk kurangkan jangkitan silang.\n"
-            "2. Simpan rekod lokasi dan masa gambar untuk perbandingan semakan seterusnya.\n"
-            f"3. Guna nilai kebarangkalian hidup {survival_prob:.2f} sebagai rujukan bersama pemerhatian ladang.\n\n"
-            "Masa Semakan Semula\nAmbil semula gambar kawasan sama selepas 24-48 jam; jika tompok merebak, tingkatkan rawatan segera."
-            f"{reason_suffix}"
+            f"{section_1}\n" + "\n".join(finding_lines) + "\n\n"
+            + f"{section_2}\n" + "\n".join(actions_lines[:3]) + "\n\n"
+            + f"{section_3}\n" + "\n".join(treatment_lines[:2]) + "\n\n"
+            + f"{section_4}\n" + "\n".join(recheck_lines[:3])
+            + f"{question_block}"
         )
 
     disease_label = disease if disease else "Inconclusive"
-    plan_text = treatment_plan or "Please retake a clear close-up photo before deciding treatment."
+    plan_text = treatment_plan or "Retake a clear close-up photo before deciding treatment."
+    need_question = False
 
     if disease_normalized in {"healthy", "normal"}:
-        plan_text = "Do not spray immediately. Keep monitoring and record any new symptoms."
+        plan_text = "No immediate spray is needed. Keep monitoring and record new symptoms."
     elif disease_normalized in {"unknown", "unknown disease", "inconclusive", "error", ""}:
         disease_label = "Inconclusive"
+        need_question = True
         plan_text = (
             "The result is not clear yet. Retake a close-up photo of the symptom area in good lighting before selecting treatment."
         )
@@ -614,16 +862,45 @@ def build_farmer_fallback_dialogue(
             + ". Follow product label rate and pre-harvest interval before application."
         )
 
-    reason_suffix = _format_reason_suffix(language, reason)
+    finding_lines = [f"- {disease_label} was detected on {crop_type}."]
+    if severity_percent:
+        finding_lines.append(f"- Current severity: {severity_raw} ({severity_percent}).")
+    else:
+        finding_lines.append(f"- Current severity: {severity_raw}.")
+    if confidence_percent:
+        finding_lines.append(f"- Estimated confidence: {confidence_percent}.")
+
+    actions_lines = [
+        "- Isolate leaves or plants with visible symptoms to reduce spread.",
+        "- Check nearby plants for early signs before conditions worsen.",
+        "- Track symptom changes so the next treatment decision is clearer.",
+    ]
+
+    treatment_lines = [f"- {plan_text}"]
+    if recommended_pesticides and recommendation_source == "pesticidecatalog":
+        treatment_lines.append("- Product options: " + ", ".join(recommended_pesticides) + ".")
+
+    recheck_lines = [
+        "- Retake a photo of the same area in 24 to 48 hours to confirm progress.",
+    ]
+    if survival_percent:
+        recheck_lines.append(f"- Current recovery outlook: {survival_percent}.")
+    if reason_text:
+        recheck_lines.append("- System note: diagnosis was generated in limited mode, so verify with another photo.")
+
+    question_block = ""
+    if need_question:
+        question_block = (
+            f"\n\n{question_heading}\n"
+            "- Can you share a closer photo of the symptom area in brighter light?"
+        )
+
     return (
-        f"What This Is\n{disease_label} (Crop type: {crop_type}, Severity: {severity_raw}, Score: {severity_score:.2f})\n\n"
-        f"Treatment Plan\n{plan_text}\n\n"
-        "Immediate Actions\n"
-        "1. Isolate leaves or plants with obvious symptoms to reduce cross-spread.\n"
-        "2. Record photo location and capture time for follow-up comparison.\n"
-        f"3. Use survival probability {survival_prob:.2f} as a reference together with field observations.\n\n"
-        "Recheck Time\nRetake photos of the same area in 24-48 hours; if lesions expand, escalate treatment immediately."
-        f"{reason_suffix}"
+        f"{section_1}\n" + "\n".join(finding_lines) + "\n\n"
+        + f"{section_2}\n" + "\n".join(actions_lines[:3]) + "\n\n"
+        + f"{section_3}\n" + "\n".join(treatment_lines[:2]) + "\n\n"
+        + f"{section_4}\n" + "\n".join(recheck_lines[:3])
+        + f"{question_block}"
     )
 
 
@@ -1003,11 +1280,11 @@ class LLMService:
                         max_output_tokens=380,
                     ),
                 )
-                text = (response.text or "").strip()
+                text = _clean_reply_format(response.text, language)
                 if text:
-                    if all(section in text for section in required_sections):
+                    if _has_required_headings(text, required_sections):
                         return text
-                    return f"{text}\n\n{fallback}"
+                    logger.warning("Assistant dialogue missing required headings. Retrying generation.")
             except Exception as e:
                 logger.warning(
                     "Assistant dialogue attempt %d/%d failed: %s",
@@ -1063,16 +1340,11 @@ class LLMService:
                         max_output_tokens=500,
                     ),
                 )
-                text = (response.text or "").strip()
+                text = _clean_reply_format(response.text, language)
                 if text:
-                    if all(section in text for section in required_sections):
+                    if _has_required_headings(text, required_sections):
                         return text
-
-                    fallback = build_farmer_fallback_dialogue(
-                        scan_results[0] if scan_results else {},
-                        user_prompt,
-                    )
-                    return f"{text}\n\n{fallback}"
+                    logger.warning("Consolidated dialogue missing required headings. Retrying generation.")
             except Exception as e:
                 logger.warning(
                     "Consolidated dialogue attempt %d/%d failed: %s",
@@ -1214,6 +1486,7 @@ class LLMService:
     ) -> str:
         """Generate a cautious response for an uncertain photo scan."""
         language = detect_farmer_language(user_prompt)
+        required_sections = _get_low_confidence_reply_headers(language)
         structured_payload = scan_results if scan_results is not None else [scan_result or {}]
         payload_text = json.dumps(structured_payload, indent=2, ensure_ascii=True, default=str)
         fallback = self._build_low_confidence_fallback(
@@ -1240,9 +1513,11 @@ class LLMService:
                         max_output_tokens=240,
                     ),
                 )
-                text = (response.text or "").strip()
+                text = _clean_reply_format(response.text, language)
                 if text:
-                    return text
+                    if _has_required_headings(text, required_sections):
+                        return text
+                    logger.warning("Low confidence reply missing required headings. Retrying generation.")
             except Exception as exc:
                 logger.warning(
                     "Low confidence photo reply attempt %d/%d failed: %s",
@@ -1264,6 +1539,7 @@ class LLMService:
     ) -> str:
         """Generate a farmer-friendly response from structured task outputs."""
         language = detect_farmer_language(user_prompt)
+        required_sections = _get_reply_headers(language)
         compact_context = self._compact_supervisor_context(context)
         context_text = json.dumps(compact_context, indent=2, ensure_ascii=True, default=str)
         fallback = self._build_supervisor_fallback(
@@ -1300,20 +1576,11 @@ class LLMService:
                         max_output_tokens=420,
                     ),
                 )
-                text = " ".join((response.text or "").strip().split())
+                text = _clean_reply_format(response.text, language)
                 if text:
-                    if _reply_looks_truncated(text):
-                        continuation = await self._continue_supervisor_reply(
-                            user_prompt=user_prompt,
-                            context_text=context_text,
-                            partial_text=text,
-                            language=language,
-                            weather_instructions=weather_instructions,
-                        )
-                        merged = self._merge_reply_segments(text, continuation)
-                        if merged:
-                            return merged
-                    return text
+                    if _has_required_headings(text, required_sections):
+                        return text
+                    logger.warning("Supervisor reply missing required headings. Retrying generation.")
             except Exception as exc:
                 logger.warning(
                     "Supervisor reply attempt %d/%d failed: %s",
@@ -1416,6 +1683,7 @@ class LLMService:
     ) -> str:
         """Generate a short inventory status reply from structured stock data."""
         language = detect_farmer_language(user_prompt)
+        required_sections = _get_reply_headers(language)
         items = inventory_summary.get("items") or []
         total_items = int(inventory_summary.get("total_items") or len(items))
         low_stock_count = int(inventory_summary.get("low_stock_count") or 0)
@@ -1432,6 +1700,8 @@ class LLMService:
             "Give the user a concise stock summary.\n"
             "If stock is low, say which items are low and advise restocking.\n"
             "Do not mention crop diagnosis or ask for crop/zone.\n"
+            "Use subheadings Finding, Actions, Treatment, Recheck.\n"
+            "Under each subheading, use short bullet lines prefixed with '- '.\n"
         )
 
         for attempt in range(1, MAX_RETRIES + 1):
@@ -1443,15 +1713,19 @@ class LLMService:
                             "You are AcreZen's inventory assistant. "
                             "Use only the provided inventory summary. "
                             "Keep the answer short, practical, and farmer-friendly. "
-                            "Do not mention diagnosis or weather."
+                            "Do not mention diagnosis or weather. "
+                            "Output plain text only with subheadings Finding, Actions, Treatment, Recheck and bullet-point lines. "
+                            "Do not use markdown markers."
                         ),
                         temperature=0.25,
                         max_output_tokens=220,
                     ),
                 )
-                text = " ".join((response.text or "").strip().split())
+                text = _clean_reply_format(response.text, language)
                 if text:
-                    return text
+                    if _has_required_headings(text, required_sections):
+                        return text
+                    logger.warning("Inventory reply missing required headings. Retrying generation.")
             except Exception as exc:
                 logger.warning(
                     "Inventory reply attempt %d/%d failed: %s",
@@ -1553,6 +1827,7 @@ class LLMService:
     ) -> str:
         """Ask Gemini to repair an incomplete or unsupported assistant reply."""
         language = detect_farmer_language(user_prompt)
+        required_sections = _get_reply_headers(language)
         target_language = "Malay (Bahasa Melayu)" if language == "ms" else "English"
         compact_context = self._compact_supervisor_context(context)
         context_text = json.dumps(compact_context, indent=2, ensure_ascii=True, default=str)
@@ -1593,9 +1868,11 @@ class LLMService:
                         max_output_tokens=360,
                     ),
                 )
-                text = " ".join((response.text or "").strip().split())
+                text = _clean_reply_format(response.text, language)
                 if text:
-                    return text
+                    if _has_required_headings(text, required_sections):
+                        return text
+                    logger.warning("Reply rewrite missing required headings. Retrying generation.")
             except Exception as exc:
                 logger.warning(
                     "Reply rewrite attempt %d/%d failed: %s",
@@ -1617,6 +1894,7 @@ class LLMService:
     ) -> str:
         """Generate an agriculture-only fallback reply or a refusal for unrelated prompts."""
         language = detect_farmer_language(user_prompt)
+        required_sections = _get_reply_headers(language)
         if not _looks_agriculture_prompt(user_prompt):
             return _agriculture_refusal(language)
 
@@ -1655,9 +1933,11 @@ class LLMService:
                         max_output_tokens=360,
                     ),
                 )
-                text = " ".join((response.text or "").strip().split())
+                text = _clean_reply_format(response.text, language)
                 if text:
-                    return text
+                    if _has_required_headings(text, required_sections):
+                        return text
+                    logger.warning("Agriculture reply missing required headings. Retrying generation.")
             except Exception as exc:
                 logger.warning(
                     "Agriculture reply attempt %d/%d failed: %s",
@@ -1678,50 +1958,89 @@ class LLMService:
         scan_result: dict[str, Any] | None,
         scan_results: list[dict[str, Any]] | None,
     ) -> str:
+        section_1, section_2, section_3, section_4 = _get_low_confidence_reply_headers(language)
+        question_heading = _get_question_header(language)
+
         if language == "ms":
             crop_type = _trim_text((scan_result or {}).get("cropType"), default="Tanaman")
             disease = _trim_text((scan_result or {}).get("disease"), default="Tidak jelas")
-            if scan_results and len(scan_results) > 1:
-                return (
-                    "Apa Yang Kelihatan\n"
-                    f"Beberapa kawasan menunjukkan {crop_type}: {disease}.\n\n"
-                    "Kenapa Keyakinan Rendah\n"
-                    "Gambar ini belum cukup jelas untuk pengesahan yang selamat.\n\n"
-                    "Langkah Seterusnya\n"
-                    "Ambil semula gambar dekat dalam cahaya baik. Jika simptom merebak, asingkan pokok dan semak semula."
-                )
+            confidence_percent = _format_percent((scan_result or {}).get("confidence"), default="")
+
+            finding_line = (
+                f"- Beberapa kawasan pada {crop_type} menunjukkan kemungkinan {disease}."
+                if scan_results and len(scan_results) > 1
+                else f"- Terdapat kemungkinan {disease} pada {crop_type}."
+            )
+            finding_lines = [finding_line]
+            if confidence_percent:
+                finding_lines.append(f"- Keyakinan anggaran semasa: {confidence_percent}.")
+
+            actions_lines = [
+                "- Gambar belum cukup jelas untuk pengesahan muktamad.",
+                "- Elakkan rawatan agresif sehingga gambar baharu disahkan.",
+                "- Asingkan pokok bergejala sementara menunggu semakan semula.",
+            ]
+
+            treatment_lines = [
+                "- Gunakan rawatan awal yang ringan dan selamat sehingga diagnosis lebih pasti.",
+                "- Jika gejala merebak cepat, dapatkan nasihat agronomi setempat segera.",
+            ]
+
+            recheck_lines = [
+                "- Ambil semula gambar close-up dalam cahaya baik dalam 24 jam.",
+                "- Semak semula selepas muat naik gambar baharu sebelum ubah kadar rawatan.",
+            ]
 
             return (
-                "Apa Yang Kelihatan\n"
-                f"{crop_type}: {disease}.\n\n"
-                "Kenapa Keyakinan Rendah\n"
-                "Gambar ini belum cukup jelas untuk pengesahan yang selamat.\n\n"
-                "Langkah Seterusnya\n"
-                "Ambil semula gambar dekat dalam cahaya baik. Jika simptom merebak, asingkan pokok dan semak semula."
+                f"{section_1}\n" + "\n".join(finding_lines) + "\n\n"
+                f"{section_2}\n" + "\n".join(actions_lines[:3]) + "\n\n"
+                f"{section_3}\n" + "\n".join(treatment_lines[:2]) + "\n\n"
+                f"{section_4}\n" + "\n".join(recheck_lines[:2]) + "\n\n"
+                f"{question_heading}\n"
+                "- Boleh kongsi gambar yang lebih dekat dengan pencahayaan lebih terang?"
             )
 
         crop_type = _trim_text((scan_result or {}).get("cropType"), default="Crop")
         disease = _trim_text((scan_result or {}).get("disease"), default="Unclear")
-        if scan_results and len(scan_results) > 1:
-            return (
-                "What This Looks Like\n"
-                f"Several areas suggest {crop_type}: {disease}.\n\n"
-                "Why Confidence Is Low\n"
-                "The photo is not clear enough for a safe diagnosis.\n\n"
-                "Next Step\n"
-                "Retake a close photo in good light. If the issue is spreading, isolate the plant and recheck soon."
-            )
+        confidence_percent = _format_percent((scan_result or {}).get("confidence"), default="")
+
+        finding_line = (
+            f"- Several regions suggest possible {disease} on {crop_type}."
+            if scan_results and len(scan_results) > 1
+            else f"- A possible {disease} issue was detected on {crop_type}."
+        )
+        finding_lines = [finding_line]
+        if confidence_percent:
+            finding_lines.append(f"- Current estimated confidence: {confidence_percent}.")
+
+        actions_lines = [
+            "- The image is not clear enough for a final diagnosis.",
+            "- Avoid aggressive treatment until the next clearer scan.",
+            "- Isolate visibly affected plants while waiting for confirmation.",
+        ]
+
+        treatment_lines = [
+            "- Use only cautious first-line treatment until confirmation.",
+            "- If symptoms spread rapidly, get local agronomy support immediately.",
+        ]
+
+        recheck_lines = [
+            "- Retake a close photo in brighter light within 24 hours.",
+            "- Recheck after the new photo before changing treatment intensity.",
+        ]
 
         return (
-            "What This Looks Like\n"
-            f"Possible issue: {disease} on {crop_type}.\n\n"
-            "Why Confidence Is Low\n"
-            "The photo is not clear enough for a safe diagnosis.\n\n"
-            "Next Step\n"
-            "Retake a close photo in good light. If the issue is spreading, isolate the plant and recheck soon."
+            f"{section_1}\n" + "\n".join(finding_lines) + "\n\n"
+            f"{section_2}\n" + "\n".join(actions_lines[:3]) + "\n\n"
+            f"{section_3}\n" + "\n".join(treatment_lines[:2]) + "\n\n"
+            f"{section_4}\n" + "\n".join(recheck_lines[:2]) + "\n\n"
+            f"{question_heading}\n"
+            "- Can you share a closer photo with brighter lighting for confirmation?"
         )
 
     def _build_supervisor_fallback(self, *, language: str, user_prompt: str, context: dict[str, Any]) -> str:
+        section_1, section_2, section_3, section_4 = _get_reply_headers(language)
+        question_heading = _get_question_header(language)
         recent_scan = context.get("recent_scan") or {}
         inventory_summary = context.get("inventory_summary") or {}
         weather_snapshot = context.get("weather_snapshot") or {}
@@ -1733,11 +2052,58 @@ class LLMService:
             re.search(r"\b(location|my location|saved location|farm location|bound location|where am i|where is my farm)\b", user_prompt.lower())
         )
 
+        def compose(
+            finding_lines: list[str],
+            action_lines: list[str],
+            treatment_lines: list[str],
+            recheck_lines: list[str],
+            question_line: str | None = None,
+        ) -> str:
+            reply = (
+                f"{section_1}\n" + "\n".join(f"- {line}" for line in finding_lines[:3]) + "\n\n"
+                f"{section_2}\n" + "\n".join(f"- {line}" for line in action_lines[:3]) + "\n\n"
+                f"{section_3}\n" + "\n".join(f"- {line}" for line in treatment_lines[:2]) + "\n\n"
+                f"{section_4}\n" + "\n".join(f"- {line}" for line in recheck_lines[:3])
+            )
+
+            if question_line:
+                reply += f"\n\n{question_heading}\n- {question_line}"
+
+            return reply
+
         if location_prompt:
             if language == "ms":
-                return f"Lokasi ladang yang disimpan ialah {location}." if location else "Lokasi ladang belum disimpan. Sila kemas kini di Settings."
+                if location:
+                    return compose(
+                        [f"Lokasi ladang yang disimpan ialah {location}."],
+                        ["Gunakan lokasi ini untuk ramalan cuaca dan jadual semburan seterusnya."],
+                        ["Tiada rawatan khusus diperlukan untuk semakan lokasi."],
+                        ["Semak semula lokasi selepas kemas kini profil atau perpindahan ladang."],
+                    )
 
-            return f"Your saved farm location is {location}." if location else "Your farm location is not saved yet. Please update it in Settings."
+                return compose(
+                    ["Lokasi ladang belum disimpan."],
+                    ["Kemas kini lokasi di Settings untuk analisis cuaca yang tepat."],
+                    ["Tiada rawatan boleh disesuaikan tanpa lokasi ladang."],
+                    ["Semak semula selepas lokasi disimpan."],
+                    "Boleh kongsi lokasi ladang anda sekarang?",
+                )
+
+            if location:
+                return compose(
+                    [f"Your saved farm location is {location}."],
+                    ["Use this location for weather timing and next spray planning."],
+                    ["No crop treatment is needed for a location check."],
+                    ["Review location again after profile updates or farm relocation."],
+                )
+
+            return compose(
+                ["Your farm location is not saved yet."],
+                ["Update your farm location in Settings for accurate weather guidance."],
+                ["Treatment guidance cannot be localized until location is saved."],
+                ["Recheck once your location is saved."],
+                "Can you share your farm location now?",
+            )
 
         if weather_snapshot:
             condition = _trim_text(weather_snapshot.get("condition"), default="unknown")
@@ -1750,15 +2116,19 @@ class LLMService:
 
             if language == "ms":
                 prefix = f"Untuk {location}, " if location else ""
-                return (
-                    f"{prefix}cuaca {condition}, {temperature_c:.0f}C, angin {wind_kmh:.0f} km/j, dan {rain_text}. "
-                    f"Ini {spray_text}. {recommendation}".strip()
+                return compose(
+                    [f"{prefix}cuaca semasa {condition}, suhu {temperature_c:.0f}C, angin {wind_kmh:.0f} km/j, {rain_text}."],
+                    [f"Status semasa: {spray_text}.", "Rancang semburan ikut tetingkap cuaca paling stabil."],
+                    [recommendation or "Gunakan rawatan pencegahan berdasarkan risiko cuaca semasa."],
+                    ["Semak semula ramalan sebelum semburan seterusnya."],
                 )
 
             prefix = f"For {location}, " if location else ""
-            return (
-                f"{prefix}weather is {condition}, {temperature_c:.0f}C, wind is {wind_kmh:.0f} km/h, and {rain_text}. "
-                f"It is {spray_text}. {recommendation}".strip()
+            return compose(
+                [f"{prefix}weather is {condition}, temperature is {temperature_c:.0f}C, wind is {wind_kmh:.0f} km/h, and {rain_text}."],
+                [f"Current spray status: {spray_text}.", "Plan application only during the most stable weather window."],
+                [recommendation or "Use weather-aware preventive treatment based on current field risk."],
+                ["Recheck forecast before the next spray round."],
             )
 
         if inventory_summary:
@@ -1770,13 +2140,10 @@ class LLMService:
             zone_health = dashboard_summary.get("zoneHealthSummary") or {}
 
             if language == "ms":
-                pieces: list[str] = []
-                pieces.append(
-                    f"Cuaca {_trim_text(weather.get('condition'), default='tidak jelas')}, angin {_trim_text(weather.get('windKmh'), default='0')} km/j, hujan dalam {_trim_text(weather.get('rainInHours'), default='n/a')} jam."
-                )
-                pieces.append(
-                    f"ROI {_trim_text(financial.get('roiPercent'), default='0')}% dan kos rawatan RM {_trim_text(financial.get('treatmentCostRm'), default='0')}."
-                )
+                pieces: list[str] = [
+                    f"Cuaca {_trim_text(weather.get('condition'), default='tidak jelas')} dengan angin {_trim_text(weather.get('windKmh'), default='0')} km/j.",
+                    f"ROI semasa {_trim_text(financial.get('roiPercent'), default='0')}% dan kos rawatan RM {_trim_text(financial.get('treatmentCostRm'), default='0')}.",
+                ]
                 low_stock_item = financial.get("lowStockItem")
                 if low_stock_item:
                     pieces.append(
@@ -1786,15 +2153,17 @@ class LLMService:
                     pieces.append(
                         f"Zon perlukan perhatian: {_trim_text(zone_health.get('zonesNeedingAttention'), default='0')}."
                     )
-                return " ".join(pieces)
+                return compose(
+                    [pieces[0]],
+                    [pieces[1]],
+                    [pieces[2] if len(pieces) > 2 else "Keutamaan rawatan ikut zon paling berisiko."],
+                    [pieces[3] if len(pieces) > 3 else "Semak semula ringkasan dashboard selepas kemas kini data baharu."],
+                )
 
-            pieces = []
-            pieces.append(
-                f"Weather looks {_trim_text(weather.get('condition'), default='unclear')}, wind is {_trim_text(weather.get('windKmh'), default='0')} km/h, and rain is expected in {_trim_text(weather.get('rainInHours'), default='n/a')} hours."
-            )
-            pieces.append(
-                f"ROI is {_trim_text(financial.get('roiPercent'), default='0')}% and treatment cost is RM {_trim_text(financial.get('treatmentCostRm'), default='0')}."
-            )
+            pieces = [
+                f"Weather is {_trim_text(weather.get('condition'), default='unclear')} with wind {_trim_text(weather.get('windKmh'), default='0')} km/h.",
+                f"ROI is {_trim_text(financial.get('roiPercent'), default='0')}% and treatment cost is RM {_trim_text(financial.get('treatmentCostRm'), default='0')}.",
+            ]
             low_stock_item = financial.get("lowStockItem")
             if low_stock_item:
                 pieces.append(
@@ -1804,36 +2173,77 @@ class LLMService:
                 pieces.append(
                     f"Zones needing attention: {_trim_text(zone_health.get('zonesNeedingAttention'), default='0')}."
                 )
-            return " ".join(pieces)
+            return compose(
+                [pieces[0]],
+                [pieces[1]],
+                [pieces[2] if len(pieces) > 2 else "Prioritize treatment budget for the highest-risk zones first."],
+                [pieces[3] if len(pieces) > 3 else "Recheck dashboard metrics after the next data refresh."],
+            )
 
         if latest:
             disease = _trim_text(latest.get("disease"), default="Unknown")
             severity = _trim_text(latest.get("severity"), default="Unknown")
             trend = _trim_text(recent_scan.get("trend"), default="Trend data is limited.")
-            confidence = latest.get("confidence")
-            confidence_text = ""
-            if confidence is not None:
-                confidence_text = f" Confidence {self._normalize_confidence(confidence) or 0}%."
+            confidence_text = _format_percent(latest.get("confidence"), default="")
 
             if language == "ms":
-                return f"Ujian terakhir menunjukkan {disease} pada tahap {severity}.{confidence_text} {trend}"
+                finding_lines = [f"Ujian terakhir menunjukkan {disease} pada tahap {severity}."]
+                if confidence_text:
+                    finding_lines.append(f"Keyakinan imbasan terakhir: {confidence_text}.")
+                return compose(
+                    finding_lines,
+                    ["Fokus pemeriksaan pada kawasan yang gejalanya sedang meningkat."],
+                    ["Teruskan pelan rawatan semasa dan laras ikut perkembangan gejala."],
+                    [trend],
+                )
 
-            return f"Latest scan shows {disease} at {severity} severity.{confidence_text} {trend}"
+            finding_lines = [f"Latest scan shows {disease} at {severity} severity."]
+            if confidence_text:
+                finding_lines.append(f"Latest scan confidence: {confidence_text}.")
+            return compose(
+                finding_lines,
+                ["Prioritize field checks where symptoms are increasing."],
+                ["Continue current treatment and adjust based on symptom progression."],
+                [trend],
+            )
 
         if language == "ms":
-            return "Sila muat naik gambar yang lebih jelas atau beritahu saya tanaman dan zon yang perlu diperiksa."
+            return compose(
+                ["Tiada data mencukupi untuk jawapan khusus sekarang."],
+                ["Muat naik gambar yang lebih jelas atau nyatakan tanaman dan zon."],
+                ["Rawatan boleh dipadankan selepas data tanaman atau gambar diterima."],
+                ["Semak semula selepas maklumat tambahan dikongsi."],
+                "Boleh kongsi tanaman atau zon yang anda mahu saya fokuskan?",
+            )
 
-        return "Please upload a clear photo or tell me which crop and zone you want checked."
+        return compose(
+            ["There is not enough data for a specific recommendation yet."],
+            ["Upload a clearer photo or share the crop and zone you want checked."],
+            ["Treatment can be tailored once crop details or scan data are available."],
+            ["Recheck after sharing additional details."],
+            "Can you share which crop or zone you want me to focus on?",
+        )
 
     def _build_inventory_fallback(self, *, language: str, inventory_summary: dict[str, Any]) -> str:
+        section_1, section_2, section_3, section_4 = _get_reply_headers(language)
         items = inventory_summary.get("items") or []
         total_items = int(inventory_summary.get("total_items") or len(items))
         low_stock_count = int(inventory_summary.get("low_stock_count") or 0)
 
         if not items:
             if language == "ms":
-                return "Tiada rekod inventori ditemui untuk akaun anda."
-            return "No inventory records were found for your account."
+                return (
+                    f"{section_1}\n- Tiada rekod inventori ditemui untuk akaun anda.\n\n"
+                    f"{section_2}\n- Sahkan sambungan akaun dan kemas kini stok terkini.\n\n"
+                    f"{section_3}\n- Tiada pelan rawatan inventori boleh dijana tanpa data stok.\n\n"
+                    f"{section_4}\n- Semak semula selepas rekod inventori disegerakkan."
+                )
+            return (
+                f"{section_1}\n- No inventory records were found for your account.\n\n"
+                f"{section_2}\n- Verify account sync and update your latest stock data.\n\n"
+                f"{section_3}\n- No inventory treatment plan can be generated without stock data.\n\n"
+                f"{section_4}\n- Recheck after inventory records are synchronized."
+            )
 
         top_items: list[str] = []
         for item in items[:3]:
@@ -1843,8 +2253,24 @@ class LLMService:
             top_items.append(f"{name}: {liters:.1f} {unit}")
 
         if language == "ms":
-            low_stock_note = f" {low_stock_count} item berada pada stok rendah." if low_stock_count else ""
-            return f"Anda mempunyai {total_items} item inventori.{low_stock_note} {', '.join(top_items)}"
+            finding = f"Anda mempunyai {total_items} item inventori."
+            if low_stock_count:
+                finding += f" {low_stock_count} item berada pada stok rendah."
+            return (
+                f"{section_1}\n- {finding}\n\n"
+                f"{section_2}\n- Semak item stok rendah dahulu dan jadualkan pembelian semula.\n"
+                f"- Ringkasan item utama: {', '.join(top_items)}.\n\n"
+                f"{section_3}\n- Prioritikan penggunaan stok sedia ada ikut keperluan rawatan semasa.\n\n"
+                f"{section_4}\n- Semak semula inventori selepas kemas kini penggunaan atau pembelian baharu."
+            )
 
-        low_stock_note = f" {low_stock_count} item are low on stock." if low_stock_count else ""
-        return f"You have {total_items} inventory item(s).{low_stock_note} {', '.join(top_items)}"
+        finding = f"You have {total_items} inventory item(s)."
+        if low_stock_count:
+            finding += f" {low_stock_count} item are low on stock."
+        return (
+            f"{section_1}\n- {finding}\n\n"
+            f"{section_2}\n- Review low-stock items first and schedule replenishment.\n"
+            f"- Key items snapshot: {', '.join(top_items)}.\n\n"
+            f"{section_3}\n- Prioritize current stock usage based on active treatment needs.\n\n"
+            f"{section_4}\n- Recheck inventory after usage updates or new purchases."
+        )

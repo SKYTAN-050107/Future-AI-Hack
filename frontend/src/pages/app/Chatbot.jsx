@@ -142,6 +142,12 @@ function normalizeMessage(raw) {
     return null
   }
 
+  const meta = role === 'ai' ? String(raw?.meta || '').trim() : ''
+
+  if (meta) {
+    return { role, text, meta }
+  }
+
   return { role, text }
 }
 
@@ -206,7 +212,11 @@ function areConversationListsEqual(left, right) {
     }
 
     for (let j = 0; j < a.messages.length; j += 1) {
-      if (a.messages[j]?.role !== b.messages[j]?.role || a.messages[j]?.text !== b.messages[j]?.text) {
+      if (
+        a.messages[j]?.role !== b.messages[j]?.role
+        || a.messages[j]?.text !== b.messages[j]?.text
+        || String(a.messages[j]?.meta || '') !== String(b.messages[j]?.meta || '')
+      ) {
         return false
       }
     }
@@ -449,6 +459,17 @@ async function hydratePendingCaptureFromFirestore(uid, captureId) {
 
 function normalizeScanStatus(result) {
   return Number(result?.severity || 0) >= 40 ? 'abnormal' : 'normal'
+}
+
+function formatDiagnosisMeta(result) {
+  const disease = String(result?.disease || 'Unknown').trim() || 'Unknown'
+  const severity = Number(result?.severity)
+  const confidence = Number(result?.confidence)
+  const risk = String(result?.spread_risk || 'Unknown').trim() || 'Unknown'
+  const severityText = Number.isFinite(severity) ? `${Math.round(severity)}%` : 'Unknown'
+  const confidenceText = Number.isFinite(confidence) ? `${Math.round(confidence)}%` : 'Unknown'
+
+  return `Diagnosis: ${disease} | Severity ${severityText} | Confidence ${confidenceText} | Risk ${risk}.`
 }
 
 function formatConversationTime(value) {
@@ -788,10 +809,10 @@ export default function Chatbot() {
           // Keep chat flow smooth even when persistence fails.
         }
 
-        const diagnosisLine = `Diagnosis: ${response.disease} | Severity ${response.severity}% | Confidence ${response.confidence}% | Risk ${response.spread_risk}.`
-        const assistantText = `${response.assistant_reply}\n\n${diagnosisLine}`
+        const assistantText = String(response?.assistant_reply || '').trim() || 'No assistant response received.'
+        const diagnosisMeta = formatDiagnosisMeta(response)
 
-        const aiMessage = { role: 'ai', text: assistantText }
+        const aiMessage = { role: 'ai', text: assistantText, meta: diagnosisMeta }
         setMessages((prev) => {
           const next = [...prev, aiMessage]
           persistConversation(conversationId, next)
@@ -906,8 +927,12 @@ export default function Chatbot() {
     }
   }
 
-  const appendAssistantMessage = (conversationId, text) => {
-    const aiMessage = { role: 'ai', text }
+  const appendAssistantMessage = (conversationId, text, meta = '') => {
+    const aiMessage = {
+      role: 'ai',
+      text: String(text || '').trim(),
+      ...(meta ? { meta: String(meta).trim() } : {}),
+    }
     setMessages((prev) => {
       const next = [...prev, aiMessage]
       persistConversation(conversationId, next)
@@ -1000,8 +1025,9 @@ export default function Chatbot() {
         // Keep chat response flow even if report persistence fails.
       }
 
-      const diagnosisLine = `Diagnosis: ${response.disease} | Severity ${response.severity}% | Confidence ${response.confidence}% | Risk ${response.spread_risk}.`
-      appendAssistantMessage(conversationId, `${response.assistant_reply}\n\n${diagnosisLine}`)
+      const assistantText = String(response?.assistant_reply || '').trim() || 'No assistant response received.'
+      const diagnosisMeta = formatDiagnosisMeta(response)
+      appendAssistantMessage(conversationId, assistantText, diagnosisMeta)
     } catch (uploadError) {
       appendAssistantMessage(
         conversationId,
@@ -1173,7 +1199,10 @@ export default function Chatbot() {
             >
               <p className="pg-chatbot-message-role">{message.role === 'user' ? 'You' : 'Assistant'}</p>
               <div className="pg-chatbot-message-bubble">
-                <p>{message.text}</p>
+                <p className="pg-chatbot-message-text">{message.text}</p>
+                {message.role === 'ai' && message.meta ? (
+                  <p className="pg-chatbot-message-meta">{message.meta}</p>
+                ) : null}
               </div>
             </article>
           ))}
