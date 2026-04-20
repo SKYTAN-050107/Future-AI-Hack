@@ -911,7 +911,7 @@ export default function Dashboard() {
                 </button>
                 <button
                   type="button"
-                  className="pg-btn pg-btn-inline pg-finance-cta-btn"
+                  className="pg-btn pg-btn-primary pg-finance-cta-btn"
                   onClick={() => navigate('/app/yield-prediction')}
                 >
                   Yield Prediction
