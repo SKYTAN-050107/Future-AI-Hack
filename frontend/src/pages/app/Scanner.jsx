@@ -179,6 +179,8 @@ export default function Scanner() {
   const frameCounterRef = useRef(0)
   const requestInFlightRef = useRef(false)
   const isMountedRef = useRef(false)
+  const captureSubmitLockRef = useRef(false)
+  const finalizeCaptureLockRef = useRef(false)
   const zoneMapContainerRef = useRef(null)
   const zoneMapRef = useRef(null)
   const zoneMapMarkerRef = useRef(null)
@@ -290,9 +292,11 @@ export default function Scanner() {
     cropType = null,
     gridDocId = null,
   ) => {
-    if (!pendingCaptureDraft) {
+    if (!pendingCaptureDraft || finalizeCaptureLockRef.current || isFinalizingCapture) {
       return
     }
+
+    finalizeCaptureLockRef.current = true
 
     const resolvedGridId = String(gridId || '').trim() || null
     const resolvedMarkerPosition = resolvedGridId ? normalizeZonePosition(markerPosition) : null
@@ -364,6 +368,7 @@ export default function Scanner() {
       setStatusMessage(error?.message || 'Capture failed. Please try again.')
     } finally {
       setIsFinalizingCapture(false)
+      finalizeCaptureLockRef.current = false
     }
   }
 
@@ -757,7 +762,7 @@ export default function Scanner() {
       return
     }
 
-    if (isSubmitting) {
+    if (isSubmitting || captureSubmitLockRef.current) {
       return
     }
 
@@ -765,6 +770,8 @@ export default function Scanner() {
       setStatusMessage('Camera stream is not ready. Please try again.')
       return
     }
+
+    captureSubmitLockRef.current = true
 
     setIsCaptureFlashVisible(true)
     window.setTimeout(() => {
@@ -800,6 +807,7 @@ export default function Scanner() {
       setStatusMessage(error?.message || 'Capture failed. Please try again.')
     } finally {
       setIsSubmitting(false)
+      captureSubmitLockRef.current = false
     }
   }
 

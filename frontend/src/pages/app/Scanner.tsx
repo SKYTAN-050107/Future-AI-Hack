@@ -52,6 +52,7 @@ export default function Scanner() {
   const { user } = useSessionContext()
   const videoRef = useRef(null)
   const streamRef = useRef(null)
+  const captureSubmitLockRef = useRef(false)
   const [cameraState, setCameraState] = useState('loading')
   const [statusMessage, setStatusMessage] = useState('Initializing rear camera...')
   const [lastCaptureTime, setLastCaptureTime] = useState('')
@@ -129,7 +130,7 @@ export default function Scanner() {
       return
     }
 
-    if (isSubmitting) {
+    if (isSubmitting || captureSubmitLockRef.current) {
       return
     }
 
@@ -137,6 +138,8 @@ export default function Scanner() {
       setStatusMessage('Camera stream is not ready. Please try again.')
       return
     }
+
+    captureSubmitLockRef.current = true
 
     setIsCaptureFlashVisible(true)
     window.setTimeout(() => {
@@ -188,6 +191,7 @@ export default function Scanner() {
       setStatusMessage(error?.message || 'Capture failed. Please try again.')
     } finally {
       setIsSubmitting(false)
+      captureSubmitLockRef.current = false
     }
   }
 

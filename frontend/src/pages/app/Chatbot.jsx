@@ -23,6 +23,7 @@ import { downloadUrlToDataUrl, loadUserScanCapture, persistUserScanCapture, crea
 
 const STORAGE_KEY_PREFIX = 'pg_chatbot_conversations_v2'
 const PENDING_CAPTURE_KEY = 'pg_pending_scan_capture_v1'
+const PROCESSED_AUTO_SCAN_CAPTURE_IDS_KEY = 'pg_processed_auto_scan_capture_ids_v1'
 const USERS_COLLECTION = 'users'
 const CONVERSATION_COLLECTION = 'conversations'
 
@@ -36,6 +37,10 @@ const QUICK_PROMPTS = [
   'What should I spray this week?',
   'Estimate treatment ROI from latest scan',
 ]
+
+// Module-level lock survives component remounts in development and blocks duplicate in-flight scan calls.
+const inFlightAutoScanCaptureIds = new Set()
+const inFlightAutoScanRouteKeys = new Set()
 
 const CAMERA_CAPTURE_USER_MESSAGE = 'I have captured this image. Please diagnose it and suggest what to do next.'
 
@@ -300,6 +305,114 @@ function savePendingCapture(payload) {
   }
 }
 
+function loadProcessedAutoScanCaptureIds() {
+  if (typeof window === 'undefined') {
+    return new Set()
+  }
+
+  try {
+    const raw = window.sessionStorage.getItem(PROCESSED_AUTO_SCAN_CAPTURE_IDS_KEY)
+    if (!raw) {
+      return new Set()
+    }
+
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) {
+      return new Set()
+    }
+
+    const normalizedIds = parsed
+      .map((item) => String(item || '').trim())
+      .filter(Boolean)
+
+    return new Set(normalizedIds)
+  } catch {
+    return new Set()
+  }
+}
+
+function saveProcessedAutoScanCaptureIds(processedCaptureIds) {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  try {
+    const normalized = [...processedCaptureIds]
+      .map((item) => String(item || '').trim())
+      .filter(Boolean)
+
+    const dedupedRecent = [...new Set(normalized)].slice(-48)
+    window.sessionStorage.setItem(PROCESSED_AUTO_SCAN_CAPTURE_IDS_KEY, JSON.stringify(dedupedRecent))
+  } catch {
+    // Ignore persistence failures and keep in-memory dedupe.
+  }
+}
+
+function hasProcessedAutoScanCaptureId(captureId, processedCaptureIds) {
+  const safeCaptureId = String(captureId || '').trim()
+  if (!safeCaptureId) {
+    return false
+  }
+
+  return processedCaptureIds.has(safeCaptureId)
+}
+
+function markProcessedAutoScanCaptureId(captureId, processedCaptureIds) {
+  const safeCaptureId = String(captureId || '').trim()
+  if (!safeCaptureId) {
+    return
+  }
+
+  processedCaptureIds.add(safeCaptureId)
+  saveProcessedAutoScanCaptureIds(processedCaptureIds)
+}
+
+function acquireAutoScanInFlightLock(captureId) {
+  const safeCaptureId = String(captureId || '').trim()
+  if (!safeCaptureId) {
+    return false
+  }
+
+  if (inFlightAutoScanCaptureIds.has(safeCaptureId)) {
+    return false
+  }
+
+  inFlightAutoScanCaptureIds.add(safeCaptureId)
+  return true
+}
+
+function releaseAutoScanInFlightLock(captureId) {
+  const safeCaptureId = String(captureId || '').trim()
+  if (!safeCaptureId) {
+    return
+  }
+
+  inFlightAutoScanCaptureIds.delete(safeCaptureId)
+}
+
+function acquireAutoScanRouteInFlightLock(routeKey) {
+  const safeRouteKey = String(routeKey || '').trim()
+  if (!safeRouteKey) {
+    return false
+  }
+
+  if (inFlightAutoScanRouteKeys.has(safeRouteKey)) {
+    return false
+  }
+
+  inFlightAutoScanRouteKeys.add(safeRouteKey)
+  return true
+}
+
+function releaseAutoScanRouteInFlightLock(routeKey) {
+  const safeRouteKey = String(routeKey || '').trim()
+  if (!safeRouteKey) {
+    return
+  }
+
+  inFlightAutoScanRouteKeys.delete(safeRouteKey)
+}
+
 function getQueryParam(search, key) {
   try {
     return String(new URLSearchParams(search).get(key) || '').trim()
@@ -373,6 +486,10 @@ export default function Chatbot() {
     savedLat: profile?.onboarding?.locationLat,
     savedLng: profile?.onboarding?.locationLng,
   })
+
+  useEffect(() => {
+    processedAutoScanCaptureIdsRef.current = loadProcessedAutoScanCaptureIds()
+  }, [])
 
   const persistConversationToFirestore = useCallback(async (uid, entry) => {
     if (!uid || !entry || !db || !isFirebaseConfigured) {
@@ -532,19 +649,38 @@ export default function Chatbot() {
     const params = new URLSearchParams(location.search)
     const fromScan = params.get('fromScan') === '1'
     const captureIdFromUrl = getQueryParam(location.search, 'captureId')
+    const routeLockKey = fromScan ? `fromScan:${location.search}` : ''
+    let lockedCaptureId = ''
+    let hasRouteLock = false
 
-    if (!fromScan || isAutoProcessing || isThinking || isAuthLoading) {
+    if (!fromScan || isAutoProcessing || isThinking) {
       return
     }
+
+    if (!acquireAutoScanRouteInFlightLock(routeLockKey)) {
+      return
+    }
+    hasRouteLock = true
 
     if (autoScanTriggeredRef.current) {
+      releaseAutoScanRouteInFlightLock(routeLockKey)
       return
     }
 
-    if (captureIdFromUrl && processedAutoScanCaptureIdsRef.current.has(captureIdFromUrl)) {
+    if (hasProcessedAutoScanCaptureId(captureIdFromUrl, processedAutoScanCaptureIdsRef.current)) {
       navigate('/app/chatbot', { replace: true })
       clearPendingCapture()
+      releaseAutoScanRouteInFlightLock(routeLockKey)
       return
+    }
+
+    if (captureIdFromUrl) {
+      if (!acquireAutoScanInFlightLock(captureIdFromUrl)) {
+        releaseAutoScanRouteInFlightLock(routeLockKey)
+        return
+      }
+
+      lockedCaptureId = captureIdFromUrl
     }
 
     const uid = String(user?.uid || '').trim()
@@ -559,20 +695,8 @@ export default function Chatbot() {
       setActiveConversationId(conversationId)
     }
 
-    setMessages((prev) => {
-      const lastMessage = prev[prev.length - 1]
-      if (lastMessage?.role === 'user' && lastMessage?.text === defaultUserPrompt) {
-        return prev
-      }
-
-      const next = [...prev, { role: 'user', text: defaultUserPrompt }]
-      persistConversation(conversationId, next)
-      return next
-    })
-
     setIsAutoProcessing(true)
     setIsThinking(true)
-    navigate('/app/chatbot', { replace: true })
 
     const runAutoScan = async () => {
       let pendingCapture = null
@@ -595,12 +719,17 @@ export default function Chatbot() {
 
         const pendingCaptureId = String(pendingCapture?.captureId || '').trim()
         resolvedCaptureId = pendingCaptureId || captureIdFromUrl
-        if (resolvedCaptureId && processedAutoScanCaptureIdsRef.current.has(resolvedCaptureId)) {
-          return
+
+        if (!lockedCaptureId && resolvedCaptureId) {
+          if (!acquireAutoScanInFlightLock(resolvedCaptureId)) {
+            return
+          }
+
+          lockedCaptureId = resolvedCaptureId
         }
 
-        if (resolvedCaptureId) {
-          processedAutoScanCaptureIdsRef.current.add(resolvedCaptureId)
+        if (hasProcessedAutoScanCaptureId(resolvedCaptureId, processedAutoScanCaptureIdsRef.current)) {
+          return
         }
 
         if (!pendingCapture?.base64Image) {
@@ -617,6 +746,19 @@ export default function Chatbot() {
         }
 
         const userPrompt = String(pendingCapture.userPrompt || defaultUserPrompt).trim() || defaultUserPrompt
+
+        setMessages((prev) => {
+          const lastMessage = prev[prev.length - 1]
+          if (lastMessage?.role === 'user' && lastMessage?.text === defaultUserPrompt) {
+            return prev
+          }
+
+          const next = [...prev, { role: 'user', text: defaultUserPrompt }]
+          persistConversation(conversationId, next)
+          return next
+        })
+
+        markProcessedAutoScanCaptureId(resolvedCaptureId, processedAutoScanCaptureIdsRef.current)
 
         const response = await scanAndAskAssistant({
           source: pendingCapture.source || 'camera',
@@ -667,9 +809,15 @@ export default function Chatbot() {
         })
       } finally {
         clearPendingCapture()
+        releaseAutoScanInFlightLock(lockedCaptureId)
+        if (hasRouteLock) {
+          releaseAutoScanRouteInFlightLock(routeLockKey)
+          hasRouteLock = false
+        }
+        setIsAutoProcessing(false)
+        setIsThinking(false)
         if (!cancelled) {
-          setIsAutoProcessing(false)
-          setIsThinking(false)
+          navigate('/app/chatbot', { replace: true })
         }
         suppressConversationBootstrapRef.current = false
       }
@@ -679,16 +827,15 @@ export default function Chatbot() {
 
     return () => {
       cancelled = true
+      if (hasRouteLock) {
+        releaseAutoScanRouteInFlightLock(routeLockKey)
+        hasRouteLock = false
+      }
     }
   }, [
-    activeConversationId,
-    isAuthLoading,
-    isAutoProcessing,
-    isThinking,
     location.search,
     navigate,
     saveScanReport,
-    user?.uid,
   ])
 
   const persistConversation = (conversationId, nextMessages) => {
