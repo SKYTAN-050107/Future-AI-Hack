@@ -293,6 +293,7 @@ class WeatherService:
                         payload=deepcopy(cached_entry.payload),
                         days=days,
                         service_warning=warning,
+                        include_recommendation=include_recommendation,
                     )
 
                 return self._build_fallback_outlook(warning)

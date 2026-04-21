@@ -12,6 +12,9 @@ import { useScanHistory } from '../../hooks/useScanHistory'
 import { useFarmLocationCoordinates } from '../../hooks/useFarmLocationCoordinates'
 import { getTreatmentRoiSnapshot, getTreatmentFormSnapshot, TREATMENT_ROI_CACHE_UPDATED_EVENT } from '../../utils/treatmentRoiCache'
 
+const ZONE_REVIEW_CACHE_TTL_MS = 5 * 60 * 1000
+const zoneQuickReviewCache = new Map()
+
 function safeNumber(value, fallback = 0) {
   if (value === null || value === undefined || value === '') {
     return fallback
@@ -34,6 +37,14 @@ function deriveSurvivalProbability(report) {
 
   const inferred = 1 - (severity / 100)
   return Math.max(0.05, Math.min(0.95, inferred))
+}
+
+function buildZoneReviewCacheKey({ userId, zone, lat, lng }) {
+  const safeUserId = String(userId || '').trim() || 'na'
+  const safeZone = String(zone || '').trim() || 'na'
+  const safeLat = Number.isFinite(Number(lat)) ? Number(lat).toFixed(4) : 'na'
+  const safeLng = Number.isFinite(Number(lng)) ? Number(lng).toFixed(4) : 'na'
+  return `${safeUserId}:${safeZone}:${safeLat}:${safeLng}`
 }
 
 function formatCurrency(value) {
@@ -639,6 +650,24 @@ export default function Dashboard() {
     }
 
     let active = true
+    const cacheKey = buildZoneReviewCacheKey({
+      userId,
+      zone: selectedZoneName,
+      lat,
+      lng,
+    })
+    const cachedReview = zoneQuickReviewCache.get(cacheKey)
+    const isCachedReviewFresh = cachedReview && (Date.now() - cachedReview.fetchedAt) < ZONE_REVIEW_CACHE_TTL_MS
+
+    if (isCachedReviewFresh) {
+      setZoneQuickReview(cachedReview.value)
+      setZoneQuickReviewError('')
+      setIsZoneQuickReviewLoading(false)
+      return () => {
+        active = false
+      }
+    }
+
     setIsZoneQuickReviewLoading(true)
     setZoneQuickReview('')
     setZoneQuickReviewError('')
@@ -662,7 +691,12 @@ export default function Dashboard() {
         if (!active) {
           return
         }
-        setZoneQuickReview(String(response?.assistant_reply || '').trim())
+        const reply = String(response?.assistant_reply || '').trim()
+        zoneQuickReviewCache.set(cacheKey, {
+          value: reply,
+          fetchedAt: Date.now(),
+        })
+        setZoneQuickReview(reply)
       })
       .catch((error) => {
         if (!active) {

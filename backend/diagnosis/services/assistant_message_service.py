@@ -12,6 +12,8 @@ from services.llm_service import LLMService
 logger = logging.getLogger(__name__)
 
 ZONE_REVIEW_PROMPT_MARKER = "[ZONE_REVIEW]"
+_USER_OWNER_FIELDS = ("ownerUid", "userId", "uid")
+_ZONE_FIELDS = ("zone", "gridId")
 
 
 class AssistantMessageService:
@@ -101,7 +103,48 @@ class AssistantMessageService:
             return fallback
 
     def _load_reports_sync(self, user_id: str, zone: str | None) -> list[dict]:
-        # Prefer user-scoped records; allow legacy docs without owner fields.
+        reports = self._load_reports_via_targeted_queries(user_id=user_id, zone=zone)
+
+        # Legacy fallback: preserve support for older records that may not yet
+        # have stable owner fields. This only runs when targeted queries found
+        # nothing, which avoids full-collection scans on the hot dashboard path.
+        if not reports:
+            reports = self._load_reports_via_full_scan(user_id=user_id, zone=zone)
+
+        reports.sort(key=self._sort_key, reverse=True)
+        return reports[:30]
+
+    def _load_reports_via_targeted_queries(self, *, user_id: str, zone: str | None) -> list[dict]:
+        collection = self._db.collection(self._report_collection)
+        seen_doc_ids: set[str] = set()
+        reports: list[dict] = []
+
+        for owner_field in _USER_OWNER_FIELDS:
+            queries = []
+            owner_query = collection.where(owner_field, "==", user_id)
+            queries.append(owner_query)
+
+            if zone:
+                for zone_field in _ZONE_FIELDS:
+                    queries.append(owner_query.where(zone_field, "==", zone))
+
+            for query in queries:
+                for doc in query.stream():
+                    if doc.id in seen_doc_ids:
+                        continue
+                    seen_doc_ids.add(doc.id)
+                    reports.append(doc.to_dict() or {})
+
+        if zone:
+            zone_value = zone.strip()
+            reports = [
+                report for report in reports
+                if str(report.get("zone") or report.get("gridId") or "").strip() == zone_value
+            ]
+
+        return reports
+
+    def _load_reports_via_full_scan(self, *, user_id: str, zone: str | None) -> list[dict]:
         docs = self._db.collection(self._report_collection).stream()
         reports: list[dict] = []
 
@@ -112,13 +155,13 @@ class AssistantMessageService:
                 continue
 
             if zone:
-                record_zone = str(data.get("zone") or data.get("gridId") or "")
-                if record_zone != zone:
+                record_zone = str(data.get("zone") or data.get("gridId") or "").strip()
+                if record_zone != zone.strip():
                     continue
+
             reports.append(data)
 
-        reports.sort(key=self._sort_key, reverse=True)
-        return reports[:30]
+        return reports
 
     def _sort_key(self, item: dict) -> float:
         for key in ("createdAt", "timestamp", "lastUpdated"):
