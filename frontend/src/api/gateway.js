@@ -14,6 +14,7 @@ function normalizeBase64Image(value) {
 const DEFAULT_REQUEST_TIMEOUT_MS = 30000
 const DIAGNOSIS_API_BASE_URL = String(import.meta.env.VITE_DIAGNOSIS_API_BASE_URL || '').trim().replace(/\/+$/, '')
 const SWARM_API_BASE_URL = String(import.meta.env.VITE_SWARM_API_BASE_URL || '').trim().replace(/\/+$/, '')
+const SWARM_ROUTE_PREFIXES = ['/swarm-api', '/api']
 
 function resolveRequestUrl(path) {
   if (/^https?:\/\//i.test(path)) {
@@ -21,11 +22,18 @@ function resolveRequestUrl(path) {
   }
 
   if (path.startsWith('/swarm-api')) {
+    const normalizedPath = path.startsWith('/swarm-api/')
+      ? `/api/${path.slice('/swarm-api/'.length)}`
+      : '/api'
+
     if (!SWARM_API_BASE_URL) {
       return path
     }
 
-    const suffix = path.slice('/swarm-api'.length)
+    const suffix = /\/api$/i.test(SWARM_API_BASE_URL) && normalizedPath.startsWith('/api/')
+      ? normalizedPath.slice('/api'.length)
+      : normalizedPath
+
     return `${SWARM_API_BASE_URL}${suffix}`
   }
 
@@ -91,6 +99,29 @@ async function requestJson(path, options = {}) {
   console.debug('[API response]', { method, path: requestUrl, status: response.status, payload })
 
   return payload
+}
+
+async function requestSwarmJson(pathSuffix, options = {}) {
+  const preferredPrefixes = SWARM_API_BASE_URL ? ['/api', '/swarm-api'] : ['/swarm-api', '/api']
+  const routePrefixes = [...preferredPrefixes, ...SWARM_ROUTE_PREFIXES.filter((prefix) => !preferredPrefixes.includes(prefix))]
+  const errors = []
+
+  for (const routePrefix of routePrefixes) {
+    const routePath = `${routePrefix}${pathSuffix}`
+
+    try {
+      const payload = await requestJson(routePath, options)
+      if (payload && typeof payload === 'object') {
+        return payload
+      }
+
+      errors.push(`Empty or non-JSON response from ${routePath}`)
+    } catch (error) {
+      errors.push(error?.message || `Request failed at ${routePath}`)
+    }
+  }
+
+  throw new Error(errors[0] || 'Cannot reach swarm backend on current origin.')
 }
 
 function toFiniteNumber(value) {
@@ -507,7 +538,7 @@ export const gateway = {
       throw new Error('lat and lng are required for meteorologist advisory')
     }
 
-    return requestJson('/swarm-api/runAction', {
+    return requestSwarmJson('/runAction', {
       method: 'POST',
       timeoutMs: 30000,
       body: JSON.stringify({

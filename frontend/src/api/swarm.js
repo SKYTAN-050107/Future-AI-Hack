@@ -1,18 +1,36 @@
 let cachedSwarmActionKey = null
+let cachedSwarmRoutePrefix = null
 const SWARM_API_BASE_URL = String(import.meta.env.VITE_SWARM_API_BASE_URL || '').trim().replace(/\/+$/, '')
+const SWARM_ROUTE_PREFIXES = ['/swarm-api', '/api']
+
+function preferredSwarmRoutePrefixes() {
+  if (cachedSwarmRoutePrefix) {
+    return [cachedSwarmRoutePrefix, ...SWARM_ROUTE_PREFIXES.filter((prefix) => prefix !== cachedSwarmRoutePrefix)]
+  }
+
+  if (SWARM_API_BASE_URL) {
+    return ['/api', '/swarm-api']
+  }
+
+  return ['/swarm-api', '/api']
+}
 
 function resolveSwarmUrl(path) {
   if (/^https?:\/\//i.test(path)) {
     return path
   }
 
+  const normalizedPath = path.startsWith('/swarm-api/')
+    ? `/api/${path.slice('/swarm-api/'.length)}`
+    : path
+
   if (!SWARM_API_BASE_URL) {
-    return path
+    return normalizedPath
   }
 
-  const suffix = path.startsWith('/swarm-api')
-    ? path.slice('/swarm-api'.length)
-    : path
+  const suffix = /\/api$/i.test(SWARM_API_BASE_URL) && normalizedPath.startsWith('/api/')
+    ? normalizedPath.slice('/api'.length)
+    : normalizedPath
 
   return `${SWARM_API_BASE_URL}${suffix}`
 }
@@ -72,23 +90,37 @@ async function resolveSwarmActionKey() {
     return cachedSwarmActionKey
   }
 
-  const actionsPayload = await requestSwarm('/swarm-api/actions', {
-    method: 'GET',
-  })
+  const routePrefixes = preferredSwarmRoutePrefixes()
+  let foundKey = null
+  let foundPrefix = null
 
-  const key = findSwarmActionKey(actionsPayload)
-  if (!key) {
+  for (const routePrefix of routePrefixes) {
+    const actionsPayload = await requestSwarm(`${routePrefix}/actions`, {
+      method: 'GET',
+    }).catch(() => null)
+
+    const key = findSwarmActionKey(actionsPayload)
+    if (key) {
+      foundKey = key
+      foundPrefix = routePrefix
+      break
+    }
+  }
+
+  if (!foundKey) {
     throw new Error('swarm_orchestrator action was not found on swarm backend.')
   }
 
-  cachedSwarmActionKey = key
-  return key
+  cachedSwarmActionKey = foundKey
+  cachedSwarmRoutePrefix = foundPrefix
+  return foundKey
 }
 
 export async function runSwarmOrchestrator(input) {
   const key = await resolveSwarmActionKey()
+  const routePrefix = cachedSwarmRoutePrefix || preferredSwarmRoutePrefixes()[0]
 
-  const payload = await requestSwarm('/swarm-api/runAction', {
+  const payload = await requestSwarm(`${routePrefix}/runAction`, {
     method: 'POST',
     body: JSON.stringify({
       key,
