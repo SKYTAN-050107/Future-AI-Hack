@@ -18,4 +18,4 @@ ENV PORT=8000
 
 EXPOSE 8000
 
-CMD ["sh", "-c", "if [ \"$BACKEND_SERVICE\" = \"swarm\" ]; then python swarm/main.py; else uvicorn diagnosis.main:app --host 0.0.0.0 --port ${PORT:-8000}; fi"]
+CMD ["sh", "-c", "if [ \"$BACKEND_SERVICE\" = \"swarm\" ]; then python swarm/main.py; else cd diagnosis && uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}; fi"]

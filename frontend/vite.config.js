@@ -12,7 +12,14 @@ export default defineConfig(({ mode }) => {
       react(),
       VitePWA({
         registerType: 'autoUpdate',
-        includeAssets: ['pwa-icon.svg', 'pwa-maskable.svg'],
+        includeAssets: [
+          'pwa-icon.svg',
+          'pwa-maskable.svg',
+          'pwa-192x192.png',
+          'pwa-512x512.png',
+          'apple-touch-icon.png',
+          'futurehack.png',
+        ],
         manifest: {
           name: 'AcreZen',
           short_name: 'AcreZen',
@@ -24,6 +31,16 @@ export default defineConfig(({ mode }) => {
           start_url: '/',
           icons: [
             {
+              src: '/pwa-192x192.png',
+              sizes: '192x192',
+              type: 'image/png',
+            },
+            {
+              src: '/pwa-512x512.png',
+              sizes: '512x512',
+              type: 'image/png',
+            },
+            {
               src: '/pwa-icon.svg',
               sizes: 'any',
               type: 'image/svg+xml',
@@ -33,6 +50,12 @@ export default defineConfig(({ mode }) => {
               src: '/pwa-maskable.svg',
               sizes: 'any',
               type: 'image/svg+xml',
+              purpose: 'maskable',
+            },
+            {
+              src: '/pwa-512x512.png',
+              sizes: '512x512',
+              type: 'image/png',
               purpose: 'maskable',
             },
           ],

@@ -236,7 +236,7 @@ export default function Landing() {
   const [selectedStep, setSelectedStep] = useState(0)
   const [hoveredFeature, setHoveredFeature] = useState(null)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
-  const { canInstall, isIos, isInstalled, promptInstall } = usePWA()
+  const { canInstall, isIos, isAndroid, isInAppBrowser, isInstalled, promptInstall } = usePWA()
   const previouslyInstalled = typeof window !== 'undefined'
     && localStorage.getItem('padiguard_install_accepted') === '1'
 
@@ -289,6 +289,14 @@ export default function Landing() {
     }
     if (isIos) {
       setInstallHint('On iPhone: tap Share, then Add to Home Screen to install AcreZen.')
+      return
+    }
+    if (isInAppBrowser) {
+      setInstallHint('Open AcreZen in your main browser (Chrome or Safari), then try Install app again.')
+      return
+    }
+    if (isAndroid) {
+      setInstallHint('On Android: open browser menu and tap Install app or Add to Home screen.')
       return
     }
     setInstallHint('Install prompt is unavailable right now. You can still continue in browser mode.')

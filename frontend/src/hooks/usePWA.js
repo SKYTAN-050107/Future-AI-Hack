@@ -49,11 +49,15 @@ export function usePWA() {
 
   const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent.toLowerCase() : ''
   const isIos = /iphone|ipad|ipod/.test(userAgent)
+  const isAndroid = /android/.test(userAgent)
+  const isInAppBrowser = /(fbav|instagram|line|micromessenger|twitter)/.test(userAgent)
 
   return {
     isInstalled,
     canInstall: Boolean(installPromptEvent),
     isIos,
+    isAndroid,
+    isInAppBrowser,
     promptInstall,
   }
 }

@@ -11,6 +11,41 @@
     ],
     "rewrites": [
       {
+        "source": "/api/actions",
+        "run": {
+          "serviceId": "padiguard-swarm",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/runAction",
+        "run": {
+          "serviceId": "padiguard-swarm",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/**",
+        "run": {
+          "serviceId": "padiguard-diagnosis",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/health",
+        "run": {
+          "serviceId": "padiguard-diagnosis",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/ws/**",
+        "run": {
+          "serviceId": "padiguard-diagnosis",
+          "region": "us-central1"
+        }
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }

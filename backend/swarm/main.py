@@ -96,8 +96,8 @@ def _create_runtime_windows_safe(runtime_dir: str, reflection_server_spec: Serve
 if os.name == "nt":
     genkit_server.create_runtime = _create_runtime_windows_safe
 
-SWARM_HOST = "0.0.0.0"
-SWARM_PORT = 3400
+SWARM_HOST = os.getenv("HOST", "0.0.0.0")
+SWARM_PORT = int(os.getenv("PORT", "3400"))
 
 ai = Genkit(
     reflection_server_spec=ServerSpec(
