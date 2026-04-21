@@ -1,9 +1,27 @@
 let cachedSwarmActionKey = null
+const SWARM_API_BASE_URL = String(import.meta.env.VITE_SWARM_API_BASE_URL || '').trim().replace(/\/+$/, '')
+
+function resolveSwarmUrl(path) {
+  if (/^https?:\/\//i.test(path)) {
+    return path
+  }
+
+  if (!SWARM_API_BASE_URL) {
+    return path
+  }
+
+  const suffix = path.startsWith('/swarm-api')
+    ? path.slice('/swarm-api'.length)
+    : path
+
+  return `${SWARM_API_BASE_URL}${suffix}`
+}
 
 async function requestSwarm(path, options = {}) {
   let response = null
+  const requestUrl = resolveSwarmUrl(path)
   try {
-    response = await fetch(path, {
+    response = await fetch(requestUrl, {
       ...options,
       headers: {
         Accept: 'application/json',

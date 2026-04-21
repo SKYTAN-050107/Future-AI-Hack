@@ -12,9 +12,33 @@ function normalizeBase64Image(value) {
 }
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30000
+const DIAGNOSIS_API_BASE_URL = String(import.meta.env.VITE_DIAGNOSIS_API_BASE_URL || '').trim().replace(/\/+$/, '')
+const SWARM_API_BASE_URL = String(import.meta.env.VITE_SWARM_API_BASE_URL || '').trim().replace(/\/+$/, '')
+
+function resolveRequestUrl(path) {
+  if (/^https?:\/\//i.test(path)) {
+    return path
+  }
+
+  if (path.startsWith('/swarm-api')) {
+    if (!SWARM_API_BASE_URL) {
+      return path
+    }
+
+    const suffix = path.slice('/swarm-api'.length)
+    return `${SWARM_API_BASE_URL}${suffix}`
+  }
+
+  if (!DIAGNOSIS_API_BASE_URL) {
+    return path
+  }
+
+  return `${DIAGNOSIS_API_BASE_URL}${path}`
+}
 
 async function requestJson(path, options = {}) {
   let response = null
+  const requestUrl = resolveRequestUrl(path)
   const method = String(options?.method || 'GET').toUpperCase()
   const timeoutMs = Number(options?.timeoutMs || DEFAULT_REQUEST_TIMEOUT_MS)
   const controller = timeoutMs > 0 ? new AbortController() : null
@@ -22,9 +46,9 @@ async function requestJson(path, options = {}) {
     ? window.setTimeout(() => controller.abort(), timeoutMs)
     : null
 
-  console.debug('[API request]', { method, path })
+  console.debug('[API request]', { method, path: requestUrl })
   try {
-    response = await fetch(path, {
+    response = await fetch(requestUrl, {
       ...options,
       signal: controller ? controller.signal : options.signal,
       headers: {
@@ -60,11 +84,11 @@ async function requestJson(path, options = {}) {
       || payload?.detail?.error
       || `Request failed (${response.status})`
     )
-    console.error('[API error]', { method, path, status: response.status, message, payload })
+    console.error('[API error]', { method, path: requestUrl, status: response.status, message, payload })
     throw new Error(message)
   }
 
-  console.debug('[API response]', { method, path, status: response.status, payload })
+  console.debug('[API response]', { method, path: requestUrl, status: response.status, payload })
 
   return payload
 }

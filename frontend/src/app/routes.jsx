@@ -5,6 +5,7 @@ import { usePWA } from '../hooks/usePWA'
 import { useSessionContext } from '../hooks/useSessionContext'
 import { clearPostAuthPath, getLastAppPath, getPostAuthPath, setPostAuthPath } from '../utils/navigationState'
 import Dashboard from '../pages/app/Dashboard'
+import History from '../pages/app/History'
 import Chatbot from '../pages/app/Chatbot'
 import Crops from '../pages/app/Crops'
 import Inventory from '../pages/app/Inventory'
@@ -181,6 +182,7 @@ export const appRoutes = [
       { path: 'map', element: <MapPage /> },
       { path: 'weather', element: <Weather /> },
       { path: 'scan', element: <Scanner /> },
+      { path: 'history', element: <History /> },
       { path: 'report', element: <Report /> },
       { path: 'treatment', element: <Treatment /> },
       { path: 'roi', element: <Treatment /> },

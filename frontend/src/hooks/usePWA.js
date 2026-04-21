@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 
 export function usePWA() {
   const [installPromptEvent, setInstallPromptEvent] = useState(null)
+  const [isInstalled, setIsInstalled] = useState(false)
 
   const isStandalone = useMemo(() => {
     if (typeof window === 'undefined') {
@@ -12,14 +13,27 @@ export function usePWA() {
   }, [])
 
   useEffect(() => {
+    setIsInstalled(isStandalone)
+  }, [isStandalone])
+
+  useEffect(() => {
     const onBeforeInstallPrompt = (event) => {
       event.preventDefault()
       setInstallPromptEvent(event)
     }
 
-    window.addEventListener('beforeinstallprompt', onBeforeInstallPrompt)
+    const onAppInstalled = () => {
+      setIsInstalled(true)
+      setInstallPromptEvent(null)
+    }
 
-    return () => window.removeEventListener('beforeinstallprompt', onBeforeInstallPrompt)
+    window.addEventListener('beforeinstallprompt', onBeforeInstallPrompt)
+    window.addEventListener('appinstalled', onAppInstalled)
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', onBeforeInstallPrompt)
+      window.removeEventListener('appinstalled', onAppInstalled)
+    }
   }, [])
 
   const promptInstall = async () => {
@@ -37,7 +51,7 @@ export function usePWA() {
   const isIos = /iphone|ipad|ipod/.test(userAgent)
 
   return {
-    isInstalled: isStandalone,
+    isInstalled,
     canInstall: Boolean(installPromptEvent),
     isIos,
     promptInstall,

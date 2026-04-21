@@ -236,8 +236,9 @@ export default function Landing() {
   const [selectedStep, setSelectedStep] = useState(0)
   const [hoveredFeature, setHoveredFeature] = useState(null)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
-  const { canInstall, isIos, promptInstall } = usePWA()
-  const previouslyInstalled = localStorage.getItem('padiguard_install_accepted') === '1'
+  const { canInstall, isIos, isInstalled, promptInstall } = usePWA()
+  const previouslyInstalled = typeof window !== 'undefined'
+    && localStorage.getItem('padiguard_install_accepted') === '1'
 
   const selectedFlow = useMemo(() => flowSteps[selectedStep], [selectedStep])
   const SpotlightIcon = selectedFlow.Icon
@@ -268,10 +269,18 @@ export default function Landing() {
   }
 
   const onInstall = async () => {
+    setInstallHint('')
+
+    if (isInstalled) {
+      setInstallHint('AcreZen is already installed. Open it from your home screen.')
+      return
+    }
+
     if (canInstall) {
       const accepted = await promptInstall()
       if (accepted) {
         localStorage.setItem('padiguard_install_accepted', '1')
+        setInstallHint('Install started. Check your home screen for AcreZen.')
       }
       if (!accepted) {
         setInstallHint('Install was dismissed. You can still continue in browser mode.')
@@ -287,7 +296,7 @@ export default function Landing() {
 
   const onOpenInstalledApp = () => {
     window.location.href = '/'
-    setInstallHint('If the app does not open automatically, launch PadiGuard AI from your home screen.')
+    setInstallHint('If the app does not open automatically, launch AcreZen from your home screen.')
   }
 
   const goToAuth = () => {
@@ -374,7 +383,7 @@ export default function Landing() {
               <button type="button" className="pg-btn pg-btn-ghost pg-btn-landing" onClick={goToAuth}>
                 Sign in or sign up
               </button>
-              {previouslyInstalled && (
+              {(isInstalled || previouslyInstalled) && (
                 <button type="button" className="pg-btn pg-btn-ghost pg-btn-landing" onClick={onOpenInstalledApp}>
                   Open installed app
                 </button>

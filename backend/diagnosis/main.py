@@ -27,6 +27,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.router import router
+from config.settings import get_settings
 
 # ── Logging ───────────────────────────────────────────────────────────
 
@@ -50,9 +51,16 @@ app = FastAPI(
     version="2.0.0",
 )
 
+settings = get_settings()
+cors_origins = [
+    origin.strip()
+    for origin in (settings.FRONTEND_CORS_ORIGINS or "").split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[],
+    allow_origins=cors_origins,
     allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],

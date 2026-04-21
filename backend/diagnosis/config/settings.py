@@ -62,6 +62,7 @@ class Settings(BaseSettings):
 
     # ── Pipeline Defaults ──────────────────────────────────────────────
     DEFAULT_TOP_K: int = 5
+    FRONTEND_CORS_ORIGINS: str = ""
 
 
 @lru_cache()
