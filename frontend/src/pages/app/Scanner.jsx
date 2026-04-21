@@ -12,10 +12,40 @@ import 'mapbox-gl/dist/mapbox-gl.css'
 const PENDING_CAPTURE_KEY = 'pg_pending_scan_capture_v1'
 const LIVE_FRAME_INTERVAL_MS = 1300
 const DEFAULT_CAPTURE_PROMPT = 'I just took this photo. Please analyze it and tell me what to do next.'
+const DIAGNOSIS_API_BASE_URL = String(
+  import.meta.env.VITE_DIAGNOSIS_API_BASE_URL || import.meta.env.VITE_DIAGNOSIS_API_URL || '',
+).trim().replace(/\/+$/, '')
+const DIAGNOSIS_WS_BASE_URL = String(import.meta.env.VITE_DIAGNOSIS_WS_BASE_URL || '').trim().replace(/\/+$/, '')
 
 const DEFAULT_ZONE_MAP_STYLE = 'mapbox://styles/mapbox/satellite-streets-v12'
 
+function normalizeWsBaseUrl(rawValue) {
+  const safeValue = String(rawValue || '').trim().replace(/\/+$/, '')
+  if (!safeValue) {
+    return ''
+  }
+
+  if (/^wss?:\/\//i.test(safeValue)) {
+    return safeValue
+  }
+
+  if (/^https?:\/\//i.test(safeValue)) {
+    return safeValue.replace(/^http/i, 'ws')
+  }
+
+  return ''
+}
+
 function resolveWsScanUrl() {
+  const configuredBase = normalizeWsBaseUrl(DIAGNOSIS_WS_BASE_URL)
+    || normalizeWsBaseUrl(DIAGNOSIS_API_BASE_URL)
+
+  if (configuredBase) {
+    return configuredBase.endsWith('/ws/scan')
+      ? configuredBase
+      : `${configuredBase}/ws/scan`
+  }
+
   if (typeof window === 'undefined') {
     return '/ws/scan'
   }

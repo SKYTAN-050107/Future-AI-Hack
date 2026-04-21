@@ -29,7 +29,7 @@ const CONVERSATION_COLLECTION = 'conversations'
 
 const WELCOME_MESSAGE = {
   role: 'ai',
-  text: 'Hello. I am your PadiGuard AI assistant. Ask about disease risk, treatment cost, or recent scan records.',
+  text: 'Hello. I am your AcreZen AI assistant. Ask about disease risk, treatment cost, or recent scan records.',
 }
 
 const QUICK_PROMPTS = [
@@ -1245,7 +1245,7 @@ export default function Chatbot() {
             </button>
           </div>
 
-          <p className="pg-chatbot-toolbar-title">PadiGuard AI Assistant</p>
+          <p className="pg-chatbot-toolbar-title">AcreZen AI Assistant</p>
 
           <button type="button" className="pg-chatbot-toolbar-gemini" onClick={handleNewChat}>
             <IconSparkles className="pg-icon" />
@@ -1328,7 +1328,7 @@ export default function Chatbot() {
             <input
               type="text"
               className="pg-chatbot-input"
-              placeholder="Message PadiGuard AI"
+              placeholder="Message AcreZen AI"
               value={input}
               onChange={(event) => setInput(event.target.value)}
               onKeyDown={handleKeyDown}
