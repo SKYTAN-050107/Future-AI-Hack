@@ -201,6 +201,7 @@ class WeatherService:
         payload: dict,
         days: int,
         service_warning: str | None = None,
+        include_recommendation: bool = True,
     ) -> dict:
         timelines = payload.get("timelines") or {}
         hourly = timelines.get("hourly") or []
@@ -213,7 +214,7 @@ class WeatherService:
         forecast = self._build_forecast(daily=daily, hourly=hourly, days=days)
         recommendation = snapshot.advisory
 
-        if not service_warning:
+        if include_recommendation and not service_warning:
             recommendation = await self._generate_recommendation(snapshot)
 
         result = {
@@ -254,7 +255,14 @@ class WeatherService:
             "serviceWarning": warning,
         }
 
-    async def get_outlook(self, lat: float, lng: float, days: int = 7) -> dict:
+    async def get_outlook(
+        self,
+        lat: float,
+        lng: float,
+        days: int = 7,
+        *,
+        include_recommendation: bool = True,
+    ) -> dict:
         if not self._api_key:
             raise RuntimeError("TOMORROW_IO_API_KEY is missing")
         if not self._base_url:
@@ -269,6 +277,7 @@ class WeatherService:
                 return await self._assemble_outlook_response(
                     payload=deepcopy(cached_entry.payload),
                     days=days,
+                    include_recommendation=include_recommendation,
                 )
 
             cooldown_until = self._get_rate_limit_cooldown(cache_key)
@@ -304,6 +313,7 @@ class WeatherService:
                             payload=deepcopy(cached_entry.payload),
                             days=days,
                             service_warning=warning,
+                            include_recommendation=include_recommendation,
                         )
 
                     return self._build_fallback_outlook(warning)
@@ -317,6 +327,7 @@ class WeatherService:
                         payload=deepcopy(cached_entry.payload),
                         days=days,
                         service_warning=warning,
+                        include_recommendation=include_recommendation,
                     )
 
                 raise
@@ -330,6 +341,7 @@ class WeatherService:
                         payload=deepcopy(cached_entry.payload),
                         days=days,
                         service_warning=warning,
+                        include_recommendation=include_recommendation,
                     )
 
                 warning = (
@@ -338,7 +350,11 @@ class WeatherService:
                 return self._build_fallback_outlook(warning)
 
             try:
-                outlook = await self._assemble_outlook_response(payload=payload, days=days)
+                outlook = await self._assemble_outlook_response(
+                    payload=payload,
+                    days=days,
+                    include_recommendation=include_recommendation,
+                )
             except RuntimeError as exc:
                 if cached_entry is not None:
                     warning = (
@@ -349,6 +365,7 @@ class WeatherService:
                         payload=deepcopy(cached_entry.payload),
                         days=days,
                         service_warning=warning,
+                        include_recommendation=include_recommendation,
                     )
 
                 warning = (
@@ -359,9 +376,21 @@ class WeatherService:
             self._store_cached_entry(cache_key, payload)
             return outlook
 
-    async def get_outlook_v1(self, lat: float, lng: float, days: int = 7) -> dict:
+    async def get_outlook_v1(
+        self,
+        lat: float,
+        lng: float,
+        days: int = 7,
+        *,
+        include_recommendation: bool = True,
+    ) -> dict:
         """Return simplified weather schema for v1 dashboard clients."""
-        outlook = await self.get_outlook(lat=lat, lng=lng, days=days)
+        outlook = await self.get_outlook(
+            lat=lat,
+            lng=lng,
+            days=days,
+            include_recommendation=include_recommendation,
+        )
         humidity = int(outlook.get("humidity") or self._extract_humidity_from_forecast(outlook.get("forecast") or []))
 
         result = {

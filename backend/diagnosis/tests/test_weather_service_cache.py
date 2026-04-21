@@ -130,6 +130,37 @@ def test_get_outlook_returns_cached_data_on_429():
     assert "cached weather data" in str(result["serviceWarning"]).lower()
 
 
+def test_get_outlook_can_skip_recommendation_generation():
+    _reset_weather_service_cache()
+
+    service = WeatherService()
+    service._api_key = "test-key"
+    service._base_url = "https://example.com/weather"
+
+    async def fake_fetch_weather_payload(lat: float, lng: float) -> dict:
+        return _build_weather_payload(days=2)
+
+    async def fail_if_called(snapshot) -> str:
+        raise AssertionError("recommendation generation should be skipped")
+
+    service._fetch_weather_payload = fake_fetch_weather_payload
+    service._generate_recommendation = fail_if_called
+
+    async def scenario() -> dict:
+        return await service.get_outlook(
+            lat=3.1,
+            lng=101.6,
+            days=7,
+            include_recommendation=False,
+        )
+
+    result = asyncio.run(scenario())
+
+    assert result["condition"] == "Clear"
+    assert result["recommendation"] == result["advisory"]
+    assert "serviceWarning" not in result
+
+
 def test_get_outlook_falls_back_when_rate_limited_without_cache():
     _reset_weather_service_cache()
 

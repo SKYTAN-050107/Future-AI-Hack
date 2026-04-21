@@ -5,6 +5,7 @@ import SectionHeader from '../../components/ui/SectionHeader'
 import { sendAssistantMessage } from '../../api/assistant'
 import { getCrops } from '../../api/crops'
 import { getCachedDashboardSummary, getDashboardSummary } from '../../api/dashboard'
+import { getWeatherOutlook } from '../../api/weather'
 import { useSessionContext } from '../../hooks/useSessionContext'
 import { useGrids } from '../../hooks/useGrids'
 import { useScanHistory } from '../../hooks/useScanHistory'
@@ -472,9 +473,6 @@ export default function Dashboard() {
     if (!requestBuild.payload) {
       setSummary(null)
       setLoadError(requestBuild.error)
-      setWeatherData(null)
-      setWeatherError(requestBuild.error)
-      setIsWeatherLoading(false)
       setIsDashboardLoading(false)
       return undefined
     }
@@ -483,17 +481,10 @@ export default function Dashboard() {
     const cached = getCachedDashboardSummary(requestBuild.payload)
     if (cached) {
       setSummary(cached)
-      if (cached.weatherSnapshot) {
-        setWeatherData(cached.weatherSnapshot)
-        setWeatherError('')
-      }
-      setIsWeatherLoading(false)
       setIsDashboardLoading(false)
       setLoadError('')
     } else {
-      setIsWeatherLoading(true)
       setIsDashboardLoading(true)
-      setWeatherError('')
       setLoadError('')
     }
 
@@ -503,11 +494,6 @@ export default function Dashboard() {
           return
         }
         setSummary(response)
-        if (response?.weatherSnapshot) {
-          setWeatherData(response.weatherSnapshot)
-          setWeatherError('')
-        }
-        setIsWeatherLoading(false)
         setIsDashboardLoading(false)
       })
       .catch((error) => {
@@ -516,12 +502,51 @@ export default function Dashboard() {
         }
         if (!cached) {
           setSummary(null)
-          setWeatherData(null)
-          setWeatherError(error?.message || 'Unable to load weather outlook')
         }
         setLoadError(error?.message || 'Unable to load dashboard summary')
-        setIsWeatherLoading(false)
         setIsDashboardLoading(false)
+      })
+
+    return () => {
+      active = false
+    }
+  }, [requestBuild.error, requestBuild.payload])
+
+  useEffect(() => {
+    let active = true
+
+    if (!requestBuild.payload) {
+      setWeatherData(null)
+      setWeatherError(requestBuild.error)
+      setIsWeatherLoading(false)
+      return undefined
+    }
+
+    setIsWeatherLoading(true)
+    setWeatherError('')
+
+    getWeatherOutlook({
+      lat: requestBuild.payload.lat,
+      lng: requestBuild.payload.lng,
+      days: 7,
+    })
+      .then((response) => {
+        if (!active) {
+          return
+        }
+
+        setWeatherData(response || null)
+        setWeatherError('')
+        setIsWeatherLoading(false)
+      })
+      .catch((error) => {
+        if (!active) {
+          return
+        }
+
+        setWeatherData(null)
+        setWeatherError(error?.message || 'Unable to load weather outlook')
+        setIsWeatherLoading(false)
       })
 
     return () => {

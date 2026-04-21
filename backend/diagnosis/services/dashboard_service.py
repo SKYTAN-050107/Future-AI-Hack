@@ -47,17 +47,28 @@ class DashboardService:
                 raise ValueError("lat and lng are required when no grid centroid is available")
             lat, lng = inferred
 
-        weather = await self._weather_svc.get_outlook(lat=lat, lng=lng, days=7)
-        zone_health = await asyncio.to_thread(self._compute_zone_health_sync, user_id)
-        financial_summary = await self._build_financial_summary(
+        weather_task = self._weather_svc.get_outlook(
+            lat=lat,
+            lng=lng,
+            days=7,
+            include_recommendation=False,
+        )
+        zone_health_task = asyncio.to_thread(self._compute_zone_health_sync, user_id)
+        financial_summary_task = self._build_financial_summary(
             user_id=user_id,
             crop_type=crop_type,
             treatment_plan=treatment_plan,
             farm_size_hectares=farm_size_hectares,
             survival_prob=survival_prob,
         )
+        inventory_task = self._inventory_svc.list_items(user_id=user_id)
 
-        inventory = await self._inventory_svc.list_items(user_id=user_id)
+        weather, zone_health, financial_summary, inventory = await asyncio.gather(
+            weather_task,
+            zone_health_task,
+            financial_summary_task,
+            inventory_task,
+        )
         low_stock = next((item for item in inventory["items"] if item["liters"] < 5.0), None)
 
         financial_summary["lowStockItem"] = (low_stock or {}).get("name")
