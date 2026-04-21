@@ -11,10 +11,21 @@ Usage:
     python main.py
 """
 
+# ── SSL Certificate Guard (must run before any Google Cloud imports) ──
+import os
+
+try:
+    import certifi as _certifi
+
+    os.environ.setdefault("SSL_CERT_FILE", _certifi.where())
+    os.environ.setdefault("REQUESTS_CA_BUNDLE", _certifi.where())
+except ImportError:
+    pass  # certifi unavailable — rely on system certs
+
 import atexit
 import asyncio
 import json
-import os
+import logging
 from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
@@ -50,6 +61,8 @@ from agents.yield_forecast import register_yield_forecast_agent, YieldForecastIn
 # ── Initialize Genkit (LLM calls go through config/llm.py) ───────
 # Genkit reflection server only starts in dev mode.
 os.environ.setdefault("GENKIT_ENV", "dev")
+
+logger = logging.getLogger(__name__)
 
 
 def _create_runtime_windows_safe(runtime_dir: str, reflection_server_spec: ServerSpec, at_exit_fn=None) -> Path:

@@ -47,3 +47,22 @@ def extract_json_payload(raw_text: str) -> Any:
             continue
 
     raise json.JSONDecodeError("Unable to parse JSON payload", raw_text or "", 0)
+
+
+def extract_json_object(raw_text: str, *, fallback_key: str = "data") -> dict:
+    """Extract a JSON payload and ensure it is a ``dict``.
+
+    If the model returns a JSON array, wrap it as ``{fallback_key: [...]}``.
+    If parsing fails entirely, return a fallback dict containing the raw text
+    so callers always get a usable dict without raising.
+    """
+    try:
+        payload = extract_json_payload(raw_text)
+    except json.JSONDecodeError:
+        return {"answer": str(raw_text or "").strip(), "format": "fallback_text", "valid": False}
+
+    if isinstance(payload, dict):
+        return payload
+    if isinstance(payload, list):
+        return {fallback_key: payload}
+    return {"answer": str(payload), "format": "fallback_text", "valid": False}

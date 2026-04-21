@@ -101,8 +101,43 @@ class LiveScanPipeline:
             grid_id: Optional farm grid section ID.
 
         Returns:
-            Dict matching ``ScanResult`` schema.
+            Dict matching ``ScanResult`` schema.  **Always** returns a
+            valid dict — never raises to the caller.
         """
+        # ── Top-level safety net — guarantees a response ──────────────
+        try:
+            return await self._run_pipeline_inner(
+                cropped_image_b64=cropped_image_b64,
+                bbox=bbox,
+                grid_id=grid_id,
+            )
+        except Exception as exc:
+            logger.error(
+                "[PIPELINE] Unrecoverable pipeline error: %s", exc, exc_info=True,
+            )
+            return {
+                "cropType": "Unknown",
+                "disease": "Inconclusive",
+                "severity": "Low",
+                "severityScore": 0.0,
+                "treatmentPlan": "System encountered an issue. Please retake the photo.",
+                "survivalProb": 1.0,
+                "is_abnormal": False,
+                "recommendedPesticides": [],
+                "recommendationSource": "error_fallback",
+                "matchedPestName": None,
+                "bbox": bbox,
+                "grid_id": grid_id,
+            }
+
+    async def _run_pipeline_inner(
+        self,
+        cropped_image_b64: str,
+        bbox: dict,
+        grid_id: str | None = None,
+    ) -> dict:
+        """Inner pipeline logic, separated so the outer ``run()`` can
+        catch any unhandled exception and return a fallback result."""
         session_id = uuid.uuid4().hex
         session = await self._session_svc.create_session(
             app_name=_APP_NAME,
@@ -166,10 +201,10 @@ class LiveScanPipeline:
             # Generate fallback result
             result = {
                 "cropType": "Unknown",
-                "disease": "Healthy",
+                "disease": "Inconclusive",
                 "severity": "Low",
                 "severityScore": 0.0,
-                "treatmentPlan": "None",
+                "treatmentPlan": "System could not complete the scan. Please retake the photo.",
                 "survivalProb": 1.0,
                 "is_abnormal": False,
                 "recommendedPesticides": [],

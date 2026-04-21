@@ -5,13 +5,16 @@ Performs Top-K similarity search against a pre-deployed index.
 Metadata is stored directly on Vector Search datapoints —
 no external metadata store is used.
 
-Includes retry logic and timeout handling.
+Includes retry logic, timeout handling, and a circuit breaker
+that disables search temporarily after repeated failures.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import ssl
+import time
 from typing import Any
 
 from google.cloud.aiplatform.matching_engine import (
@@ -27,6 +30,24 @@ logger = logging.getLogger(__name__)
 MAX_RETRIES = 3
 RETRY_DELAY_SECONDS = 1.0
 SEARCH_TIMEOUT_SECONDS = 30
+
+# ── Circuit Breaker ───────────────────────────────────────────────────
+_circuit_open_until: float = 0.0
+_consecutive_failures: int = 0
+_CIRCUIT_BREAKER_THRESHOLD = 3       # open after N consecutive failures
+_CIRCUIT_BREAKER_COOLDOWN = 300.0    # stay open for 5 minutes
+
+
+def _classify_error(exc: Exception) -> str:
+    """Return a short error category for structured logging."""
+    msg = str(exc).lower()
+    if isinstance(exc, ssl.SSLError) or "certificate_verify_failed" in msg:
+        return "SSL_CERT_ERROR"
+    if isinstance(exc, asyncio.TimeoutError) or "timed out" in msg:
+        return "TIMEOUT"
+    if "503" in msg or "unavailable" in msg:
+        return "SERVICE_UNAVAILABLE"
+    return "UNKNOWN"
 
 
 class VectorSearchService:
@@ -62,9 +83,24 @@ class VectorSearchService:
             descending similarity score.  Metadata is extracted
             from the datapoint restricts (schema-free).
 
+            Returns an empty list when the circuit breaker is open
+            (too many recent failures).
+
         Raises:
             RuntimeError: If all retry attempts fail.
         """
+        global _circuit_open_until, _consecutive_failures
+
+        # ── Circuit breaker check ─────────────────────────────────────
+        now = time.monotonic()
+        if now < _circuit_open_until:
+            remaining = int(_circuit_open_until - now)
+            logger.warning(
+                "Vector search circuit breaker OPEN — skipping (cooldown %ds remaining)",
+                remaining,
+            )
+            return []
+
         for attempt in range(1, MAX_RETRIES + 1):
             try:
                 # Run the synchronous SDK call in a thread with a timeout
@@ -101,29 +137,49 @@ class VectorSearchService:
                         )
 
                 logger.info("Vector search built %d candidate(s)", len(candidates))
+
+                # ── Success → reset circuit breaker ───────────────────
+                _consecutive_failures = 0
                 return candidates
 
             except asyncio.TimeoutError:
                 logger.error(
                     "Vector search timed out after %ds (attempt %d/%d)",
                     SEARCH_TIMEOUT_SECONDS, attempt, MAX_RETRIES,
+                    extra={"module": "vector_search", "status": "failed", "reason": "TIMEOUT"},
                 )
                 if attempt == MAX_RETRIES:
+                    _consecutive_failures += 1
+                    if _consecutive_failures >= _CIRCUIT_BREAKER_THRESHOLD:
+                        _circuit_open_until = time.monotonic() + _CIRCUIT_BREAKER_COOLDOWN
+                        logger.error(
+                            "Vector search circuit breaker OPENED after %d consecutive failures (cooldown %.0fs)",
+                            _consecutive_failures, _CIRCUIT_BREAKER_COOLDOWN,
+                        )
                     raise RuntimeError(
                         f"Vector search timed out after {MAX_RETRIES} attempts"
                     )
             except Exception as e:
+                error_category = _classify_error(e)
                 if attempt == MAX_RETRIES:
                     logger.error(
                         "Vector search failed after %d attempts: %s",
                         MAX_RETRIES, e,
+                        extra={"module": "vector_search", "status": "failed", "reason": error_category},
                     )
+                    _consecutive_failures += 1
+                    if _consecutive_failures >= _CIRCUIT_BREAKER_THRESHOLD:
+                        _circuit_open_until = time.monotonic() + _CIRCUIT_BREAKER_COOLDOWN
+                        logger.error(
+                            "Vector search circuit breaker OPENED after %d consecutive failures (cooldown %.0fs)",
+                            _consecutive_failures, _CIRCUIT_BREAKER_COOLDOWN,
+                        )
                     raise RuntimeError(
                         f"Vector search failed after {MAX_RETRIES} retries: {e}"
                     ) from e
                 logger.warning(
-                    "Vector search attempt %d/%d failed: %s — retrying in %.1fs...",
-                    attempt, MAX_RETRIES, e, RETRY_DELAY_SECONDS,
+                    "Vector search attempt %d/%d failed (%s): %s — retrying in %.1fs...",
+                    attempt, MAX_RETRIES, error_category, e, RETRY_DELAY_SECONDS,
                 )
                 await asyncio.sleep(RETRY_DELAY_SECONDS)
 

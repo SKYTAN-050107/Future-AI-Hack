@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import ssl
 
 import vertexai
 from vertexai.vision_models import (
@@ -75,10 +76,17 @@ class EmbeddingService:
                 return list(response.image_embedding)
             except Exception as e:
                 if attempt == MAX_RETRIES:
+                    is_ssl = isinstance(e, ssl.SSLError) or "CERTIFICATE_VERIFY_FAILED" in str(e).upper()
                     logger.error(
                         "Embedding from bytes failed after %d attempts: %s",
                         MAX_RETRIES, e,
+                        extra={"module": "embedding", "status": "failed", "reason": "SSL_CERT_ERROR" if is_ssl else type(e).__name__},
                     )
+                    if is_ssl:
+                        logger.error(
+                            "SSL certificate error — run 'pip install --upgrade certifi' "
+                            "or set SSL_CERT_FILE=$(python -m certifi)"
+                        )
                     raise RuntimeError(
                         f"Vertex AI Embedding failed after {MAX_RETRIES} retries: {e}"
                     ) from e
@@ -115,9 +123,11 @@ class EmbeddingService:
                 return list(response.image_embedding)
             except Exception as e:
                 if attempt == MAX_RETRIES:
+                    is_ssl = isinstance(e, ssl.SSLError) or "CERTIFICATE_VERIFY_FAILED" in str(e).upper()
                     logger.error(
                         "Embedding from GCS failed after %d attempts for %s: %s",
                         MAX_RETRIES, gcs_uri, e,
+                        extra={"module": "embedding", "status": "failed", "reason": "SSL_CERT_ERROR" if is_ssl else type(e).__name__},
                     )
                     raise RuntimeError(
                         f"Vertex AI Embedding failed for {gcs_uri} after {MAX_RETRIES} retries: {e}"
@@ -155,6 +165,7 @@ class EmbeddingService:
                     logger.error(
                         "Text embedding failed after %d attempts: %s",
                         MAX_RETRIES, e,
+                        extra={"module": "embedding", "status": "failed", "reason": type(e).__name__},
                     )
                     raise RuntimeError(
                         f"Vertex AI text embedding failed after {MAX_RETRIES} retries: {e}"

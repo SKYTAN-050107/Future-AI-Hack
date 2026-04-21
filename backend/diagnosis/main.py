@@ -9,6 +9,17 @@ Run:
 
 from __future__ import annotations
 
+# ── SSL Certificate Guard (must run before any Google Cloud imports) ──
+import os as _os
+
+try:
+    import certifi as _certifi
+
+    _os.environ.setdefault("SSL_CERT_FILE", _certifi.where())
+    _os.environ.setdefault("REQUESTS_CA_BUNDLE", _certifi.where())
+except ImportError:
+    pass  # certifi unavailable — rely on system certs
+
 import logging
 import sys
 

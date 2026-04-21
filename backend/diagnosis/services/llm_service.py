@@ -19,7 +19,7 @@ from google import genai
 from google.genai import types
 
 from config import get_settings
-from services.json_utils import extract_json_payload
+from services.json_utils import extract_json_object, extract_json_payload
 
 logger = logging.getLogger(__name__)
 
@@ -53,14 +53,23 @@ If NO candidate is relevant or it is a healthy plant, respond with:
 """
 
 ASSISTANT_SYSTEM_PROMPT_BASE = """\
-You are AcreZen AI Assistant, a practical farming copilot.
+You are AcreZen, a friendly and practical farming assistant.
 
-You will receive a structured diagnosis result from the internal diagnosis agents.
-Your job is to turn that diagnosis into a farmer-friendly response.
+You may receive either:
+1) A casual farmer message (greeting, general question, or quick check-in), OR
+2) A structured "Diagnosis result JSON" from internal diagnosis agents.
 
-Rules:
+Core rules:
 - Be concise, clear, and actionable.
-- Mention what was detected and confidence context in plain language.
+- Match the user's language (English or Malay).
+- If greeted or asked what you can do, introduce yourself as AcreZen and briefly say you can help with disease detection, pest ID, weather-based spray timing, inventory/stock questions, and general crop advice.
+
+Formatting rules:
+- If "Diagnosis result JSON" is present in the prompt: use the structured format with the headings Finding / Actions / Treatment / Recheck.
+- If there is NO diagnosis JSON (general chat or simple factual questions): reply in natural conversational prose with no section headers.
+
+Grounding rules (always):
+- Mention what was detected and confidence context in plain language when diagnosis data exists.
 - Do not hallucinate unavailable lab data.
 - If recommendationSource is pesticideCatalog and recommendedPesticides is present, keep those pesticide names as the primary recommendation and do not replace them.
 - If disease is Apple Scab, clearly mention Apple Scab management priorities.
@@ -114,9 +123,15 @@ Return valid JSON only with this schema:
   "follow_up_question": "<optional one question>"
 }
 
+First, decide whether this reply MUST use the structured headings format:
+- If the structured context includes a photo scan payload (for example `scan_result` or `scan_results`), headings ARE required.
+- Else, if the structured context includes an `intents` list that contains `diagnosis` or `spread`, headings ARE required.
+- Otherwise (weather, inventory/resource, location, ROI/economy, greetings, general advice), headings are NOT required.
+
 Rules:
 - Mark verdict="rewrite" if markdown heading markers (#, ##, ###) appear.
-- Mark verdict="rewrite" if required sections are missing: Finding, Actions, Treatment, Recheck, or Malay equivalents Penemuan, Tindakan, Rawatan, Semakan Semula.
+- If headings are required: mark verdict="rewrite" if required sections are missing: Finding, Actions, Treatment, Recheck, or Malay equivalents Penemuan, Tindakan, Rawatan, Semakan Semula.
+- If headings are NOT required: do NOT require those headings, and do NOT mark rewrite just because headings are absent.
 - Mark verdict="rewrite" if unsupported claims or contradictory advice appears.
 - Mark verdict="clarify" only when context is genuinely insufficient.
 - Keep reason and repair_instruction concise and actionable.
@@ -127,29 +142,37 @@ You are AcreZen Reply Rewrite Agent.
 
 Rewrite the assistant reply so it is complete, accurate, and easy to read.
 
+Decide the format based on context:
+- If the structured context includes a photo scan payload (for example `scan_result` or `scan_results`), OR an `intents` list containing `diagnosis` or `spread`: use the headings Finding, Actions, Treatment, Recheck.
+- Otherwise: write natural conversational prose with no section headers.
+
 Formatting rules (strict):
 - Plain text only.
 - No markdown markers (#, ##, ###, **, *, `_`).
-- Use subheadings on separate lines: Finding, Actions, Treatment, Recheck.
-- Under each heading, write short point-form lines prefixed with "- ".
-- Keep Actions to at most 3 bullets.
-- Keep the response interactive by adding one optional Question heading with one bullet question only when clarification is necessary.
+- If using headings: put each heading on its own line (Finding, Actions, Treatment, Recheck), and write short point-form lines under each one prefixed with "- ". Keep Actions to at most 3 bullets.
+- If NOT using headings: keep it short and practical, and ask at most one follow-up question (as a normal sentence).
 - Do not invent facts beyond provided context.
 """
 
 AGRICULTURE_ADVICE_SYSTEM_PROMPT_BASE = """\
-You are AcreZen Agriculture Assistant.
+You are AcreZen, a friendly and knowledgeable farming chat assistant.
 
-Answer only agriculture-related questions with practical, concise advice.
+Scope:
+- Answer agriculture-related questions (crops, pests, diseases, soil, irrigation, fertilization, weather timing, spray planning, farm management).
 
-Formatting rules (strict):
-- Plain text only.
-- No markdown markers (#, ##, ###, **, *, `_`).
-- Use subheadings on separate lines: Finding, Actions, Treatment, Recheck.
-- Under each heading, write short point-form lines prefixed with "- ".
-- Keep Actions to at most 3 bullets.
-- Add one optional Question heading with one bullet question only when required details are missing.
-- Refuse politely if the question is not agriculture-related.
+Style:
+- Use short, practical, friendly conversational prose (no forced templates).
+- Match the user's language (English or Malay).
+- If details are missing, ask exactly one natural follow-up question.
+
+Formatting rules:
+- Do NOT force any headings for general chat, greetings, or simple questions.
+- Only use the headings Finding / Actions / Treatment / Recheck when the prompt includes scan/diagnosis data (for example a "Diagnosis result JSON" or a structured scan result) AND the user is asking about that diagnosis.
+- Never start with "Finding:" when there is no scan/diagnosis data in the prompt.
+
+Off-topic handling:
+- If the question is off-topic, redirect warmly in 1–2 sentences (no cold refusals).
+- If greeted or asked what you can do, introduce yourself as AcreZen and briefly say what you can help with.
 """
 
 _MALAY_HINT_WORDS = {
@@ -361,49 +384,35 @@ def _looks_agriculture_prompt(user_prompt: str) -> bool:
     return any(token in _AGRICULTURE_HINT_WORDS for token in tokens)
 
 
-def _agriculture_refusal(language: str) -> str:
-    section_1, section_2, section_3, section_4 = _get_reply_headers(language)
-    question_heading = _get_question_header(language)
+def _is_casual_prompt(user_prompt: str) -> bool:
+    text = (user_prompt or "").lower()
+    casual_patterns = r"\b(hi|hello|hey|helo|hai|apa\s+khabar|good\s+morning|selamat|what\s+can\s+you\s+do|what\s+are\s+you|who\s+are\s+you|help\s+me|boleh\s+bantu)\b"
+    return bool(re.search(casual_patterns, text))
 
+
+def _agriculture_refusal(language: str) -> str:
     if language == "ms":
         return (
-            f"{section_1}\n- Permintaan ini di luar skop pertanian.\n\n"
-            f"{section_2}\n- Tanya soalan berkaitan tanaman, tanah, pengairan, perosak, baja, atau tuaian.\n\n"
-            f"{section_3}\n- Tiada cadangan rawatan boleh diberikan untuk topik bukan pertanian.\n\n"
-            f"{section_4}\n- Hantar semula soalan dalam konteks ladang untuk jawapan praktikal.\n\n"
-            f"{question_heading}\n- Soalan pertanian apa yang anda mahu saya bantu sekarang?"
+            "Hai! Saya AcreZen, pembantu ladang anda. "
+            "Saya boleh bantu tentang tanaman, perosak, penyakit, tanah, cuaca, dan jadual semburan—ada apa di ladang hari ini?"
         )
 
     return (
-        f"{section_1}\n- This request is outside the agriculture scope.\n\n"
-        f"{section_2}\n- Ask about crops, soil, irrigation, pests, fertilizer, harvest, or farm management.\n\n"
-        f"{section_3}\n- No treatment recommendation can be provided for non-agriculture topics.\n\n"
-        f"{section_4}\n- Recheck by sending a farm-related question for practical guidance.\n\n"
-        f"{question_heading}\n- What agriculture topic would you like help with now?"
+        "Hey! I'm AcreZen, your farming assistant. "
+        "I can help with crops, pests, diseases, soil, weather timing, and spray planning—what's going on with your farm today?"
     )
 
 
 def _agriculture_fallback(language: str) -> str:
-    section_1, section_2, section_3, section_4 = _get_reply_headers(language)
-    question_heading = _get_question_header(language)
-
     if language == "ms":
         return (
-            f"{section_1}\n- Maklumat semasa belum mencukupi untuk cadangan khusus.\n\n"
-            f"{section_2}\n- Kongsi jenis tanaman, lokasi ladang, dan tahap pertumbuhan.\n"
-            f"- Nyatakan gejala utama atau masalah yang sedang berlaku.\n\n"
-            f"{section_3}\n- Pelan rawatan boleh dipadankan selepas butiran asas diterima.\n\n"
-            f"{section_4}\n- Semak semula selepas maklumat tambahan dikongsi.\n\n"
-            f"{question_heading}\n- Boleh kongsi tanaman, lokasi, dan tahap pertumbuhan sekarang?"
+            "Saya nak bantu, tapi perlukan maklumat lebih sedikit. "
+            "Tanaman apa, lokasi ladang di mana, dan apa yang anda nampak sekarang?"
         )
 
     return (
-        f"{section_1}\n- Current details are not enough for a specific recommendation.\n\n"
-        f"{section_2}\n- Share the crop type, farm location, and growth stage.\n"
-        f"- Include the main symptom or issue you are seeing now.\n\n"
-        f"{section_3}\n- A treatment plan can be tailored once these basics are provided.\n\n"
-        f"{section_4}\n- Recheck after sharing the missing details.\n\n"
-        f"{question_heading}\n- Can you share your crop, location, and growth stage now?"
+        "I'd love to help, but I need a bit more to go on. "
+        "What crop are you growing, where is your farm, and what are you seeing right now?"
     )
 
 
@@ -458,7 +467,7 @@ def _build_assistant_system_prompt(language: str) -> str:
         f"{ASSISTANT_SYSTEM_PROMPT_BASE}\n"
         f"{language_rules}"
         "- Output plain text only. Do not use markdown markers (#, ##, ###, **, *, `_`).\n"
-        "- Use this exact structure with subheadings on separate lines:\n"
+        "- Use this exact structure with subheadings on separate lines when diagnosis data is present:\n"
         f"    {section_1}\n"
         f"    {section_2}\n"
         f"    {section_3}\n"
@@ -466,7 +475,9 @@ def _build_assistant_system_prompt(language: str) -> str:
         "- Under each subheading, write short point-form lines prefixed with '- '.\n"
         f"- Keep {section_2} to at most 3 bullet points.\n"
         "- Keep percentages readable when present in context (for example, confidence or severity as %).\n"
-        f"- Keep it interactive: add optional '{question_heading}' with exactly one bullet question only when clarification is needed."
+        f"- Keep it interactive: add optional '{question_heading}' with exactly one bullet question only when clarification is needed.\n"
+        "- If the user message is a greeting, casual question, or general inquiry with no diagnosis JSON present: respond in natural conversational prose. Do not use any section headers.\n"
+        "- If diagnosis data is present in the prompt: use the Finding / Actions / Treatment / Recheck structure.\n"
     )
 
 
@@ -721,14 +732,17 @@ def _build_supervisor_system_prompt(language: str) -> str:
         f"{language_rules}"
         "- Format override (apply even if any earlier line conflicts):\n"
         "- Output plain text only. Do not use markdown markers (#, ##, ###, **, *, `_`).\n"
-        "- Use this exact structure with subheadings on separate lines:\n"
+        "- If the prompt contains scan/diagnosis JSON and the user is asking about that diagnosis: use these headings on separate lines:\n"
         f"    {section_1}\n"
         f"    {section_2}\n"
         f"    {section_3}\n"
         f"    {section_4}\n"
-        "- Under each subheading, write short point-form lines prefixed with '- '.\n"
-        f"- Keep {section_2} to at most 3 bullet points.\n"
-        f"- If clarification is required, add optional '{question_heading}' with exactly one bullet question."
+        "- Under each heading (when used), write short point-form lines prefixed with '- '.\n"
+        f"- Keep {section_2} to at most 3 bullet points when used.\n"
+        "- Otherwise (general chat, weather, inventory, ROI): respond in natural conversational prose with no section headers.\n"
+        f"- If clarification is required, ask exactly one question (you may prefix it with '{question_heading}' on its own line only when necessary).\n"
+        "- If the user message is a greeting, casual question, or general inquiry with no diagnosis JSON present: respond in natural conversational prose. Do not use any section headers.\n"
+        "- If diagnosis data is present in the prompt: use the Finding / Actions / Treatment / Recheck structure.\n"
     )
 
 
@@ -1223,9 +1237,13 @@ class LLMService:
 
                 try:
                     result = extract_json_payload(raw_text)
+                    if isinstance(result, list):
+                        # Gemini sometimes wraps a single result in a list
+                        result = result[0] if result and isinstance(result[0], dict) else fallback
+                        logger.info("LLM returned list — extracted first element as result")
                     if not isinstance(result, dict):
-                        logger.error(
-                            "LLM returned non-object JSON (%s)",
+                        logger.warning(
+                            "LLM returned non-object JSON (%s) — using fallback",
                             type(result).__name__,
                         )
                         if attempt == MAX_RETRIES:
@@ -1539,7 +1557,15 @@ class LLMService:
     ) -> str:
         """Generate a farmer-friendly response from structured task outputs."""
         language = detect_farmer_language(user_prompt)
-        required_sections = _get_reply_headers(language)
+        intents_raw = context.get("intents") if isinstance(context, dict) else None
+        intents: set[str] = set()
+        if isinstance(intents_raw, (list, tuple, set)):
+            intents = {str(item or "").strip().lower() for item in intents_raw if str(item or "").strip()}
+        elif isinstance(intents_raw, str) and intents_raw.strip():
+            intents = {intents_raw.strip().lower()}
+
+        requires_structured = bool(intents & {"diagnosis", "spread"})
+        required_sections: tuple[str, ...] = _get_reply_headers(language) if requires_structured else ()
         compact_context = self._compact_supervisor_context(context)
         context_text = json.dumps(compact_context, indent=2, ensure_ascii=True, default=str)
         fallback = self._build_supervisor_fallback(
@@ -1795,9 +1821,7 @@ class LLMService:
                 if not raw_text:
                     raise ValueError("Empty validation response")
 
-                parsed = extract_json_payload(raw_text)
-                if not isinstance(parsed, dict):
-                    raise ValueError(f"Validation response was not a JSON object: {type(parsed).__name__}")
+                parsed = extract_json_object(raw_text)
 
                 return _normalize_reply_validation_result(
                     parsed,
@@ -1827,7 +1851,19 @@ class LLMService:
     ) -> str:
         """Ask Gemini to repair an incomplete or unsupported assistant reply."""
         language = detect_farmer_language(user_prompt)
-        required_sections = _get_reply_headers(language)
+        intents_raw = context.get("intents") if isinstance(context, dict) else None
+        intents: set[str] = set()
+        if isinstance(intents_raw, (list, tuple, set)):
+            intents = {str(item or "").strip().lower() for item in intents_raw if str(item or "").strip()}
+        elif isinstance(intents_raw, str) and intents_raw.strip():
+            intents = {intents_raw.strip().lower()}
+
+        requires_structured = (
+            bool(context.get("scan_result"))
+            or bool(context.get("scan_results"))
+            or bool(intents & {"diagnosis", "spread"})
+        )
+        required_sections: tuple[str, ...] = _get_reply_headers(language) if requires_structured else ()
         target_language = "Malay (Bahasa Melayu)" if language == "ms" else "English"
         compact_context = self._compact_supervisor_context(context)
         context_text = json.dumps(compact_context, indent=2, ensure_ascii=True, default=str)
@@ -1894,7 +1930,9 @@ class LLMService:
     ) -> str:
         """Generate an agriculture-only fallback reply or a refusal for unrelated prompts."""
         language = detect_farmer_language(user_prompt)
-        required_sections = _get_reply_headers(language)
+        # Agriculture fallback is general chat. Do not force structured headings unless a scan/diagnosis
+        # JSON payload is explicitly present in the prompt (not expected on this path).
+        required_sections: tuple[str, ...] = ()
         if not _looks_agriculture_prompt(user_prompt):
             return _agriculture_refusal(language)
 
@@ -1935,7 +1973,7 @@ class LLMService:
                 )
                 text = _clean_reply_format(response.text, language)
                 if text:
-                    if _has_required_headings(text, required_sections):
+                    if _is_casual_prompt(user_prompt) or _has_required_headings(text, required_sections):
                         return text
                     logger.warning("Agriculture reply missing required headings. Retrying generation.")
             except Exception as exc:
