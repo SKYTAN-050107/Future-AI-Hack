@@ -1019,7 +1019,7 @@ export default function Chatbot() {
       return
     }
 
-    const userPrompt = '我刚上传了一张作物照片，请告诉我这是什么问题，并给出治疗方案。'
+    const userPrompt = 'I just uploaded a crop photo. Please identify the issue and suggest treatment steps.'
     setIsThinking(true)
 
     try {

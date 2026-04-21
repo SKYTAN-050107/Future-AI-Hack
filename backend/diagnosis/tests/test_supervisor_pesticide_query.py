@@ -100,7 +100,7 @@ async def test_build_text_reply_catalog_miss_returns_clear_message() -> None:
         user_id="u1",
     )
 
-    assert "could not find" in reply.lower()
+    assert "specific treatment data" in reply.lower()
     assert "unknownpest" in reply.lower()
 
 

@@ -191,14 +191,14 @@ class TestScanModels:
         assert len(frame.regions) == 1
         assert frame.regions[0].bbox.x == 0.1
 
-    def test_scan_frame_empty_regions_rejected(self):
+    def test_scan_frame_empty_regions_allowed(self):
         from models.scan_models import ScanFrame
 
         raw = {
             "regions": [],
         }
-        with pytest.raises(Exception):
-            ScanFrame.model_validate(raw)
+        frame = ScanFrame.model_validate(raw)
+        assert frame.regions == []
 
     def test_scan_result_defaults(self):
         from models.scan_models import ScanResult, BoundingBox

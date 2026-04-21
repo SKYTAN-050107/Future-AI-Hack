@@ -313,13 +313,77 @@ def _get_question_header(language: str) -> str:
     return MALAY_QUESTION_HEADER if language == "ms" else ENGLISH_QUESTION_HEADER
 
 
+def _normalize_heading_candidate(line: str) -> str:
+    normalized = str(line or "")
+    normalized = normalized.replace("：", ":")
+    normalized = re.sub(r"^\s{0,3}#{1,6}\s*", "", normalized)
+    normalized = re.sub(r"^\s*\d+\s*[\.)]\s*", "", normalized)
+    normalized = re.sub(r"^\s*[\-\*•]+\s*", "", normalized)
+    normalized = re.sub(r"[`*_]+", "", normalized)
+    normalized = re.sub(r"\s+", " ", normalized)
+    return normalized.strip()
+
+
+def _extract_heading_alias_match(
+    normalized_line: str,
+    heading_aliases: dict[str, str],
+) -> tuple[str | None, str]:
+    probe = normalized_line.strip()
+    probe_lower = probe.lower()
+
+    for alias in sorted(heading_aliases.keys(), key=len, reverse=True):
+        alias_lower = alias.lower()
+        if probe_lower == alias_lower:
+            return heading_aliases[alias], ""
+
+        for delimiter in (":", " -", " –", " —", " "):
+            candidate_prefix = f"{alias_lower}{delimiter}"
+            if probe_lower.startswith(candidate_prefix):
+                trailing = probe[len(alias):].lstrip(" :.-–—")
+                return heading_aliases[alias], trailing
+
+    return None, ""
+
+
 def _has_required_headings(text: str, headings: tuple[str, ...]) -> bool:
-    normalized_text = str(text or "")
-    for heading in headings:
-        pattern = rf"(?im)^\s*{re.escape(heading)}\s*:?\s*$"
-        if not re.search(pattern, normalized_text):
-            return False
-    return True
+    if not headings:
+        return True
+
+    found: set[str] = set()
+    required = {heading: heading.lower() for heading in headings}
+
+    for raw_line in str(text or "").splitlines():
+        normalized = _normalize_heading_candidate(raw_line)
+        if not normalized:
+            continue
+
+        normalized_lower = normalized.lower()
+        for heading, heading_lower in required.items():
+            if normalized_lower == heading_lower:
+                found.add(heading)
+                break
+            if normalized_lower.startswith(f"{heading_lower}:"):
+                found.add(heading)
+                break
+            if normalized_lower.startswith(f"{heading_lower} "):
+                found.add(heading)
+                break
+
+    return len(found) == len(headings)
+
+
+def _build_structured_reply_example(headings: tuple[str, str, str, str]) -> str:
+    section_1, section_2, section_3, section_4 = headings
+    return (
+        f"{section_1}\n"
+        "- Example finding in one short sentence.\n\n"
+        f"{section_2}\n"
+        "- Example immediate action the farmer can do now.\n\n"
+        f"{section_3}\n"
+        "- Example treatment guidance with one clear step.\n\n"
+        f"{section_4}\n"
+        "- Example recheck timing in 24 to 48 hours."
+    )
 
 
 def _clean_reply_format(text: Any, language: str) -> str:
@@ -357,17 +421,26 @@ def _clean_reply_format(text: Any, language: str) -> str:
 
     cleaned_lines: list[str] = []
     for raw_line in raw_text.split("\n"):
-        line = raw_line.rstrip()
-        normalized = re.sub(r"^\s{0,3}#{1,6}\s*", "", line.strip())
-        normalized = re.sub(r"^\s*\d+\s*[\.)]\s*", "", normalized)
-        heading_key = normalized.rstrip(":").strip().lower()
-
-        canonical_heading = heading_aliases.get(heading_key)
-        if canonical_heading:
-            cleaned_lines.append(canonical_heading)
+        line = raw_line.rstrip("\n")
+        if not line.strip():
+            cleaned_lines.append("")
             continue
 
-        bullet_normalized = re.sub(r"^\s*[\*•]\s+", "- ", line)
+        normalized = _normalize_heading_candidate(line)
+        canonical_heading, trailing_text = _extract_heading_alias_match(
+            normalized,
+            heading_aliases,
+        )
+        if canonical_heading:
+            cleaned_lines.append(canonical_heading)
+            if trailing_text:
+                cleaned_lines.append(
+                    trailing_text if trailing_text.startswith("- ") else f"- {trailing_text}",
+                )
+            continue
+
+        bullet_normalized = re.sub(r"^\s*[\*•]\s+", "- ", line.strip())
+        bullet_normalized = re.sub(r"^\s*[–—]\s+", "- ", bullet_normalized)
         cleaned_lines.append(bullet_normalized)
 
     cleaned_text = "\n".join(cleaned_lines).strip()
@@ -472,6 +545,7 @@ def _build_assistant_system_prompt(language: str) -> str:
         f"    {section_2}\n"
         f"    {section_3}\n"
         f"    {section_4}\n"
+        "- Keep these subheading labels exactly as written above. Do not translate, rename, or stylize them.\n"
         "- Under each subheading, write short point-form lines prefixed with '- '.\n"
         f"- Keep {section_2} to at most 3 bullet points.\n"
         "- Keep percentages readable when present in context (for example, confidence or severity as %).\n"
@@ -507,6 +581,7 @@ def _build_low_confidence_system_prompt(language: str) -> str:
         f"    {section_2}\n"
         f"    {section_3}\n"
         f"    {section_4}\n"
+        "- Keep these subheading labels exactly as written above. Do not translate, rename, or stylize them.\n"
         "- Under each subheading, write short point-form lines prefixed with '- '.\n"
         f"- Keep {section_2} to at most 3 bullet points.\n"
         f"- Add optional '{question_heading}' with one bullet question if the farmer must retake a photo before treatment confirmation."
@@ -1119,6 +1194,8 @@ def _compact_weather_snapshot(weather_snapshot: dict[str, Any]) -> dict[str, Any
 # ── Retry Configuration ───────────────────────────────────────────────
 MAX_RETRIES = 3
 RETRY_DELAY_SECONDS = 1.0
+ASSISTANT_DIALOGUE_MAX_RETRIES = 2
+ASSISTANT_DIALOGUE_RETRY_DELAY_SECONDS = 0.2
 
 VERTEX_MODEL_PREFIX = "publishers/google/models/"
 DEFAULT_VERTEX_MODEL_CANDIDATES = (
@@ -1285,15 +1362,19 @@ class LLMService:
         required_sections = _get_reply_headers(language)
         fallback = build_farmer_fallback_dialogue(scan_result, user_prompt)
         target_language = "Malay (Bahasa Melayu)" if language == "ms" else "English"
+        output_example = _build_structured_reply_example(required_sections)
 
         prompt = (
             f"User message:\n{user_prompt}\n\n"
             f"Diagnosis result JSON:\n{json.dumps(scan_result, ensure_ascii=True)}\n\n"
             f"Target response language: {target_language}\n"
+            "Regardless of the user's input language, keep section headings in the canonical form from system instructions.\n"
+            "Follow this output shape exactly (replace content only):\n"
+            f"{output_example}\n\n"
             "Generate a direct reply addressed to the farmer."
         )
 
-        for attempt in range(1, MAX_RETRIES + 1):
+        for attempt in range(1, ASSISTANT_DIALOGUE_MAX_RETRIES + 1):
             try:
                 response = self._generate_content_with_model_fallback(
                     contents=prompt,
@@ -1312,12 +1393,12 @@ class LLMService:
                 logger.warning(
                     "Assistant dialogue attempt %d/%d failed: %s",
                     attempt,
-                    MAX_RETRIES,
+                    ASSISTANT_DIALOGUE_MAX_RETRIES,
                     e,
                 )
 
-            if attempt < MAX_RETRIES:
-                await asyncio.sleep(RETRY_DELAY_SECONDS)
+            if attempt < ASSISTANT_DIALOGUE_MAX_RETRIES:
+                await asyncio.sleep(ASSISTANT_DIALOGUE_RETRY_DELAY_SECONDS)
 
         return fallback
 
@@ -1329,6 +1410,8 @@ class LLMService:
         """Generate a consolidated assistant response for multiple diagnosed regions."""
         language = detect_farmer_language(user_prompt)
         target_language = "Malay (Bahasa Melayu)" if language == "ms" else "English"
+        required_sections = _get_reply_headers(language)
+        output_example = _build_structured_reply_example(required_sections)
 
         results_summary = json.dumps(
             [
@@ -1348,12 +1431,13 @@ class LLMService:
             f"User message:\n{user_prompt}\n\n"
             f"Multiple crop diagnoses from one photo:\n{results_summary}\n\n"
             f"Target response language: {target_language}\n"
+            "Regardless of the user's input language, keep section headings in the canonical form from system instructions.\n"
+            "Follow this output shape exactly (replace content only):\n"
+            f"{output_example}\n\n"
             "Generate a consolidated reply addressing all detected crops with priority guidance."
         )
 
-        required_sections = _get_reply_headers(language)
-
-        for attempt in range(1, MAX_RETRIES + 1):
+        for attempt in range(1, ASSISTANT_DIALOGUE_MAX_RETRIES + 1):
             try:
                 response = self._generate_content_with_model_fallback(
                     contents=prompt,
@@ -1372,12 +1456,12 @@ class LLMService:
                 logger.warning(
                     "Consolidated dialogue attempt %d/%d failed: %s",
                     attempt,
-                    MAX_RETRIES,
+                    ASSISTANT_DIALOGUE_MAX_RETRIES,
                     e,
                 )
 
-            if attempt < MAX_RETRIES:
-                await asyncio.sleep(RETRY_DELAY_SECONDS)
+            if attempt < ASSISTANT_DIALOGUE_MAX_RETRIES:
+                await asyncio.sleep(ASSISTANT_DIALOGUE_RETRY_DELAY_SECONDS)
 
         fallback = build_farmer_fallback_dialogue(
             scan_results[0] if scan_results else {},
@@ -1510,6 +1594,7 @@ class LLMService:
         """Generate a cautious response for an uncertain photo scan."""
         language = detect_farmer_language(user_prompt)
         required_sections = _get_low_confidence_reply_headers(language)
+        output_example = _build_structured_reply_example(required_sections)
         structured_payload = scan_results if scan_results is not None else [scan_result or {}]
         payload_text = json.dumps(structured_payload, indent=2, ensure_ascii=True, default=str)
         fallback = self._build_low_confidence_fallback(
@@ -1523,10 +1608,13 @@ class LLMService:
             f"Structured scan context:\n{payload_text}\n\n"
             "The scan confidence is low.\n"
             "Do not present the diagnosis as certain.\n"
+            "Regardless of the user's input language, keep section headings in the canonical form from system instructions.\n"
+            "Follow this output shape exactly (replace content only):\n"
+            f"{output_example}\n\n"
             "Give the farmer a short reply with a direct warning, a simple reason, and one next step.\n"
         )
 
-        for attempt in range(1, MAX_RETRIES + 1):
+        for attempt in range(1, ASSISTANT_DIALOGUE_MAX_RETRIES + 1):
             try:
                 response = self._generate_content_with_model_fallback(
                     contents=prompt,
@@ -1545,12 +1633,12 @@ class LLMService:
                 logger.warning(
                     "Low confidence photo reply attempt %d/%d failed: %s",
                     attempt,
-                    MAX_RETRIES,
+                    ASSISTANT_DIALOGUE_MAX_RETRIES,
                     exc,
                 )
 
-            if attempt < MAX_RETRIES:
-                await asyncio.sleep(RETRY_DELAY_SECONDS)
+            if attempt < ASSISTANT_DIALOGUE_MAX_RETRIES:
+                await asyncio.sleep(ASSISTANT_DIALOGUE_RETRY_DELAY_SECONDS)
 
         return fallback
 

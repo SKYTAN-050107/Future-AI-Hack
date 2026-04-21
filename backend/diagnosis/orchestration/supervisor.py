@@ -617,13 +617,13 @@ class InteractionSupervisor:
 
         if language == "ms":
             return (
-                f"Saya tidak jumpa rekod pesticideCatalog untuk '{requested_pest_name}'. "
-                "Sila semak ejaan nama perosak atau buat imbasan gambar baharu."
+                f"Data rawatan khusus tidak ditemui untuk '{requested_pest_name}'. "
+                "Sila rujuk pakar pertanian tempatan untuk cadangan racun kulat/racun perosak yang lebih tepat."
             )
 
         return (
-            f"I could not find a pesticideCatalog record for '{requested_pest_name}'. "
-            "Please check the pest name spelling or run a new photo scan."
+            f"Specific treatment data was not found for '{requested_pest_name}'. "
+            "Please consult a local agricultural expert for targeted fungicide or pesticide recommendations."
         )
 
     @staticmethod
@@ -685,6 +685,7 @@ class InteractionSupervisor:
         confidence: Any,
         scan_result: dict[str, Any] | None = None,
         scan_results: list[dict[str, Any]] | None = None,
+        validate_response: bool = True,
     ) -> str:
         current_scan = scan_result or (scan_results[0] if scan_results else {})
         low_confidence = self._is_low_confidence(confidence, scan_results)
@@ -709,6 +710,7 @@ class InteractionSupervisor:
                     user_prompt=user_prompt,
                     draft_reply=draft_reply,
                     context=validation_context,
+                    validate=validate_response,
                 )
 
             llm = self._get_llm_service()
@@ -718,6 +720,7 @@ class InteractionSupervisor:
                     user_prompt=user_prompt,
                     draft_reply=draft_reply,
                     context=validation_context,
+                    validate=validate_response,
                 )
 
             draft_reply = self._low_confidence_fallback(user_prompt=user_prompt, scan_result=current_scan)
@@ -725,6 +728,7 @@ class InteractionSupervisor:
                 user_prompt=user_prompt,
                 draft_reply=draft_reply,
                 context=validation_context,
+                validate=validate_response,
             )
 
         if low_confidence:
@@ -741,6 +745,7 @@ class InteractionSupervisor:
                 user_prompt=user_prompt,
                 draft_reply=draft_reply,
                 context=validation_context,
+                validate=validate_response,
             )
 
         assistant_pipeline = self._get_assistant_pipeline()
@@ -751,6 +756,7 @@ class InteractionSupervisor:
                     user_prompt=user_prompt,
                     draft_reply=draft_reply,
                     context=validation_context,
+                    validate=validate_response,
                 )
             except Exception as exc:
                 logger.warning("AssistantPipeline reply failed, falling back to Gemini: %s", exc)
@@ -762,6 +768,7 @@ class InteractionSupervisor:
                 user_prompt=user_prompt,
                 draft_reply=draft_reply,
                 context=validation_context,
+                validate=validate_response,
             )
 
         draft_reply = build_farmer_fallback_dialogue(current_scan, user_prompt)
@@ -769,6 +776,7 @@ class InteractionSupervisor:
             user_prompt=user_prompt,
             draft_reply=draft_reply,
             context=validation_context,
+            validate=validate_response,
         )
 
     async def build_text_reply(

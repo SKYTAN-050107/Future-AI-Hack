@@ -43,6 +43,11 @@ class Settings(BaseSettings):
     # ── Vertex AI Gemini ───────────────────────────────────────────────
     GEMINI_MODEL_NAME: str = "gemini-2.0-flash"
 
+    # ── Assistant Scan Performance Controls ────────────────────────────
+    ASSISTANT_SCAN_ENABLE_AUTO_MULTI_REGION: bool = False
+    ASSISTANT_SCAN_ENABLE_LLM_PHOTO_REPLY: bool = False
+    ASSISTANT_SCAN_ENABLE_PHOTO_REPLY_VALIDATION: bool = False
+
     # ── External Crop Intelligence APIs ───────────────────────────────
     TOMORROW_IO_API_KEY: str = ""
     TOMORROW_IO_BASE_URL: str = "https://api.tomorrow.io/v4/weather/forecast"

@@ -17,11 +17,19 @@ import re
 from datetime import datetime, timezone
 
 from google.cloud import firestore
+from google.cloud.firestore_v1.base_query import FieldFilter
 
 from config import get_settings
 from services.firebase_admin_service import get_firestore_client
 
 logger = logging.getLogger(__name__)
+
+_PEST_NAME_ALIASES: dict[str, tuple[str, ...]] = {
+    "blast": ("Rice Blast", "Magnaporthe oryzae", "Leaf Blast"),
+    "rice_blast": ("Blast", "Magnaporthe oryzae", "Leaf Blast"),
+    "leaf_blight": ("Blight", "Bacterial Leaf Blight"),
+    "blight": ("Leaf Blight", "Bacterial Leaf Blight"),
+}
 
 
 class FirestoreService:
@@ -173,7 +181,13 @@ class FirestoreService:
             return {}
 
         collection = self._db.collection(self._pesticide_col)
-        doc_id_candidates = self._build_catalog_doc_id_candidates(clean_name)
+        name_candidates = self._build_catalog_name_candidates(clean_name)
+        doc_id_candidates: list[str] = []
+
+        for candidate_name in name_candidates:
+            for doc_id in self._build_catalog_doc_id_candidates(candidate_name):
+                if doc_id not in doc_id_candidates:
+                    doc_id_candidates.append(doc_id)
 
         for doc_id in doc_id_candidates:
             snapshot = collection.document(doc_id).get()
@@ -187,19 +201,20 @@ class FirestoreService:
                 )
                 return data
 
-        exact_matches = list(
-            collection.where("pestName", "==", clean_name).limit(1).stream(),
-        )
-        if exact_matches:
-            snapshot = exact_matches[0]
-            data = snapshot.to_dict() or {}
-            data["_matchedDocId"] = str(getattr(snapshot, "id", "")).strip()
-            logger.info(
-                "Pesticide catalog hit by exact pestName: collection=%s pestName=%s",
-                self._pesticide_col,
-                clean_name,
+        for candidate_name in name_candidates:
+            exact_matches = list(
+                collection.where(filter=FieldFilter("pestName", "==", candidate_name)).limit(1).stream(),
             )
-            return data
+            if exact_matches:
+                snapshot = exact_matches[0]
+                data = snapshot.to_dict() or {}
+                data["_matchedDocId"] = str(getattr(snapshot, "id", "")).strip()
+                logger.info(
+                    "Pesticide catalog hit by exact pestName: collection=%s pestName=%s",
+                    self._pesticide_col,
+                    candidate_name,
+                )
+                return data
 
         # Final fallback for case/spacing variance: compare normalized pestName locally.
         target_keys = set(doc_id_candidates)
@@ -217,9 +232,10 @@ class FirestoreService:
                 return data
 
         logger.info(
-            "Pesticide catalog miss: collection=%s pestName=%s",
+            "Pesticide catalog miss: collection=%s pestName=%s variants=%d",
             self._pesticide_col,
             clean_name,
+            len(name_candidates),
         )
         return {}
 
@@ -228,6 +244,43 @@ class FirestoreService:
         normalized = re.sub(r"[^a-z0-9]+", "_", str(value or "").strip().lower())
         normalized = normalized.strip("_")
         return normalized or "unknown_pest"
+
+    @classmethod
+    def _build_catalog_name_candidates(cls, pest_name: str) -> list[str]:
+        raw = str(pest_name or "").strip()
+        if not raw:
+            return []
+
+        candidates: list[str] = []
+        seen: set[str] = set()
+
+        def add_candidate(text: str) -> None:
+            candidate = str(text or "").strip()
+            if not candidate:
+                return
+
+            key = candidate.lower()
+            if key in seen:
+                return
+
+            seen.add(key)
+            candidates.append(candidate)
+
+        add_candidate(raw)
+
+        no_parentheses = re.sub(r"\([^)]*\)", "", raw).strip()
+        if no_parentheses and no_parentheses != raw:
+            add_candidate(no_parentheses)
+
+        no_prefix = re.sub(r"^the\s+", "", raw, flags=re.IGNORECASE).strip()
+        if no_prefix and no_prefix != raw:
+            add_candidate(no_prefix)
+
+        normalized_key = cls._normalize_catalog_key(raw)
+        for alias in _PEST_NAME_ALIASES.get(normalized_key, ()):
+            add_candidate(alias)
+
+        return candidates
 
     @classmethod
     def _build_catalog_doc_id_candidates(cls, pest_name: str) -> list[str]:

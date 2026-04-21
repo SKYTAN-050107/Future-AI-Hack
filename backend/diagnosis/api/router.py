@@ -13,7 +13,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+import os
+import re
+import time
+from typing import Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
@@ -119,6 +122,15 @@ _assistant_message_service_init_error: str | None = None
 
 _supervisor: InteractionSupervisor | None = None
 _supervisor_init_error: str | None = None
+
+_GENERIC_PHOTO_PROMPT_PATTERNS = (
+    r"\bi\s+(just\s+)?(uploaded|took|captured)\s+(a\s+)?(crop\s+)?photo\b",
+    r"\bplease\s+(identify|diagnose|explain)\b.*\b(treatment|what\s+to\s+do\s+next|next\s+step)\b",
+    r"\bwhat\s+problem\b.*\b(treatment|solution|fix)\b",
+    r"\banalyze\b.*\bphoto\b.*\b(what\s+to\s+do|treatment|next)\b",
+    r"\bdiagnose\b.*\bphoto\b",
+    r"\bgive\s+me\s+(a\s+)?treatment\b",
+)
 
 
 def _get_pipeline() -> LiveScanPipeline | None:
@@ -371,6 +383,52 @@ def _error_response(status_code: int, message: str) -> JSONResponse:
     )
 
 
+def _elapsed_ms(started_at: float) -> int:
+    return int((time.perf_counter() - started_at) * 1000)
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = str(os.getenv(name, "")).strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _is_generic_photo_prompt(user_prompt: str) -> bool:
+    text = " ".join(str(user_prompt or "").strip().lower().split())
+    if not text:
+        return True
+
+    if "\u6211\u521a\u4e0a\u4f20\u4e86\u4e00\u5f20\u4f5c\u7269\u7167\u7247" in text:
+        return True
+
+    return any(re.search(pattern, text) for pattern in _GENERIC_PHOTO_PROMPT_PATTERNS)
+
+
+def _should_run_auto_region_detection(override: bool | None) -> bool:
+    if override is not None:
+        return bool(override)
+
+    return _env_flag("ASSISTANT_SCAN_ENABLE_AUTO_MULTI_REGION", False)
+
+
+def _should_use_supervisor_photo_reply(user_prompt: str, override: bool | None) -> bool:
+    if override is not None:
+        return bool(override)
+
+    if _env_flag("ASSISTANT_SCAN_ENABLE_LLM_PHOTO_REPLY", False):
+        return True
+
+    return not _is_generic_photo_prompt(user_prompt)
+
+
+def _should_validate_supervisor_photo_reply(override: bool | None) -> bool:
+    if override is not None:
+        return bool(override)
+
+    return _env_flag("ASSISTANT_SCAN_ENABLE_PHOTO_REPLY_VALIDATION", False)
+
+
 def _build_scan_result(raw_result: Any, bbox: BoundingBox, region_index: int) -> ScanResult:
     if isinstance(raw_result, Exception):
         logger.error("Region %d failed: %s", region_index, raw_result)
@@ -595,39 +653,74 @@ async def scan_once(payload: HttpScanRequest) -> HttpScanResponse:
 
 
 @router.post("/api/assistant/scan", response_model=HttpScanAssistantResponse)
-async def scan_and_chat(payload: HttpScanAssistantRequest) -> HttpScanAssistantResponse:
+async def scan_and_chat(
+    payload: HttpScanAssistantRequest,
+    enable_multi_region: Annotated[
+        bool | None,
+        Query(description="Override auto multi-region detection for this request."),
+    ] = None,
+    use_supervisor_reply: Annotated[
+        bool | None,
+        Query(description="Override LLM/supervisor photo reply path for this request."),
+    ] = None,
+    validate_supervisor_reply: Annotated[
+        bool | None,
+        Query(description="Override validation when supervisor photo reply path is used."),
+    ] = None,
+) -> HttpScanAssistantResponse:
     """Scan a capture and generate chatbot dialogue from diagnosis result."""
-    # Try to auto-detect multiple regions in the image for multi-crop analysis
-    region_detector = _get_region_detector()
-    if region_detector:
-        try:
-            detected_regions = await region_detector.detect_regions(
-                base64_image=_strip_data_url_prefix(payload.base64_image)
-            )
-            if len(detected_regions) > 1:
-                # If multiple regions detected, use multi-region endpoint
-                logger.info("Auto-detected %d regions in image, using multi-region analysis", len(detected_regions))
-                multi_payload = HttpScanAssistantMultiRequest(
-                    source=payload.source,
-                    grid_id=payload.grid_id,
-                    user_id=payload.user_id,
-                    regions=detected_regions,
-                    user_prompt=payload.user_prompt,
-                )
-                multi_response = await scan_and_chat_multi(multi_payload)
-                # Convert multi-response to single-response format (use first region)
-                first_result = multi_response.regions_results[0] if multi_response.regions_results else HttpScanResponse(
-                    disease="Unknown",
-                    severity=0,
-                    confidence=0,
-                    spread_risk="Low",
-                )
-                return HttpScanAssistantResponse(
-                    **first_result.model_dump(),
-                    assistant_reply=multi_response.consolidated_assistant_reply,
-                )
-        except Exception as e:
-            logger.warning("Auto-detect regions failed, falling back to single-region: %s", e)
+    total_started_at = time.perf_counter()
+    image_b64 = _strip_data_url_prefix(payload.base64_image)
+    auto_region_enabled = _should_run_auto_region_detection(enable_multi_region)
+
+    region_detect_ms = 0
+    pipeline_ms = 0
+    firestore_ms = 0
+    reply_ms = 0
+    used_multi_region = False
+    used_supervisor = False
+
+    if auto_region_enabled:
+        region_detector = _get_region_detector()
+        if region_detector:
+            try:
+                region_started_at = time.perf_counter()
+                detected_regions = await region_detector.detect_regions(base64_image=image_b64)
+                region_detect_ms = _elapsed_ms(region_started_at)
+                if len(detected_regions) > 1:
+                    used_multi_region = True
+                    logger.info("Auto-detected %d regions; routing to multi-region assistant scan", len(detected_regions))
+                    multi_payload = HttpScanAssistantMultiRequest(
+                        source=payload.source,
+                        grid_id=payload.grid_id,
+                        user_id=payload.user_id,
+                        regions=detected_regions,
+                        user_prompt=payload.user_prompt,
+                    )
+                    multi_response = await scan_and_chat_multi(
+                        multi_payload,
+                        use_supervisor_reply=use_supervisor_reply,
+                        validate_supervisor_reply=validate_supervisor_reply,
+                    )
+                    first_result = multi_response.regions_results[0] if multi_response.regions_results else HttpScanResponse(
+                        disease="Unknown",
+                        severity=0,
+                        confidence=0,
+                        spread_risk="Low",
+                    )
+                    logger.info(
+                        "assistant_scan latency total_ms=%d auto_region=%s region_detect_ms=%d used_multi_region=%s",
+                        _elapsed_ms(total_started_at),
+                        auto_region_enabled,
+                        region_detect_ms,
+                        used_multi_region,
+                    )
+                    return HttpScanAssistantResponse(
+                        **first_result.model_dump(),
+                        assistant_reply=multi_response.consolidated_assistant_reply,
+                    )
+            except Exception as exc:
+                logger.warning("Auto-detect regions failed; falling back to single region: %s", exc)
 
     # Fallback to single full-image region
     bbox = BoundingBox(
@@ -640,45 +733,89 @@ async def scan_and_chat(payload: HttpScanAssistantRequest) -> HttpScanAssistantR
     )
 
     try:
+        pipeline_started_at = time.perf_counter()
         raw_result = await _run_scan_pipeline(
-            cropped_image_b64=_strip_data_url_prefix(payload.base64_image),
+            cropped_image_b64=image_b64,
             bbox=bbox,
             grid_id=payload.grid_id,
         )
+        pipeline_ms = _elapsed_ms(pipeline_started_at)
+
         result = _build_scan_result(raw_result, bbox, 0)
+
+        firestore_started_at = time.perf_counter()
         await _record_abnormal_scan(result, payload.grid_id, payload.user_id)
+        firestore_ms = _elapsed_ms(firestore_started_at)
 
         diagnosis = _to_http_scan_response(result, raw_result, payload.grid_id)
         assistant_reply = _assistant_reply_from_scan(result)
 
-        supervisor = _get_supervisor()
-        if supervisor is not None:
-            try:
-                assistant_reply = await supervisor.build_photo_reply(
-                    user_prompt=payload.user_prompt,
-                    scan_result=_build_scan_reply_context(result, diagnosis),
-                    confidence=diagnosis.confidence,
-                )
-            except Exception as exc:
-                logger.warning("Supervisor photo reply failed, using fallback: %s", exc)
+        should_use_supervisor = _should_use_supervisor_photo_reply(payload.user_prompt, use_supervisor_reply)
+        should_validate_supervisor = _should_validate_supervisor_photo_reply(validate_supervisor_reply)
+
+        if should_use_supervisor:
+            supervisor = _get_supervisor()
+            if supervisor is not None:
+                used_supervisor = True
+                try:
+                    reply_started_at = time.perf_counter()
+                    assistant_reply = await supervisor.build_photo_reply(
+                        user_prompt=payload.user_prompt,
+                        scan_result=_build_scan_reply_context(result, diagnosis),
+                        confidence=diagnosis.confidence,
+                        validate_response=should_validate_supervisor,
+                    )
+                    reply_ms = _elapsed_ms(reply_started_at)
+                except Exception as exc:
+                    logger.warning("Supervisor photo reply failed, using deterministic fallback: %s", exc)
+
+        logger.info(
+            "assistant_scan latency total_ms=%d auto_region=%s region_detect_ms=%d used_multi_region=%s pipeline_ms=%d firestore_ms=%d reply_ms=%d used_supervisor=%s validate_supervisor=%s",
+            _elapsed_ms(total_started_at),
+            auto_region_enabled,
+            region_detect_ms,
+            used_multi_region,
+            pipeline_ms,
+            firestore_ms,
+            reply_ms,
+            used_supervisor,
+            should_validate_supervisor,
+        )
 
         return HttpScanAssistantResponse(
             **diagnosis.model_dump(),
             assistant_reply=assistant_reply,
         )
     except Exception as exc:
-        logger.exception("Assistant scan failed: %s", exc)
+        logger.exception("Assistant scan failed after %dms: %s", _elapsed_ms(total_started_at), exc)
         raise HTTPException(status_code=500, detail="Assistant scan failed") from exc
 
 
 @router.post("/api/assistant/scan-multi", response_model=HttpScanAssistantMultiResponse)
-async def scan_and_chat_multi(payload: HttpScanAssistantMultiRequest) -> HttpScanAssistantMultiResponse:
+async def scan_and_chat_multi(
+    payload: HttpScanAssistantMultiRequest,
+    use_supervisor_reply: Annotated[
+        bool | None,
+        Query(description="Override LLM/supervisor photo reply path for this request."),
+    ] = None,
+    validate_supervisor_reply: Annotated[
+        bool | None,
+        Query(description="Override validation when supervisor photo reply path is used."),
+    ] = None,
+) -> HttpScanAssistantMultiResponse:
     """Multi-region scan and chatbot dialogue for photos with multiple plants.
 
     Each region is processed independently, then a consolidated assistant
     reply is generated addressing all detected crops.
     """
+    total_started_at = time.perf_counter()
+    pipeline_ms = 0
+    firestore_ms = 0
+    reply_ms = 0
+    used_supervisor = False
+
     # Process all regions concurrently through pipeline
+    pipeline_started_at = time.perf_counter()
     tasks = [
         _run_scan_pipeline(
             cropped_image_b64=_strip_data_url_prefix(region.cropped_image_b64),
@@ -688,6 +825,7 @@ async def scan_and_chat_multi(payload: HttpScanAssistantMultiRequest) -> HttpSca
         for region in payload.regions
     ]
     raw_results = await asyncio.gather(*tasks, return_exceptions=True)
+    pipeline_ms = _elapsed_ms(pipeline_started_at)
 
     first_error = next((item for item in raw_results if isinstance(item, Exception)), None)
     if first_error is not None:
@@ -697,6 +835,7 @@ async def scan_and_chat_multi(payload: HttpScanAssistantMultiRequest) -> HttpSca
     regions_results: list[HttpScanResponse] = []
     region_diagnoses: list[ScanResult] = []
 
+    firestore_started_at = time.perf_counter()
     for i, raw_result in enumerate(raw_results):
         bbox = payload.regions[i].bbox
         if not isinstance(raw_result, dict):
@@ -708,23 +847,43 @@ async def scan_and_chat_multi(payload: HttpScanAssistantMultiRequest) -> HttpSca
 
         # Record abnormal scans
         await _record_abnormal_scan(result, payload.grid_id, payload.user_id)
+    firestore_ms = _elapsed_ms(firestore_started_at)
 
     consolidated_reply = _assistant_reply_from_regions(region_diagnoses)
 
-    supervisor = _get_supervisor()
-    if supervisor is not None:
-        try:
-            reply_contexts = [
-                _build_scan_reply_context(region_diagnoses[i], regions_results[i])
-                for i in range(len(region_diagnoses))
-            ]
-            consolidated_reply = await supervisor.build_photo_reply(
-                user_prompt=payload.user_prompt,
-                scan_results=reply_contexts,
-                confidence=min(result.confidence for result in regions_results) if regions_results else None,
-            )
-        except Exception as exc:
-            logger.warning("Supervisor multi-region reply failed, using fallback: %s", exc)
+    should_use_supervisor = _should_use_supervisor_photo_reply(payload.user_prompt, use_supervisor_reply)
+    should_validate_supervisor = _should_validate_supervisor_photo_reply(validate_supervisor_reply)
+
+    if should_use_supervisor:
+        supervisor = _get_supervisor()
+        if supervisor is not None:
+            used_supervisor = True
+            try:
+                reply_contexts = [
+                    _build_scan_reply_context(region_diagnoses[i], regions_results[i])
+                    for i in range(len(region_diagnoses))
+                ]
+                reply_started_at = time.perf_counter()
+                consolidated_reply = await supervisor.build_photo_reply(
+                    user_prompt=payload.user_prompt,
+                    scan_results=reply_contexts,
+                    confidence=min(result.confidence for result in regions_results) if regions_results else None,
+                    validate_response=should_validate_supervisor,
+                )
+                reply_ms = _elapsed_ms(reply_started_at)
+            except Exception as exc:
+                logger.warning("Supervisor multi-region reply failed, using deterministic fallback: %s", exc)
+
+    logger.info(
+        "assistant_scan_multi latency total_ms=%d regions=%d pipeline_ms=%d firestore_ms=%d reply_ms=%d used_supervisor=%s validate_supervisor=%s",
+        _elapsed_ms(total_started_at),
+        len(payload.regions),
+        pipeline_ms,
+        firestore_ms,
+        reply_ms,
+        used_supervisor,
+        should_validate_supervisor,
+    )
 
     return HttpScanAssistantMultiResponse(
         frame_number=0,

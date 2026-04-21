@@ -45,14 +45,26 @@ class _FakeCollection:
     def document(self, doc_id: str) -> _FakeDocumentRef:
         return _FakeDocumentRef(self, doc_id)
 
-    def where(self, field: str, op: str, value: str) -> _FakeQuery:
+    def where(
+        self,
+        field: str | None = None,
+        op: str | None = None,
+        value: str | None = None,
+        *,
+        filter: object | None = None,
+    ) -> _FakeQuery:
+        if filter is not None:
+            field = getattr(filter, "field_path", None) or getattr(filter, "field", None)
+            op = getattr(filter, "op_string", None) or getattr(filter, "op", None)
+            value = getattr(filter, "value", None)
+
         if op != "==":
             return _FakeQuery([])
 
         matched = [
             (doc_id, data)
             for doc_id, data in self.docs.items()
-            if str(data.get(field, "")).strip() == str(value).strip()
+            if str(data.get(str(field or ""), "")).strip() == str(value).strip()
         ]
         return _FakeQuery(matched)
 
@@ -112,6 +124,23 @@ async def test_catalog_recommendation_miss_returns_empty() -> None:
     recommendation = await service.get_pesticide_catalog_recommendation("Imaginary Pest")
 
     assert recommendation == {}
+
+
+@pytest.mark.asyncio
+async def test_catalog_alias_lookup_maps_blast_to_rice_blast() -> None:
+    service = _build_service(
+        {
+            "rice_blast": {
+                "pestName": "Rice Blast",
+                "mostCommonlyUsedPesticides": "Tricyclazole, Isoprothiolane",
+            }
+        }
+    )
+
+    recommendation = await service.get_pesticide_catalog_recommendation("Blast")
+
+    assert recommendation["matchedPestName"] == "Rice Blast"
+    assert recommendation["recommendedPesticides"] == ["Tricyclazole", "Isoprothiolane"]
 
 
 @pytest.mark.asyncio
