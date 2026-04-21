@@ -59,7 +59,6 @@ class ResponseValidationAgent(BaseAgent):
             )
             repaired_reply = str(repaired_reply or "").strip()
             if repaired_reply:
-                final_reply = repaired_reply
                 post_repair_validation = await llm_service.validate_assistant_reply(
                     user_prompt=user_prompt,
                     assistant_reply=repaired_reply,
@@ -67,7 +66,15 @@ class ResponseValidationAgent(BaseAgent):
                 )
                 validation_result["post_repair_validation"] = post_repair_validation
                 if str(post_repair_validation.get("verdict") or "").strip().lower() == "pass":
+                    final_reply = repaired_reply
                     validation_result = post_repair_validation
+                elif not bool(post_repair_validation.get("truncated")):
+                    final_reply = repaired_reply
+                else:
+                    logger.warning(
+                        "[%s] Rewritten reply still truncated; keeping original draft reply",
+                        self.name,
+                    )
 
         validation_result["final_reply"] = final_reply
         validation_result["validation_passed"] = str(validation_result.get("verdict") or "").strip().lower() == "pass"

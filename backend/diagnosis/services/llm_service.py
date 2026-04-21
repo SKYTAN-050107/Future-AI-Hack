@@ -923,6 +923,11 @@ def _reply_looks_truncated(text: str) -> bool:
     if not cleaned:
         return True
 
+    # A complete sentence should end with terminal punctuation, optionally
+    # followed by a closing quote/bracket.
+    if not re.search(r"[.!?](?:[\"')\]]\s*)?$", cleaned):
+        return True
+
     if cleaned.endswith((".", "!", "?", ")", '"', "'")):
         return False
 

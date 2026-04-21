@@ -17,7 +17,7 @@ from services.dashboard_service import DashboardService
 from services.firebase_admin_service import get_firestore_client
 from services.firestore_service import FirestoreService
 from services.inventory_service import InventoryService
-from services.llm_service import LLMService, build_farmer_fallback_dialogue, detect_farmer_language
+from services.llm_service import LLMService, _reply_looks_truncated, build_farmer_fallback_dialogue, detect_farmer_language
 from services.weather_service import WeatherService
 
 logger = logging.getLogger(__name__)
@@ -173,7 +173,25 @@ class InteractionSupervisor:
                 validation_result.get("truncated"),
             )
 
-        return final_reply or reply
+        candidate_reply = final_reply or reply
+        if not _reply_looks_truncated(candidate_reply):
+            return candidate_reply
+
+        # If a rewrite still ended mid-sentence, keep the last complete sentence
+        # rather than returning a dangling phrase.
+        sentence_matches = list(re.finditer(r"[.!?](?:[\"')\]]\s*)", candidate_reply))
+        if sentence_matches:
+            complete_reply = candidate_reply[: sentence_matches[-1].end()].strip()
+            if complete_reply:
+                logger.warning("Reply looked truncated; returning last complete sentence.")
+                return complete_reply
+
+        if not _reply_looks_truncated(reply):
+            logger.warning("Rewritten reply looked truncated; reverting to original draft.")
+            return reply
+
+        logger.warning("Both draft and rewritten replies looked truncated; returning safe clarification fallback.")
+        return "I can help with that. Could you share one more detail so I can give a complete answer?"
 
     def _get_dashboard_service(self) -> DashboardService | None:
         if self._dashboard_service is not None:
@@ -314,6 +332,136 @@ class InteractionSupervisor:
             return float(value)
         except (TypeError, ValueError):
             return None
+
+    @staticmethod
+    def _normalize_recent_messages(recent_messages: list[dict[str, Any]] | None) -> list[dict[str, str]]:
+        if not recent_messages:
+            return []
+
+        normalized: list[dict[str, str]] = []
+        for item in recent_messages[-20:]:
+            if not isinstance(item, dict):
+                continue
+
+            role = str(item.get("role") or "").strip().lower()
+            if role not in {"user", "ai"}:
+                continue
+
+            text = str(item.get("text") or "").strip()
+            if not text:
+                continue
+
+            normalized.append(
+                {
+                    "role": role,
+                    "text": text[:1200],
+                }
+            )
+
+        return normalized
+
+    @staticmethod
+    def _is_brief_follow_up_prompt(user_prompt: str) -> bool:
+        text = str(user_prompt or "").strip().lower()
+        if not text:
+            return False
+
+        normalized = re.sub(r"\s+", " ", text)
+        short_exact = {
+            "yes",
+            "yeah",
+            "yep",
+            "ya",
+            "ok",
+            "okay",
+            "sure",
+            "i dont understand",
+            "i don't understand",
+            "dont understand",
+            "don't understand",
+            "confused",
+            "help",
+            "explain",
+            "tak faham",
+            "tidak faham",
+            "x faham",
+            "不懂",
+        }
+        if normalized in short_exact:
+            return True
+
+        if re.fullmatch(r"y(?:es)?[!.?]*", normalized):
+            return True
+
+        token_count = len(re.findall(r"[a-zA-Z0-9']+", normalized))
+        if token_count <= 4 and any(
+            phrase in normalized
+            for phrase in (
+                "can you explain",
+                "what do you mean",
+                "please explain",
+                "not sure",
+            )
+        ):
+            return True
+
+        return False
+
+    @classmethod
+    def _latest_substantive_user_message(
+        cls,
+        *,
+        user_prompt: str,
+        recent_messages: list[dict[str, str]],
+    ) -> str | None:
+        current = str(user_prompt or "").strip().lower()
+        if not recent_messages:
+            return None
+
+        for item in reversed(recent_messages):
+            if item.get("role") != "user":
+                continue
+
+            text = str(item.get("text") or "").strip()
+            if not text:
+                continue
+
+            if text.lower() == current:
+                continue
+
+            if cls._is_brief_follow_up_prompt(text):
+                continue
+
+            return text
+
+        return None
+
+    @classmethod
+    def _build_effective_prompt(
+        cls,
+        *,
+        user_prompt: str,
+        recent_messages: list[dict[str, str]],
+    ) -> str:
+        prompt = str(user_prompt or "").strip()
+        if not prompt:
+            return ""
+
+        if not cls._is_brief_follow_up_prompt(prompt):
+            return prompt
+
+        latest_topic = cls._latest_substantive_user_message(
+            user_prompt=prompt,
+            recent_messages=recent_messages,
+        )
+        if not latest_topic:
+            return prompt
+
+        return (
+            f"{prompt}\n\n"
+            f"Conversation context: The user's recent topic was {latest_topic}. "
+            "Continue that topic unless the user changes it."
+        )
 
     @staticmethod
     def _detect_intents(user_prompt: str) -> set[str]:
@@ -632,10 +780,24 @@ class InteractionSupervisor:
         location: str | None = None,
         lat: float | None = None,
         lng: float | None = None,
+        conversation_id: str | None = None,
+        recent_messages: list[dict[str, Any]] | None = None,
     ) -> str:
         """Return the response-agent reply for a text-only request."""
-        intents = self._detect_intents(user_prompt)
-        references_scan_context = self._references_existing_scan_context(user_prompt)
+        normalized_recent_messages = self._normalize_recent_messages(recent_messages)
+        effective_user_prompt = self._build_effective_prompt(
+            user_prompt=user_prompt,
+            recent_messages=normalized_recent_messages,
+        )
+
+        intents = self._detect_intents(effective_user_prompt)
+        references_scan_context = self._references_existing_scan_context(user_prompt) or self._references_existing_scan_context(
+            effective_user_prompt,
+        )
+        latest_user_topic = self._latest_substantive_user_message(
+            user_prompt=user_prompt,
+            recent_messages=normalized_recent_messages,
+        )
 
         # If the user asks a generic topic (for example pest prevention),
         # do not force the latest scan into the answer unless they clearly
@@ -650,9 +812,14 @@ class InteractionSupervisor:
             "lng": lng,
             "user_id": user_id,
             "zone": zone,
+            "conversation_id": conversation_id,
+            "recent_messages": normalized_recent_messages,
+            "latest_user_topic": latest_user_topic,
         }
 
-        requested_pest_name = self._extract_catalog_pest_query(user_prompt)
+        requested_pest_name = self._extract_catalog_pest_query(user_prompt) or self._extract_catalog_pest_query(
+            effective_user_prompt,
+        )
         if requested_pest_name:
             catalog_recommendation = await self._load_pesticide_catalog_recommendation(
                 requested_pest_name=requested_pest_name,
@@ -664,7 +831,7 @@ class InteractionSupervisor:
             )
 
             return await self._finalize_response(
-                user_prompt=user_prompt,
+                user_prompt=effective_user_prompt,
                 draft_reply=draft_reply,
                 context={
                     **validation_context_base,
@@ -693,14 +860,14 @@ class InteractionSupervisor:
             llm = self._get_llm_service()
             if llm is not None:
                 draft_reply = await llm.generate_inventory_reply(
-                    user_prompt=user_prompt,
+                    user_prompt=effective_user_prompt,
                     inventory_summary=inventory_summary,
                 )
             else:
                 draft_reply = self._inventory_fallback(inventory_summary=inventory_summary)
 
             return await self._finalize_response(
-                user_prompt=user_prompt,
+                user_prompt=effective_user_prompt,
                 draft_reply=draft_reply,
                 context={**validation_context_base, "inventory_summary": inventory_summary},
             )
@@ -718,21 +885,21 @@ class InteractionSupervisor:
             agriculture_agent = self._get_agriculture_advice_agent()
             if agriculture_agent is not None:
                 draft_reply = await agriculture_agent.generate_reply(
-                    user_prompt=user_prompt,
+                    user_prompt=effective_user_prompt,
                     context=agriculture_context,
                 )
             else:
                 llm = self._get_llm_service()
                 if llm is not None:
                     draft_reply = await llm.generate_agriculture_reply(
-                        user_prompt=user_prompt,
+                        user_prompt=effective_user_prompt,
                         context=agriculture_context,
                     )
                 else:
                     draft_reply = "This assistant only answers agriculture-related questions. Please ask about crops, planting, soil, irrigation, pests, fertilizer, harvesting, or farm management."
 
             return await self._finalize_response(
-                user_prompt=user_prompt,
+                user_prompt=effective_user_prompt,
                 draft_reply=draft_reply,
                 context=agriculture_context,
                 validate=True,
@@ -799,7 +966,7 @@ class InteractionSupervisor:
                 name="response",
                 depends_on=tuple(node.name for node in nodes),
                 runner=lambda state: self._build_text_response(
-                    user_prompt=user_prompt,
+                    user_prompt=effective_user_prompt,
                     intents=intents,
                     state=state,
                     location=location,
@@ -814,13 +981,13 @@ class InteractionSupervisor:
         response = str(state.get("response") or "").strip()
         if response:
             return await self._finalize_response(
-                user_prompt=user_prompt,
+                user_prompt=effective_user_prompt,
                 draft_reply=response,
                 context=validation_context,
             )
 
         draft_reply = self._text_fallback(
-            user_prompt=user_prompt,
+            user_prompt=effective_user_prompt,
             intents=intents,
             state=state,
             location=location,
@@ -828,7 +995,7 @@ class InteractionSupervisor:
             lng=lng,
         )
         return await self._finalize_response(
-            user_prompt=user_prompt,
+            user_prompt=effective_user_prompt,
             draft_reply=draft_reply,
             context=validation_context,
         )

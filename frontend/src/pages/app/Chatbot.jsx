@@ -151,6 +151,16 @@ function normalizeMessage(raw) {
   return { role, text }
 }
 
+function buildRecentMessagesForAssistantApi(messages) {
+  return (Array.isArray(messages) ? messages : [])
+    .map((item) => ({
+      role: item?.role === 'user' ? 'user' : 'ai',
+      text: String(item?.text || '').trim(),
+    }))
+    .filter((item) => item.text)
+    .slice(-20)
+}
+
 function normalizeConversationRecord(id, raw) {
   const messages = Array.isArray(raw?.messages)
     ? raw.messages.map(normalizeMessage).filter(Boolean)
@@ -895,6 +905,7 @@ export default function Chatbot() {
     }
 
     const userMessage = { role: 'user', text: trimmed }
+    const recentMessages = buildRecentMessagesForAssistantApi([...messages, userMessage])
     setMessages((prev) => {
       const next = [...prev, userMessage]
       persistConversation(conversationId, next)
@@ -913,6 +924,8 @@ export default function Chatbot() {
         location: farmLocation,
         lat: Number.isFinite(resolvedLat) ? resolvedLat : null,
         lng: Number.isFinite(resolvedLng) ? resolvedLng : null,
+        conversationId,
+        recentMessages,
       })
 
       const assistantText = String(response?.assistant_reply || '').trim() || 'No assistant response received.'

@@ -7,6 +7,8 @@ messages flowing between the frontend and the ``WS /ws/scan`` endpoint.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -485,6 +487,13 @@ class StandardErrorResponse(BaseModel):
     error: str
 
 
+class AssistantConversationMessage(BaseModel):
+    """Lightweight chat message context for multi-turn assistant replies."""
+
+    role: Literal["user", "ai"]
+    text: str = Field(..., min_length=1, max_length=1200)
+
+
 class AssistantMessageRequest(BaseModel):
     """Input contract for text-only assistant interaction."""
 
@@ -494,6 +503,8 @@ class AssistantMessageRequest(BaseModel):
     location: str | None = None
     lat: float | None = None
     lng: float | None = None
+    conversation_id: str | None = None
+    recent_messages: list[AssistantConversationMessage] = Field(default_factory=list, max_length=20)
 
 
 class AssistantMessageResponse(BaseModel):

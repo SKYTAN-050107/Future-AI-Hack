@@ -39,6 +39,28 @@ def test_detect_intents_marks_recent_scan_history_as_diagnosis() -> None:
     assert "diagnosis" in intents
 
 
+def test_build_effective_prompt_uses_recent_topic_for_brief_follow_up() -> None:
+    effective = InteractionSupervisor._build_effective_prompt(
+        user_prompt="yes",
+        recent_messages=[
+            {"role": "user", "text": "how can I treat padi blast"},
+            {"role": "ai", "text": "Do you need prevention or treatment guidance?"},
+        ],
+    )
+
+    assert "Conversation context" in effective
+    assert "padi blast" in effective
+
+
+def test_build_effective_prompt_keeps_normal_prompt_without_context_expansion() -> None:
+    effective = InteractionSupervisor._build_effective_prompt(
+        user_prompt="how to plant apple",
+        recent_messages=[{"role": "user", "text": "padi blast"}],
+    )
+
+    assert effective == "how to plant apple"
+
+
 @pytest.mark.asyncio
 async def test_build_text_reply_prefers_catalog_branch_over_inventory() -> None:
     supervisor = InteractionSupervisor()
@@ -147,3 +169,34 @@ async def test_build_text_reply_recent_scan_history_returns_scan_summary() -> No
     assert "rice blast" in reply.lower()
     assert "acrezen" not in reply.lower()
     supervisor._load_recent_scan_context.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_build_text_reply_brief_follow_up_uses_recent_user_topic() -> None:
+    supervisor = InteractionSupervisor()
+
+    class _StubAgricultureAgent:
+        def __init__(self) -> None:
+            self.user_prompt: str | None = None
+
+        async def generate_reply(self, *, user_prompt: str, context: dict[str, Any] | None = None) -> str:
+            self.user_prompt = user_prompt
+            return "Follow-up guidance"
+
+    stub_agent = _StubAgricultureAgent()
+    supervisor._get_agriculture_advice_agent = lambda: stub_agent  # type: ignore[method-assign]
+    supervisor._finalize_response = AsyncMock(side_effect=lambda **kwargs: kwargs["draft_reply"])
+
+    reply = await supervisor.build_text_reply(
+        user_prompt="yes",
+        user_id="u1",
+        recent_messages=[
+            {"role": "user", "text": "padi blast"},
+            {"role": "ai", "text": "Do you need prevention or treatment guidance?"},
+        ],
+    )
+
+    assert reply == "Follow-up guidance"
+    assert stub_agent.user_prompt is not None
+    assert "Conversation context" in stub_agent.user_prompt
+    assert "padi blast" in stub_agent.user_prompt

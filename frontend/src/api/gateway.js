@@ -147,9 +147,19 @@ export const gateway = {
   sendAssistantMessage: async (input) => {
     const userPrompt = String(input?.userPrompt || '').trim()
     const userId = String(input?.userId || '').trim()
+    const conversationId = String(input?.conversationId || '').trim()
     const location = String(input?.location || '').trim()
     const lat = toFiniteNumber(input?.lat)
     const lng = toFiniteNumber(input?.lng)
+    const recentMessages = Array.isArray(input?.recentMessages)
+      ? input.recentMessages
+        .map((item) => ({
+          role: item?.role === 'user' ? 'user' : 'ai',
+          text: String(item?.text || '').trim(),
+        }))
+        .filter((item) => item.text)
+        .slice(-20)
+      : []
 
     if (!userPrompt) {
       throw new Error('userPrompt is required for assistant message')
@@ -169,6 +179,8 @@ export const gateway = {
         location: location || null,
         lat,
         lng,
+        conversation_id: conversationId || null,
+        recent_messages: recentMessages,
       }),
     })
   },

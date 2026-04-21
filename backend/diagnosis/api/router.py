@@ -746,6 +746,8 @@ async def assistant_message(payload: AssistantMessageRequest) -> AssistantMessag
                 location=payload.location,
                 lat=payload.lat,
                 lng=payload.lng,
+                conversation_id=payload.conversation_id,
+                recent_messages=[item.model_dump() for item in payload.recent_messages],
             )
             return AssistantMessageResponse(assistant_reply=reply)
         except ValueError as exc:
