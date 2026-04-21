@@ -135,20 +135,43 @@ function toMillis(value) {
   return Number.isFinite(parsed) ? parsed : 0
 }
 
+function normalizeImageUrl(value) {
+  const safeValue = String(value || '').trim()
+  if (!safeValue) {
+    return ''
+  }
+
+  if (safeValue.startsWith('data:image/')) {
+    return safeValue
+  }
+
+  if (safeValue.startsWith('https://') || safeValue.startsWith('http://')) {
+    return safeValue
+  }
+
+  return ''
+}
+
 function normalizeMessage(raw) {
   const role = raw?.role === 'user' ? 'user' : 'ai'
   const text = String(raw?.text || '').trim()
-  if (!text) {
+  const meta = role === 'ai' ? String(raw?.meta || '').trim() : ''
+  const imageUrl = normalizeImageUrl(raw?.imageUrl || raw?.imageURL || raw?.captureDownloadURL || raw?.photoUrl)
+  const imageStoragePath = String(raw?.imageStoragePath || raw?.captureStoragePath || '').trim()
+  const imageCaptureId = String(raw?.imageCaptureId || raw?.captureId || '').trim()
+
+  if (!text && !imageUrl) {
     return null
   }
 
-  const meta = role === 'ai' ? String(raw?.meta || '').trim() : ''
-
-  if (meta) {
-    return { role, text, meta }
+  return {
+    role,
+    ...(text ? { text } : {}),
+    ...(meta ? { meta } : {}),
+    ...(imageUrl ? { imageUrl } : {}),
+    ...(imageStoragePath ? { imageStoragePath } : {}),
+    ...(imageCaptureId ? { imageCaptureId } : {}),
   }
-
-  return { role, text }
 }
 
 function buildRecentMessagesForAssistantApi(messages) {
@@ -226,6 +249,9 @@ function areConversationListsEqual(left, right) {
         a.messages[j]?.role !== b.messages[j]?.role
         || a.messages[j]?.text !== b.messages[j]?.text
         || String(a.messages[j]?.meta || '') !== String(b.messages[j]?.meta || '')
+        || String(a.messages[j]?.imageUrl || '') !== String(b.messages[j]?.imageUrl || '')
+        || String(a.messages[j]?.imageStoragePath || '') !== String(b.messages[j]?.imageStoragePath || '')
+        || String(a.messages[j]?.imageCaptureId || '') !== String(b.messages[j]?.imageCaptureId || '')
       ) {
         return false
       }
@@ -777,14 +803,28 @@ export default function Chatbot() {
         }
 
         const userPrompt = String(pendingCapture.userPrompt || defaultUserPrompt).trim() || defaultUserPrompt
+        const captureImageUrl = normalizeImageUrl(pendingCapture.captureDownloadURL || pendingCapture.downloadURL)
+        const fallbackImageUrl = captureImageUrl || normalizeImageUrl(pendingCapture.base64Image)
+        const captureStoragePath = String(pendingCapture.captureStoragePath || '').trim()
+        const captureMessage = {
+          role: 'user',
+          text: defaultUserPrompt,
+          ...(fallbackImageUrl ? { imageUrl: fallbackImageUrl } : {}),
+          ...(captureStoragePath ? { imageStoragePath: captureStoragePath } : {}),
+          ...(resolvedCaptureId ? { imageCaptureId: resolvedCaptureId } : {}),
+        }
 
         setMessages((prev) => {
           const lastMessage = prev[prev.length - 1]
-          if (lastMessage?.role === 'user' && lastMessage?.text === defaultUserPrompt) {
+          if (
+            lastMessage?.role === 'user'
+            && lastMessage?.text === defaultUserPrompt
+            && String(lastMessage?.imageCaptureId || '') === String(resolvedCaptureId || '')
+          ) {
             return prev
           }
 
-          const next = [...prev, { role: 'user', text: defaultUserPrompt }]
+          const next = [...prev, captureMessage]
           persistConversation(conversationId, next)
           return next
         })
@@ -980,17 +1020,6 @@ export default function Chatbot() {
     }
 
     const userPrompt = '我刚上传了一张作物照片，请告诉我这是什么问题，并给出治疗方案。'
-    const userMessage = {
-      role: 'user',
-      text: `已上传照片：${file.name}`,
-    }
-
-    setMessages((prev) => {
-      const next = [...prev, userMessage]
-      persistConversation(conversationId, next)
-      return next
-    })
-
     setIsThinking(true)
 
     try {
@@ -1015,6 +1044,22 @@ export default function Chatbot() {
           console.warn('Failed to persist uploaded scan capture:', captureError)
         }
       }
+
+      const uploadedImageUrl = normalizeImageUrl(persistedCapture.downloadURL) || normalizeImageUrl(base64Image)
+      const uploadedImageStoragePath = String(persistedCapture.storagePath || '').trim()
+      const userMessage = {
+        role: 'user',
+        text: `Image uploaded：${file.name}`,
+        ...(uploadedImageUrl ? { imageUrl: uploadedImageUrl } : {}),
+        ...(uploadedImageStoragePath ? { imageStoragePath: uploadedImageStoragePath } : {}),
+        ...(persistedCapture.captureId ? { imageCaptureId: persistedCapture.captureId } : {}),
+      }
+
+      setMessages((prev) => {
+        const next = [...prev, userMessage]
+        persistConversation(conversationId, next)
+        return next
+      })
 
       const response = await scanAndAskAssistant({
         source: 'upload',
@@ -1136,7 +1181,10 @@ export default function Chatbot() {
               >
                 <strong>{conversation.title || 'Conversation'}</strong>
                 <span>{formatConversationTime(conversation.updatedAt)}</span>
-                <small>{conversation.messages[conversation.messages.length - 1]?.text || 'No messages'}</small>
+                <small>
+                  {conversation.messages[conversation.messages.length - 1]?.text
+                    || (conversation.messages[conversation.messages.length - 1]?.imageUrl ? 'Photo attachment' : 'No messages')}
+                </small>
               </button>
             ))
           )}
@@ -1212,7 +1260,15 @@ export default function Chatbot() {
             >
               <p className="pg-chatbot-message-role">{message.role === 'user' ? 'You' : 'Assistant'}</p>
               <div className="pg-chatbot-message-bubble">
-                <p className="pg-chatbot-message-text">{message.text}</p>
+                {message.text ? <p className="pg-chatbot-message-text">{message.text}</p> : null}
+                {message.imageUrl ? (
+                  <img
+                    className="pg-chatbot-message-image"
+                    src={message.imageUrl}
+                    alt={message.role === 'user' ? 'Uploaded crop photo' : 'Assistant image attachment'}
+                    loading="lazy"
+                  />
+                ) : null}
                 {message.role === 'ai' && message.meta ? (
                   <p className="pg-chatbot-message-meta">{message.meta}</p>
                 ) : null}
