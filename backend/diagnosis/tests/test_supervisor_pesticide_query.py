@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from unittest.mock import AsyncMock
+from typing import Any
 
 import pytest
 
@@ -23,6 +24,19 @@ def test_extract_catalog_pest_query_ignores_inventory_prompt() -> None:
     )
 
     assert parsed is None
+
+
+def test_extract_catalog_pest_query_handles_alternate_word_order() -> None:
+    parsed = InteractionSupervisor._extract_catalog_pest_query(
+        "what pesticides suggest for rice pest",
+    )
+
+    assert parsed == "rice pest"
+
+
+def test_detect_intents_marks_recent_scan_history_as_diagnosis() -> None:
+    intents = InteractionSupervisor._detect_intents("Show my recent scan history")
+    assert "diagnosis" in intents
 
 
 @pytest.mark.asyncio
@@ -66,3 +80,70 @@ async def test_build_text_reply_catalog_miss_returns_clear_message() -> None:
 
     assert "could not find" in reply.lower()
     assert "unknownpest" in reply.lower()
+
+
+@pytest.mark.asyncio
+async def test_build_text_reply_generic_pest_question_avoids_scan_context() -> None:
+    supervisor = InteractionSupervisor()
+
+    class _StubAgricultureAgent:
+        def __init__(self) -> None:
+            self.context: dict[str, Any] | None = None
+
+        async def generate_reply(self, *, user_prompt: str, context: dict[str, Any] | None = None) -> str:
+            self.context = context or {}
+            return "General pest prevention guidance"
+
+    stub_agent = _StubAgricultureAgent()
+    supervisor._get_agriculture_advice_agent = lambda: stub_agent  # type: ignore[method-assign]
+    supervisor._load_recent_scan_context = AsyncMock(
+        side_effect=AssertionError("recent scan context should not be loaded for generic pest prompt")
+    )
+    supervisor._finalize_response = AsyncMock(
+        side_effect=lambda **kwargs: kwargs["draft_reply"]
+    )
+
+    reply = await supervisor.build_text_reply(
+        user_prompt="how to prevent pest",
+        user_id="u1",
+    )
+
+    assert reply == "General pest prevention guidance"
+    assert stub_agent.context is not None
+    assert stub_agent.context.get("recent_scan") == {}
+    supervisor._finalize_response.assert_awaited_once()
+    assert supervisor._finalize_response.await_args.kwargs.get("validate") is True
+
+
+@pytest.mark.asyncio
+async def test_build_text_reply_recent_scan_history_returns_scan_summary() -> None:
+    supervisor = InteractionSupervisor()
+
+    supervisor._get_llm_service = lambda: None  # type: ignore[method-assign]
+    supervisor._load_recent_scan_context = AsyncMock(
+        return_value={
+            "has_reports": True,
+            "report_count": 2,
+            "latest_report": {
+                "cropType": "Padi",
+                "disease": "Rice Blast",
+                "severityScore": 72,
+                "treatmentPlan": "Apply recommended fungicide",
+            },
+            "recent_reports": [],
+            "trend": "Severity trend is stable; monitor closely and keep treatment discipline.",
+        }
+    )
+    supervisor._finalize_response = AsyncMock(
+        side_effect=lambda **kwargs: kwargs["draft_reply"]
+    )
+
+    reply = await supervisor.build_text_reply(
+        user_prompt="Show my recent scan history",
+        user_id="u1",
+    )
+
+    assert "latest scan" in reply.lower()
+    assert "rice blast" in reply.lower()
+    assert "acrezen" not in reply.lower()
+    supervisor._load_recent_scan_context.assert_awaited_once()

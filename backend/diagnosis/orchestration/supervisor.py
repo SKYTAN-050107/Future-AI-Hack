@@ -320,7 +320,22 @@ class InteractionSupervisor:
         text = (user_prompt or "").lower()
         intents: set[str] = set()
 
-        if any(keyword in text for keyword in ("inventory", "stock", "supply", "supplies", "fertilizer", "fertiliser", "chemical", "chemicals", "pesticide", "pesticides", "seed", "seeds")):
+        if any(
+            keyword in text
+            for keyword in (
+                "inventory",
+                "stock",
+                "in stock",
+                "low stock",
+                "out of stock",
+                "stock level",
+                "restock",
+                "quantity",
+                "quantities",
+                "supplies",
+                "remaining stock",
+            )
+        ):
             intents.add("resource")
         if any(phrase in text for phrase in ("location", "my location", "saved location", "farm location", "bound location", "where am i", "where is my farm")):
             intents.add("location")
@@ -328,7 +343,38 @@ class InteractionSupervisor:
             intents.add("weather")
         if any(keyword in text for keyword in ("economy", "roi", "profit", "cost", "yield", "revenue", "financial")):
             intents.add("economy")
-        if any(keyword in text for keyword in ("diagnosis", "disease", "infect", "infection", "spot", "spots", "wilt", "leaf", "leaves", "pest", "pests", "symptom", "symptoms", "photo", "picture", "image")):
+        if any(
+            keyword in text
+            for keyword in (
+                "diagnosis",
+                "disease",
+                "infect",
+                "infection",
+                "spot",
+                "spots",
+                "wilt",
+                "leaf",
+                "leaves",
+                "pest",
+                "pests",
+                "symptom",
+                "symptoms",
+                "photo",
+                "picture",
+                "image",
+                "scan",
+                "history",
+                "report",
+                "reports",
+                "record",
+                "records",
+                "pesticide",
+                "pesticides",
+                "insecticide",
+                "fungicide",
+                "herbicide",
+            )
+        ):
             intents.add("diagnosis")
         if any(keyword in text for keyword in ("spread", "spreading", "cluster", "clusters")):
             intents.add("spread")
@@ -344,6 +390,8 @@ class InteractionSupervisor:
         patterns = [
             r"\b(?:pesticides?|insecticides?|fungicides?|herbicides?|chemical(?:s)?|racun(?:\s+serangga)?)\s+(?:for|against|untuk|bagi)\s+(.+)$",
             r"\b(?:suggest|recommend|give|what(?:'s|\s+is|\s+are)?)\s+(?:me\s+)?(?:pesticides?|insecticides?|fungicides?|herbicides?|chemical(?:s)?|racun(?:\s+serangga)?)\s+(?:for|against|untuk|bagi)\s+(.+)$",
+            r"\b(?:what|which)\s+(?:pesticides?|insecticides?|fungicides?|herbicides?|chemical(?:s)?|racun(?:\s+serangga)?)\s+(?:do\s+you\s+)?(?:suggest|recommend)(?:\s+for|\s+against|\s+untuk|\s+bagi)?\s+(.+)$",
+            r"\b(?:suggest|recommend)\s+(?:some\s+)?(?:pesticides?|insecticides?|fungicides?|herbicides?|chemical(?:s)?|racun(?:\s+serangga)?)(?:\s+for|\s+against|\s+untuk|\s+bagi)?\s+(.+)$",
         ]
 
         for pattern in patterns:
@@ -587,6 +635,14 @@ class InteractionSupervisor:
     ) -> str:
         """Return the response-agent reply for a text-only request."""
         intents = self._detect_intents(user_prompt)
+        references_scan_context = self._references_existing_scan_context(user_prompt)
+
+        # If the user asks a generic topic (for example pest prevention),
+        # do not force the latest scan into the answer unless they clearly
+        # reference an existing scan/report.
+        if intents & {"diagnosis", "spread"} and not references_scan_context:
+            intents -= {"diagnosis", "spread"}
+
         validation_context_base = {
             "intents": sorted(intents),
             "location": location,
@@ -650,7 +706,10 @@ class InteractionSupervisor:
             )
 
         if not (intents & {"resource", "weather", "location", "economy", "diagnosis", "spread"}):
-            recent_scan = await self._load_recent_scan_context(user_id=user_id, zone=zone)
+            recent_scan = {}
+            if references_scan_context:
+                recent_scan = await self._load_recent_scan_context(user_id=user_id, zone=zone)
+
             agriculture_context = {
                 **validation_context_base,
                 "recent_scan": recent_scan,
@@ -676,7 +735,7 @@ class InteractionSupervisor:
                 user_prompt=user_prompt,
                 draft_reply=draft_reply,
                 context=agriculture_context,
-                validate=False,
+                validate=True,
             )
 
         if needs_recent_scan:
