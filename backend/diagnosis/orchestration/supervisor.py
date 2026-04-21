@@ -433,12 +433,21 @@ class InteractionSupervisor:
     @staticmethod
     def _references_existing_scan_context(user_prompt: str) -> bool:
         text = (user_prompt or "").lower()
-        return bool(
-            re.search(
-                r"\b(latest|recent|previous|prior|scan|report|history|photo|image|upload|uploaded|picture)\b",
-                text,
-            )
+        if re.search(
+            r"\b(latest|recent|previous|prior|scan|report|history|photo|image|upload|uploaded|picture)\b",
+            text,
+        ):
+            return True
+
+        follow_up_patterns = (
+            r"\b(this|that|the)\s+(disease|issue|problem|infection|symptom|condition)\b",
+            r"\b(same|that)\s+(disease|issue|problem|infection|symptom|condition)\b",
+            r"\bthe\s+one\s+you\s+(detected|found|diagnosed|mentioned)\b",
+            r"\b(penyakit|masalah|gejala)\s+(ini|itu)\b",
+            r"\byang\s+(anda|awak)\s+(kesan|jumpa|diagnos|sebut)\b",
         )
+
+        return any(re.search(pattern, text) for pattern in follow_up_patterns)
 
     async def _run_task_graph(self, nodes: list[TaskNode]) -> dict[str, Any]:
         state: dict[str, Any] = {}
@@ -641,18 +650,24 @@ class InteractionSupervisor:
             )
 
         if not (intents & {"resource", "weather", "location", "economy", "diagnosis", "spread"}):
+            recent_scan = await self._load_recent_scan_context(user_id=user_id, zone=zone)
+            agriculture_context = {
+                **validation_context_base,
+                "recent_scan": recent_scan,
+            }
+
             agriculture_agent = self._get_agriculture_advice_agent()
             if agriculture_agent is not None:
                 draft_reply = await agriculture_agent.generate_reply(
                     user_prompt=user_prompt,
-                    context=validation_context_base,
+                    context=agriculture_context,
                 )
             else:
                 llm = self._get_llm_service()
                 if llm is not None:
                     draft_reply = await llm.generate_agriculture_reply(
                         user_prompt=user_prompt,
-                        context=validation_context_base,
+                        context=agriculture_context,
                     )
                 else:
                     draft_reply = "This assistant only answers agriculture-related questions. Please ask about crops, planting, soil, irrigation, pests, fertilizer, harvesting, or farm management."
@@ -660,7 +675,7 @@ class InteractionSupervisor:
             return await self._finalize_response(
                 user_prompt=user_prompt,
                 draft_reply=draft_reply,
-                context=validation_context_base,
+                context=agriculture_context,
                 validate=False,
             )
 
@@ -887,8 +902,9 @@ class InteractionSupervisor:
         weather_snapshot = state.get("weather_snapshot") or {}
         inventory_summary = state.get("inventory_summary") or {}
         dashboard_summary = state.get("dashboard_summary")
+        has_recent_scan = bool(recent_scan.get("has_reports"))
 
-        if intents & {"diagnosis"} and not self._references_existing_scan_context(user_prompt):
+        if intents & {"diagnosis"} and not has_recent_scan and not self._references_existing_scan_context(user_prompt):
             return self._clarifying_question(intents=intents)
 
         if intents == {"location"}:
