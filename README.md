@@ -79,7 +79,7 @@ Once a scan identifies a likely disease and treatment path, the Firebase Genkit 
 - **Spatial Propagation Agent:** estimates how far the disease could spread, which neighboring zones are at risk, and where monitoring or containment should happen next
 - **Yield Forecast Agent:** translates the disease severity and treatment context into expected yield impact, helping the farmer understand the cost of delay in production terms, not just disease terms
 
-This is persuasive because it mirrors real farm operations. A farmer does not only ask, "What disease is this?" The real questions are:
+A farmer does not only ask, "What disease is this?" The real questions are:
 
 - Can I spray today?
 - Will the treatment pay back its cost?
@@ -97,7 +97,7 @@ This is impactful for three reasons:
 - **It improves actionability.** The output is directly closer to execution: spray now or delay, buy stock or use existing stock, monitor adjacent zones, expect this level of yield impact.
 - **It raises real-world usefulness.** Many agriculture apps stop at information. AcreZen pushes into autonomous decision support, which is far more valuable for smallholders operating under time, budget, and weather pressure.
 
-From a judging perspective, this shows strong AI integration depth because AI is used as the system's operational brain, not as a decorative chat layer. It also demonstrates technical complexity because the project coordinates multiple reasoning paths, mixes deterministic and model-driven logic, and produces a single actionable recommendation from several moving inputs. Most importantly, it demonstrates clear national relevance: better decisions at the field level can mean lower crop loss, better input efficiency, and stronger padi resilience at scale.
+This project shows strong AI integration depth because AI is used as the system's operational brain, not as a decorative chat layer. It also demonstrates technical complexity because the project coordinates multiple reasoning paths, mixes deterministic and model-driven logic, and produces a single actionable recommendation from several moving inputs. Most importantly, it demonstrates clear national relevance: better decisions at the field level can mean lower crop loss, better input efficiency, and stronger padi resilience at scale.
 
 ## Agentic Workflow
 
