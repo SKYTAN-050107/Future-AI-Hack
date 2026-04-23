@@ -52,6 +52,9 @@ firebase-adminsdk*.json
 .firebaserc.local
 .runtimeconfig.json
 
+# Local Google Cloud CLI state
+.gcloud/
+
 # ── Python Backend Service ──────────────────────
 backend/.venv/
 backend/diagnosis/.venv/

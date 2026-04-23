@@ -192,6 +192,18 @@ class RegionDetectionService:
                     continue
                 raise
 
+    async def _generate_content_async(
+        self,
+        *,
+        contents: list[types.Part],
+        config: types.GenerateContentConfig,
+    ):
+        return await asyncio.to_thread(
+            self._generate_content_with_model_fallback,
+            contents=contents,
+            config=config,
+        )
+
     async def detect_regions(self, base64_image: str) -> list[HttpScanRegion]:
         """Detect one primary crop region from a single base64-encoded image.
 
@@ -255,7 +267,7 @@ class RegionDetectionService:
 
         for attempt in range(1, MAX_RETRIES + 1):
             try:
-                response = self._generate_content_with_model_fallback(
+                response = await self._generate_content_async(
                     contents=[
                         types.Part(
                             inline_data=types.Blob(

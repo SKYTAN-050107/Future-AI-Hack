@@ -12,8 +12,12 @@ function normalizeBase64Image(value) {
 }
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30000
-const DIAGNOSIS_API_BASE_URL = String(import.meta.env.VITE_DIAGNOSIS_API_BASE_URL || '').trim().replace(/\/+$/, '')
-const SWARM_API_BASE_URL = String(import.meta.env.VITE_SWARM_API_BASE_URL || '').trim().replace(/\/+$/, '')
+const DIAGNOSIS_API_BASE_URL = String(
+  import.meta.env.VITE_DIAGNOSIS_API_BASE_URL || import.meta.env.VITE_DIAGNOSIS_API_URL || '',
+).trim().replace(/\/+$/, '')
+const SWARM_API_BASE_URL = String(
+  import.meta.env.VITE_SWARM_API_BASE_URL || import.meta.env.VITE_SWARM_API_URL || '',
+).trim().replace(/\/+$/, '')
 const SWARM_ROUTE_PREFIXES = ['/swarm-api', '/api']
 
 function resolveRequestUrl(path) {
@@ -27,7 +31,7 @@ function resolveRequestUrl(path) {
       : '/api'
 
     if (!SWARM_API_BASE_URL) {
-      return path
+      return import.meta.env.DEV ? path : normalizedPath
     }
 
     const suffix = /\/api$/i.test(SWARM_API_BASE_URL) && normalizedPath.startsWith('/api/')

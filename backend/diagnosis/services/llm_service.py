@@ -1264,6 +1264,18 @@ class LLMService:
                     continue
                 raise
 
+    async def _generate_content_async(
+        self,
+        *,
+        contents: Any,
+        config: types.GenerateContentConfig,
+    ):
+        return await asyncio.to_thread(
+            self._generate_content_with_model_fallback,
+            contents=contents,
+            config=config,
+        )
+
     # ── Public API ────────────────────────────────────────────────────
 
     async def validate_candidates(
@@ -1304,7 +1316,7 @@ class LLMService:
 
         for attempt in range(1, MAX_RETRIES + 1):
             try:
-                response = self._generate_content_with_model_fallback(
+                response = await self._generate_content_async(
                     contents=user_prompt,
                     config=types.GenerateContentConfig(
                         system_instruction=SYSTEM_PROMPT,
@@ -1376,7 +1388,7 @@ class LLMService:
 
         for attempt in range(1, ASSISTANT_DIALOGUE_MAX_RETRIES + 1):
             try:
-                response = self._generate_content_with_model_fallback(
+                response = await self._generate_content_async(
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         system_instruction=_build_assistant_system_prompt(language),
@@ -1439,7 +1451,7 @@ class LLMService:
 
         for attempt in range(1, ASSISTANT_DIALOGUE_MAX_RETRIES + 1):
             try:
-                response = self._generate_content_with_model_fallback(
+                response = await self._generate_content_async(
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         system_instruction=_build_assistant_system_prompt(language),
@@ -1506,7 +1518,7 @@ class LLMService:
 
         for attempt in range(1, MAX_RETRIES + 1):
             try:
-                response = self._generate_content_with_model_fallback(
+                response = await self._generate_content_async(
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         temperature=0.2,
@@ -1560,7 +1572,7 @@ class LLMService:
 
         for attempt in range(1, MAX_RETRIES + 1):
             try:
-                response = self._generate_content_with_model_fallback(
+                response = await self._generate_content_async(
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         temperature=0.2,
@@ -1616,7 +1628,7 @@ class LLMService:
 
         for attempt in range(1, ASSISTANT_DIALOGUE_MAX_RETRIES + 1):
             try:
-                response = self._generate_content_with_model_fallback(
+                response = await self._generate_content_async(
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         system_instruction=_build_low_confidence_system_prompt(language),
@@ -1687,7 +1699,7 @@ class LLMService:
 
         for attempt in range(1, MAX_RETRIES + 1):
             try:
-                response = self._generate_content_with_model_fallback(
+                response = await self._generate_content_async(
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         system_instruction=_build_supervisor_system_prompt(language),
@@ -1733,7 +1745,7 @@ class LLMService:
 
         for attempt in range(1, 3):
             try:
-                response = self._generate_content_with_model_fallback(
+                response = await self._generate_content_async(
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         system_instruction=_build_supervisor_system_prompt(language),
@@ -1825,7 +1837,7 @@ class LLMService:
 
         for attempt in range(1, MAX_RETRIES + 1):
             try:
-                response = self._generate_content_with_model_fallback(
+                response = await self._generate_content_async(
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         system_instruction=(
@@ -1901,7 +1913,7 @@ class LLMService:
 
         for attempt in range(1, MAX_RETRIES + 1):
             try:
-                response = self._generate_content_with_model_fallback(
+                response = await self._generate_content_async(
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         system_instruction=REPLY_VALIDATION_SYSTEM_PROMPT,
@@ -1989,7 +2001,7 @@ class LLMService:
 
         for attempt in range(1, MAX_RETRIES + 1):
             try:
-                response = self._generate_content_with_model_fallback(
+                response = await self._generate_content_async(
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         system_instruction=system_instruction,
@@ -2056,7 +2068,7 @@ class LLMService:
 
         for attempt in range(1, MAX_RETRIES + 1):
             try:
-                response = self._generate_content_with_model_fallback(
+                response = await self._generate_content_async(
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         system_instruction=system_instruction,

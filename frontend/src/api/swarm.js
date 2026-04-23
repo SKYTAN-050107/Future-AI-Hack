@@ -1,6 +1,8 @@
 let cachedSwarmActionKey = null
 let cachedSwarmRoutePrefix = null
-const SWARM_API_BASE_URL = String(import.meta.env.VITE_SWARM_API_BASE_URL || '').trim().replace(/\/+$/, '')
+const SWARM_API_BASE_URL = String(
+  import.meta.env.VITE_SWARM_API_BASE_URL || import.meta.env.VITE_SWARM_API_URL || '',
+).trim().replace(/\/+$/, '')
 const SWARM_ROUTE_PREFIXES = ['/swarm-api', '/api']
 
 function preferredSwarmRoutePrefixes() {
@@ -25,6 +27,10 @@ function resolveSwarmUrl(path) {
     : path
 
   if (!SWARM_API_BASE_URL) {
+    if (import.meta.env.DEV) {
+      return path
+    }
+
     return normalizedPath
   }
 
