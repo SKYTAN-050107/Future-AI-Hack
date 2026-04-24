@@ -1276,6 +1276,58 @@ class LLMService:
             config=config,
         )
 
+    async def generate_with_tools(
+        self,
+        *,
+        contents: list[types.Content],
+        tools: list[types.Tool],
+        system_instruction: str,
+        temperature: float = 0.3,
+        max_output_tokens: int = 900,
+        disable_tools: bool = False,
+    ):
+        """Invoke Gemini with function-calling tools and return the raw response.
+
+        Caller is expected to walk ``response.candidates[0].content.parts`` and
+        look for ``function_call`` parts to dispatch, or ``text`` parts for the
+        final reply.  Set ``disable_tools=True`` on the final iteration to force
+        Gemini to produce text only.
+
+        Includes retry with exponential backoff for rate-limit / quota errors.
+        """
+        config_kwargs: dict[str, Any] = {
+            "system_instruction": system_instruction,
+            "temperature": temperature,
+            "max_output_tokens": max_output_tokens,
+        }
+        if not disable_tools and tools:
+            config_kwargs["tools"] = tools
+
+        config = types.GenerateContentConfig(**config_kwargs)
+
+        max_retries = 2
+        base_delay = 1.0
+        last_exc: Exception | None = None
+
+        for attempt in range(max_retries + 1):
+            try:
+                return await self._generate_content_async(contents=contents, config=config)
+            except Exception as exc:
+                exc_str = str(exc).lower()
+                is_retryable = any(
+                    keyword in exc_str
+                    for keyword in ("429", "503", "quota", "rate", "resource_exhausted", "resourceexhausted")
+                )
+                if not is_retryable or attempt >= max_retries:
+                    raise
+                last_exc = exc
+                delay = base_delay * (2 ** attempt)
+                logger.warning(
+                    "generate_with_tools rate-limited (attempt %d/%d), retrying in %.1fs: %s",
+                    attempt + 1, max_retries + 1, delay, exc,
+                )
+                await asyncio.sleep(delay)
+
     # ── Public API ────────────────────────────────────────────────────
 
     async def validate_candidates(

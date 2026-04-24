@@ -10,6 +10,7 @@ from typing import Any, Awaitable, Callable
 
 from config import get_settings
 from agents.agriculture_advice_agent import AgricultureAdviceAgent
+from agents.chat_tool_agent import ChatToolAgent, ChatToolAgentError
 from orchestration.assistant_pipeline import AssistantPipeline
 from agents.response_validation_agent import ResponseValidationAgent
 from services.crop_service import CropService
@@ -18,6 +19,8 @@ from services.firebase_admin_service import get_firestore_client
 from services.firestore_service import FirestoreService
 from services.inventory_service import InventoryService
 from services.llm_service import LLMService, _reply_looks_truncated, build_farmer_fallback_dialogue, detect_farmer_language
+from services.swarm_client import SwarmClient
+from services.treatment_service import TreatmentService
 from services.weather_service import WeatherService
 
 logger = logging.getLogger(__name__)
@@ -63,6 +66,15 @@ class InteractionSupervisor:
 
         self._firestore_client: Any | None = None
         self._firestore_error: str | None = None
+
+        self._treatment_service: TreatmentService | None = None
+        self._treatment_service_error: str | None = None
+
+        self._swarm_client: SwarmClient | None = None
+        self._swarm_client_error: str | None = None
+
+        self._chat_tool_agent: ChatToolAgent | None = None
+        self._chat_tool_agent_error: str | None = None
 
     def _get_low_confidence_threshold(self) -> float:
         settings = get_settings()
@@ -282,6 +294,70 @@ class InteractionSupervisor:
             return None
 
         return self._firestore_client
+
+    def _get_treatment_service(self) -> TreatmentService | None:
+        if self._treatment_service is not None:
+            return self._treatment_service
+        if self._treatment_service_error is not None:
+            return None
+
+        try:
+            self._treatment_service = TreatmentService()
+        except Exception as exc:
+            self._treatment_service_error = str(exc)
+            logger.warning("TreatmentService unavailable for supervisor replies: %s", exc)
+            return None
+
+        return self._treatment_service
+
+    def _get_swarm_client(self) -> SwarmClient | None:
+        if self._swarm_client is not None:
+            return self._swarm_client
+        if self._swarm_client_error is not None:
+            return None
+
+        try:
+            self._swarm_client = SwarmClient()
+        except Exception as exc:
+            self._swarm_client_error = str(exc)
+            logger.warning("SwarmClient unavailable for supervisor replies: %s", exc)
+            return None
+
+        return self._swarm_client
+
+    def _get_chat_tool_agent(self) -> ChatToolAgent | None:
+        if self._chat_tool_agent is not None:
+            return self._chat_tool_agent
+        if self._chat_tool_agent_error is not None:
+            return None
+
+        llm = self._get_llm_service()
+        crop = self._get_crop_service()
+        inventory = self._get_inventory_service()
+        if llm is None or crop is None or inventory is None:
+            self._chat_tool_agent_error = "core services unavailable"
+            return None
+
+        async def _load_scan_reports(user_id: str, zone: str | None) -> list[dict[str, Any]]:
+            return await asyncio.to_thread(self._load_reports_sync, user_id, zone)
+
+        try:
+            self._chat_tool_agent = ChatToolAgent(
+                llm_service=llm,
+                crop_service=crop,
+                inventory_service=inventory,
+                weather_service=self._get_weather_service(),
+                treatment_service=self._get_treatment_service(),
+                firestore_service=self._get_diagnosis_firestore_service(),
+                swarm_client=self._get_swarm_client(),
+                load_scan_reports=_load_scan_reports,
+            )
+        except Exception as exc:
+            self._chat_tool_agent_error = str(exc)
+            logger.warning("ChatToolAgent init failed: %s", exc)
+            return None
+
+        return self._chat_tool_agent
 
     @staticmethod
     def _normalize_confidence(value: Any) -> int | None:
@@ -849,6 +925,39 @@ class InteractionSupervisor:
                 validate=False,
             )
 
+        # ── Tool-use agent path ──────────────────────────────────────────
+        # Try the Gemini function-calling agent first. On any failure or when
+        # disabled, fall through to the legacy keyword-intent task graph.
+        settings = get_settings()
+        if settings.ASSISTANT_TOOL_USE_ENABLED:
+            agent = self._get_chat_tool_agent()
+            if agent is not None:
+                try:
+                    tool_reply = await agent.run(
+                        effective_user_prompt=effective_user_prompt,
+                        user_id=user_id,
+                        zone=zone,
+                        lat=lat,
+                        lng=lng,
+                        location=location,
+                        recent_messages=normalized_recent_messages,
+                    )
+                    if tool_reply:
+                        return await self._finalize_response(
+                            user_prompt=effective_user_prompt,
+                            draft_reply=tool_reply,
+                            context=validation_context_base,
+                        )
+                except ChatToolAgentError as exc:
+                    logger.warning(
+                        "ChatToolAgent failed, falling back to task-graph: %s", exc,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "ChatToolAgent unexpected error, falling back to task-graph: %s", exc,
+                    )
+
+        # ── Legacy keyword-intent task-graph (fallback) ──────────────────
         nodes: list[TaskNode] = []
 
         needs_inventory = bool(intents & {"resource"})

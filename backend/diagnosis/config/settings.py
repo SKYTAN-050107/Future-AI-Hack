@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     ASSISTANT_SCAN_ENABLE_LLM_PHOTO_REPLY: bool = False
     ASSISTANT_SCAN_ENABLE_PHOTO_REPLY_VALIDATION: bool = False
 
+    # ── Assistant Chat Tool-Use ────────────────────────────────────────
+    ASSISTANT_TOOL_USE_ENABLED: bool = True
+    ASSISTANT_TOOL_USE_MAX_ITERATIONS: int = 4
+    SWARM_API_BASE_URL: str = ""
+
     # ── External Crop Intelligence APIs ───────────────────────────────
     TOMORROW_IO_API_KEY: str = ""
     TOMORROW_IO_BASE_URL: str = "https://api.tomorrow.io/v4/weather/forecast"
