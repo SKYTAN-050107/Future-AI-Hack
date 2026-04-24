@@ -277,7 +277,15 @@ class TreatmentService:
         channel = self._normalize_channel(selling_channel)
         market = self._normalize_market(market_condition)
 
-        retail_price = await self._fetch_market_price(crop_type)
+        try:
+            retail_price = await self._fetch_market_price(crop_type)
+        except Exception as exc:
+            logger.warning(
+                "Market price lookup failed for crop_type=%s in legacy plan; using fallback price: %s",
+                crop_type,
+                exc,
+            )
+            retail_price = self._fallback_retail_price(crop_type)
         estimated_cost = await self._resolve_treatment_cost(
             user_id=user_id,
             treatment_plan=treatment_plan,

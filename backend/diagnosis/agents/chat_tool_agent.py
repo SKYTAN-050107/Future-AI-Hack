@@ -41,6 +41,9 @@ logger = logging.getLogger(__name__)
 _TOOL_DISPATCH_MAX_RETRIES = 2
 _TOOL_DISPATCH_BASE_DELAY_S = 0.5
 
+# Errors worth retrying (transient network / infra issues).
+_RETRYABLE_ERRORS = (ConnectionError, TimeoutError, OSError)
+
 
 class ChatToolAgentError(RuntimeError):
     """Raised when the tool-use loop cannot produce a reply; caller should fall back."""
@@ -166,6 +169,16 @@ def _build_tool_declarations() -> list[types.Tool]:
                         },
                         required=["pest_name"],
                     ),
+                ),
+                types.FunctionDeclaration(
+                    name="get_farm_zones",
+                    description=(
+                        "List all farm zones (grids) registered for this farmer, including "
+                        "zone name/ID, area in hectares, health status, and last detected disease. "
+                        "Call when the farmer asks to list zones, see all their grids, or check "
+                        "zone-level health overview."
+                    ),
+                    parameters=types.Schema(type=types.Type.OBJECT, properties={}),
                 ),
             ]
         )
@@ -508,7 +521,13 @@ class ChatToolAgent:
         args: dict[str, Any],
         ctx: dict[str, Any],
     ) -> dict[str, Any]:
-        """Dispatch a tool call with retry + exponential backoff on failure."""
+        """Dispatch a tool call with retry + exponential backoff on transient failure.
+
+        Only transient network errors (ConnectionError, TimeoutError, OSError)
+        are retried.  Data errors (ValueError, RuntimeError from missing market
+        data, etc.) are returned immediately as error dicts so the LLM can
+        synthesize a meaningful reply without wasting retry budget.
+        """
         last_exc: Exception | None = None
         for attempt in range(_TOOL_DISPATCH_MAX_RETRIES + 1):
             t0 = time.monotonic()
@@ -520,13 +539,13 @@ class ChatToolAgent:
                     name, attempt + 1, elapsed_ms,
                 )
                 return result
-            except Exception as exc:
+            except _RETRYABLE_ERRORS as exc:
                 elapsed_ms = (time.monotonic() - t0) * 1000
                 last_exc = exc
                 if attempt < _TOOL_DISPATCH_MAX_RETRIES:
                     delay = _TOOL_DISPATCH_BASE_DELAY_S * (2 ** attempt)
                     logger.warning(
-                        "Tool %s failed (attempt %d, %.0fms), retrying in %.1fs: %s",
+                        "Tool %s transient failure (attempt %d, %.0fms), retrying in %.1fs: %s",
                         name, attempt + 1, elapsed_ms, delay, exc,
                     )
                     await asyncio.sleep(delay)
@@ -535,6 +554,14 @@ class ChatToolAgent:
                         "Tool %s failed after %d attempts (%.0fms): %s",
                         name, attempt + 1, elapsed_ms, exc,
                     )
+            except Exception as exc:
+                # Non-transient error (data error, ValueError, etc.) — don't retry.
+                elapsed_ms = (time.monotonic() - t0) * 1000
+                logger.warning(
+                    "Tool %s data error (%.0fms, no retry): %s",
+                    name, elapsed_ms, exc,
+                )
+                return {"error": f"{name} failed: {exc}"}
 
         return {"error": f"{name} failed after retries: {last_exc}"}
 
@@ -559,6 +586,8 @@ class ChatToolAgent:
             return await self._tool_run_swarm_advisory(ctx)
         if name == "get_pesticide_catalog":
             return await self._tool_get_pesticide_catalog(args)
+        if name == "get_farm_zones":
+            return await self._tool_get_farm_zones(ctx)
         return {"error": f"Unknown tool: {name}"}
 
     async def _tool_get_scan_history(
@@ -797,6 +826,46 @@ class ChatToolAgent:
             "recommendedPesticides": list(data.get("recommendedPesticides") or []),
             "recommendationSource": data.get("recommendationSource"),
         }
+
+    async def _tool_get_farm_zones(self, ctx: dict[str, Any]) -> dict[str, Any]:
+        """List all farm zones/grids registered for the user from Firestore."""
+        db = self._firestore_client
+        if db is None:
+            return {"error": "Firestore unavailable — cannot list zones"}
+
+        user_id = ctx.get("user_id") or ""
+        if not user_id:
+            return {"error": "user_id is required to list zones"}
+
+        try:
+            from config import get_settings
+
+            settings = get_settings()
+            grid_col = settings.FIRESTORE_GRID_COLLECTION
+
+            collection = db.collection("users").document(user_id).collection(grid_col)
+            docs = await asyncio.to_thread(lambda: list(collection.stream()))
+
+            zones: list[dict[str, Any]] = []
+            for doc in docs:
+                data = doc.to_dict() or {}
+                zones.append({
+                    "zone_id": doc.id,
+                    "name": data.get("name") or data.get("gridId") or doc.id,
+                    "area_hectares": data.get("areaHectares"),
+                    "health_status": data.get("healthStatus") or data.get("healthState") or "Healthy",
+                    "last_disease": data.get("lastDetectedDisease"),
+                    "last_severity": data.get("lastSeverity"),
+                    "crop_type": data.get("cropType"),
+                })
+
+            return {
+                "total_zones": len(zones),
+                "zones": zones,
+            }
+        except Exception as exc:
+            logger.warning("Failed to list farm zones: %s", exc)
+            return {"error": f"Zone listing failed: {exc}"}
 
 
 # ── Response parsing helpers ──────────────────────────────────────────────

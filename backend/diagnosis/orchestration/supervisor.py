@@ -611,6 +611,29 @@ class InteractionSupervisor:
         if not text:
             return None
 
+        # If the user is asking about stock / quantity, this is an inventory
+        # question, not a pesticide-catalog lookup.  Skip early so the
+        # tool-use agent can route to get_inventory instead.
+        text_lower = text.lower()
+        if any(
+            phrase in text_lower
+            for phrase in (
+                "enough",
+                "do i have",
+                "have enough",
+                "how much",
+                "how many",
+                "ada",
+                "cukup",
+                "berapa",
+                "remaining",
+                "left",
+                "in stock",
+                "stock level",
+            )
+        ):
+            return None
+
         patterns = [
             r"\b(?:pesticides?|insecticides?|fungicides?|herbicides?|chemical(?:s)?|racun(?:\s+serangga)?)\s+(?:for|against|untuk|bagi)\s+(.+)$",
             r"\b(?:suggest|recommend|give|what(?:'s|\s+is|\s+are)?)\s+(?:me\s+)?(?:pesticides?|insecticides?|fungicides?|herbicides?|chemical(?:s)?|racun(?:\s+serangga)?)\s+(?:for|against|untuk|bagi)\s+(.+)$",
@@ -943,10 +966,16 @@ class InteractionSupervisor:
                         recent_messages=normalized_recent_messages,
                     )
                     if tool_reply:
+                        # The tool agent's own system prompt enforces the
+                        # Finding/Actions/Treatment/Recheck format.  Skip
+                        # the heavyweight validation→rewrite→retry loop to
+                        # avoid 10-20s of redundant Gemini calls that cause
+                        # 45-second frontend timeouts.
                         return await self._finalize_response(
                             user_prompt=effective_user_prompt,
                             draft_reply=tool_reply,
                             context=validation_context_base,
+                            validate=False,
                         )
                 except ChatToolAgentError as exc:
                     logger.warning(
