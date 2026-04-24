@@ -292,7 +292,7 @@ function WeatherCardSkeleton() {
       </div>
       <SkeletonLine className="is-wide" />
       <div style={{ marginTop: 8 }}>
-        <small style={{ opacity: 0.85, display: 'block', marginBottom: 6 }}>Next 6h</small>
+        <small style={{ opacity: 0.85, display: 'block', marginBottom: 6 }}>Daily Forecast</small>
         <div
           style={{
             display: 'grid',
@@ -720,17 +720,42 @@ export default function Dashboard() {
   const weatherServiceWarning = String(weatherSnapshot.serviceWarning || '').trim()
   const hasFinancialData = !!(savedFinancialSummary || summary?.financialSummary)
 
-  const hourlyForecast6h = useMemo(() => {
-    const firstDay = Array.isArray(weatherSnapshot?.forecast)
-      ? weatherSnapshot.forecast[0]
-      : null
+  // Tick every 5 minutes so the "Next 6h" widget stays current.
+  const [currentTime, setCurrentTime] = useState(() => Date.now())
+  useEffect(() => {
+    const id = setInterval(() => setCurrentTime(Date.now()), 5 * 60 * 1000)
+    return () => clearInterval(id)
+  }, [])
 
-    const hourly = Array.isArray(firstDay?.hourly)
-      ? firstDay.hourly
+  const hourlyForecast6h = useMemo(() => {
+    const forecastDays = Array.isArray(weatherSnapshot?.forecast)
+      ? weatherSnapshot.forecast
       : []
 
-    return hourly.slice(0, 6)
-  }, [weatherSnapshot])
+    // Collect all hourly entries across all forecast days.
+    const allHourly = []
+    for (const day of forecastDays) {
+      if (Array.isArray(day?.hourly)) {
+        allHourly.push(...day.hourly)
+      }
+    }
+
+    if (allHourly.length === 0) return []
+
+    // If time_iso is available, filter to future hours only.
+    const hasTimeIso = allHourly.some((slot) => !!slot?.time_iso)
+    if (hasTimeIso) {
+      const nowMs = currentTime
+      const futureHours = allHourly.filter((slot) => {
+        if (!slot?.time_iso) return false
+        return new Date(slot.time_iso).getTime() >= nowMs
+      })
+      return futureHours.slice(0, 6)
+    }
+
+    // Fallback: no time_iso yet (stale cache), show first 6.
+    return allHourly.slice(0, 6)
+  }, [weatherSnapshot, currentTime])
 
   // Derived weather values – safe to compute even when data is absent
   const rainInHours = safeNumber(weatherSnapshot.rainInHours, -1)
@@ -793,7 +818,7 @@ export default function Dashboard() {
               ) : null}
 
               <div style={{ marginTop: 8 }}>
-                <small style={{ opacity: 0.85, display: 'block', marginBottom: 6 }}>Next 6h</small>
+                <small style={{ opacity: 0.85, display: 'block', marginBottom: 6 }}>Daily Forecast</small>
                 {isWeatherLoading ? (
                   <small>Loading 6-hour forecast...</small>
                 ) : weatherError ? (

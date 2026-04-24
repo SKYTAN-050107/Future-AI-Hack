@@ -526,6 +526,7 @@ class WeatherService:
 
             entries.append({
                 "time": stamp.strftime("%I:%M %p").lstrip("0"),
+                "time_iso": stamp.isoformat(),
                 "temperature_c": int(round(float(values.get("temperature", 0.0)))),
                 "rain_chance": max(0, min(100, prob)),
                 "wind_kmh": wind_kmh,

@@ -101,22 +101,53 @@ This project shows strong AI integration depth because AI is used as the system'
 
 ## Agentic Workflow
 
+AcreZen has two AI-driven entry points that converge into a shared multi-agent backend:
+
+1. **Scan Pipeline** — Photo diagnosis through Vertex AI multimodal embedding → Vector Search → ADK reasoning agents → Firestore persistence
+2. **Chat Assistant** — Gemini function-calling loop with 8 real-data tools, with automatic fallback to the legacy intent router
+
+Both paths can trigger the **Genkit Swarm Orchestrator**, which runs 5 specialist agents in parallel.
+
 ```mermaid
-flowchart LR
+flowchart TB
     A[Farmer scans crop or opens assistant] --> B[React PWA]
-    B --> C[Diagnosis Service on Cloud Run]
-    C --> D[Vertex AI Multimodal Embedding]
-    D --> E[Vertex AI Vector Search]
-    E --> F[Gemini reasoning via Google ADK]
-    F --> G[Diagnosis + treatment context]
+
+    B --> C1[Scan Pipeline]
+    B --> C2[Chat Assistant]
+
+    subgraph Scan["Scan Pipeline — Image Diagnosis"]
+      C1 --> D[Vertex AI Multimodal Embedding]
+      D --> E[Vertex AI Vector Search]
+      E --> F[ADK Reasoning Agent — Gemini]
+      F --> G[Diagnosis + Treatment Context]
+    end
+
+    subgraph Chat["Chat Assistant — Gemini Function-Calling"]
+      C2 --> T[ChatToolAgent — Gemini Tool-Use Loop]
+      T --> T1[get_scan_history]
+      T --> T2[get_inventory]
+      T --> T3[get_weather_outlook]
+      T --> T4[get_crop_profiles]
+      T --> T5[get_treatment_plan]
+      T --> T6[get_pesticide_catalog]
+      T --> T7[get_farm_zones]
+      T --> T8[run_swarm_advisory]
+    end
+
     G --> H[Genkit Swarm Orchestrator]
-    H --> H1[Meteorologist Agent]
-    H --> H2[Economist Agent]
-    H --> H3[Resource Manager Agent]
-    H --> H4[Spatial Propagation Agent]
-    H --> H5[Yield Forecast Agent]
-    H --> I[Farmer-facing report and next actions]
-    I --> J[Firestore, Storage, Cloud Functions]
+    T8 --> H
+
+    subgraph Swarm["Parallel Agent Execution"]
+      H --> H1[Meteorologist Agent]
+      H --> H2[Resource Manager Agent]
+      H1 & H2 --> H3[Spatial Propagation Agent]
+      H1 & H2 --> H4[Yield Forecast Agent]
+      H3 & H4 --> H5[Economist Agent]
+    end
+
+    H5 --> S[Chatbot Synthesizer — Gemini]
+    S --> I[Farmer-facing report and next actions]
+    I --> J[Firestore · Storage · Cloud Functions]
 ```
 
 ## Architecture Overview
@@ -354,13 +385,15 @@ This project includes **AI-assisted development**.AI coding tools were used to a
 
 Implemented in this repo:
 
-- Farmer mobile/web app
-- Real-time diagnosis backend
-- Assistant chat flow
-- Multi-agent swarm orchestration
-- Weather, ROI, inventory, and yield workflows
-- Firestore-backed map and report persistence
-- Cloud Run/Firebase deployment wiring
+- Farmer mobile/web app (React PWA with offline persistence)
+- Real-time diagnosis backend (Vertex AI Embedding → Vector Search → ADK Reasoning → Gemini)
+- Gemini tool-use chat assistant with 8 function tools (scan history, inventory, weather, crops, treatment ROI, pesticide catalog, farm zones, swarm advisory)
+- Resilient tool dispatch with smart retry (transient-only backoff) and graceful fallback chain
+- Multi-agent swarm orchestration (Meteorologist, Economist, Resource Manager, Spatial Propagation, Yield Forecast)
+- Weather intelligence with timezone-aware hourly forecast and spray-safety advisory
+- Treatment ROI engine with live market pricing via ManaMurah MCP and fallback price tables
+- Firestore-backed map, grid health, and scan report persistence
+- Cloud Run / Firebase deployment wiring
 
 Planned next extensions:
 
