@@ -501,15 +501,22 @@ class WeatherService:
         return results
 
     def _hourly_for_day(self, day_iso: str, hourly: list[dict]) -> list[dict]:
-        """Extract hourly weather entries that belong to the given day."""
-        target_date = self._parse_iso_datetime(day_iso)
-        if target_date is None:
+        """Extract hourly weather entries that belong to the given day.
+
+        Uses a 24-hour window from the daily entry's start time instead of
+        naive ``.date()`` comparison, because Tomorrow.io returns UTC timestamps
+        and a single local day (e.g. UTC+8) can span two UTC calendar dates.
+        """
+        target_start = self._parse_iso_datetime(day_iso)
+        if target_start is None:
             return []
+
+        target_end = target_start + timedelta(hours=24)
 
         entries: list[dict] = []
         for entry in hourly:
             stamp = self._parse_iso_datetime(str((entry or {}).get("time") or ""))
-            if stamp is None or stamp.date() != target_date.date():
+            if stamp is None or stamp < target_start or stamp >= target_end:
                 continue
             values = (entry or {}).get("values") or {}
             prob = int(round(float(values.get("precipitationProbability", 0.0))))
