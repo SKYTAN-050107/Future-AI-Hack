@@ -2301,7 +2301,14 @@ select.pg-select option {
 
 
 .pg-zone-card {
+  /*
+   * Square aspect ratio is a visual target, not a hard cap.
+   * `height: auto` lets the AI review wrap to additional lines
+   * when the LLM response (or fallback) is longer than one line
+   * instead of clipping out of view on narrower viewports.
+   */
   aspect-ratio: 1 / 1;
+  height: auto;
 }
 
 .pg-zone-area {

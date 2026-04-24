@@ -2,11 +2,11 @@
   <img src="frontend/public/readme-icon.png" alt="AcreZen app icon" width="180">
 </p>
 
-# AcreZen / PadiGuard AI
+# AcreZen 
 
-An offline-friendly AI field assistant for Malaysian padi farmers that moves from chat to action: detect crop disease from a photo, ground the result with retrieval, and trigger a multi-agent workflow for spray timing, ROI, spread risk, stock checks, and yield planning.
+An offline-friendly AI field assistant for Malaysian farmers that moves from chat to action: detect crop disease from a photo, ground the result with retrieval, and trigger a multi-agent workflow for spray timing, ROI, spread risk, stock checks, and yield planning.
 
-The farmer-facing app is branded as **AcreZen**. The backend services and deployment targets in this repo are named **PadiGuard AI**.
+The farmer-facing app is branded as **AcreZen**. 
 
 ## Why This Matters
 
@@ -14,7 +14,7 @@ Malaysia still depends heavily on food imports, while many smallholder farmers l
 
 AcreZen focuses on one of the country's highest-impact food security problems:
 
-- Late detection of padi disease and pest outbreaks
+- Late detection of crops disease and pest outbreaks
 - Poor visibility into zone-level farm risk
 - Inefficient spray timing due to weather uncertainty
 - Low confidence in treatment spending and ROI
@@ -32,7 +32,7 @@ Instead of stopping at a chatbot answer, AcreZen turns one scan into an autonomo
 
 ## Problem
 
-Smallholder padi farmers often know there is a problem only after yield damage is already visible. Even when disease is detected, the next steps are fragmented:
+Smallholder farmers often know there is a problem only after yield damage is already visible. Even when disease is detected, the next steps are fragmented:
 
 - One tool identifies the disease
 - Another app gives weather
@@ -44,7 +44,7 @@ That fragmentation causes wasted chemicals, mistimed spraying, lower yields, and
 
 ## Solution
 
-AcreZen is an AI decision layer for padi operations.
+AcreZen is an AI decision layer for crops operations.
 
 Farmers scan a leaf, assign the issue to a mapped farm zone, and receive a grounded diagnosis. That diagnosis can then trigger a multi-step agent workflow that answers:
 
@@ -97,7 +97,7 @@ This is impactful for three reasons:
 - **It improves actionability.** The output is directly closer to execution: spray now or delay, buy stock or use existing stock, monitor adjacent zones, expect this level of yield impact.
 - **It raises real-world usefulness.** Many agriculture apps stop at information. AcreZen pushes into autonomous decision support, which is far more valuable for smallholders operating under time, budget, and weather pressure.
 
-This project shows strong AI integration depth because AI is used as the system's operational brain, not as a decorative chat layer. It also demonstrates technical complexity because the project coordinates multiple reasoning paths, mixes deterministic and model-driven logic, and produces a single actionable recommendation from several moving inputs. Most importantly, it demonstrates clear national relevance: better decisions at the field level can mean lower crop loss, better input efficiency, and stronger padi resilience at scale.
+This project shows strong AI integration depth because AI is used as the system's operational brain, not as a decorative chat layer. It also demonstrates technical complexity because the project coordinates multiple reasoning paths, mixes deterministic and model-driven logic, and produces a single actionable recommendation from several moving inputs. Most importantly, it demonstrates clear national relevance: better decisions at the field level can mean lower crop loss, better input efficiency, and stronger crops resilience at scale.
 
 ## Agentic Workflow
 
@@ -333,7 +333,7 @@ The production routing in this repo is already structured for:
 
 ### National relevance
 
-- Supports Malaysia's food security agenda through stronger padi productivity
+- Supports Malaysia's food security agenda through stronger crops productivity
 - Helps smallholders become more resilient to climate, disease, and supply volatility
 - Encourages local AI creation around agriculture, not just AI consumption
 
@@ -349,7 +349,7 @@ AcreZen is designed as a practical agri-intelligence platform, not just a hackat
 
 ### Target customers
 
-- Small and mid-sized padi farmers
+- Small and mid-sized crops farmers
 - Farmer cooperatives
 - Agro-input distributors
 - Government and NGO agricultural extension programs
@@ -366,7 +366,7 @@ AcreZen is designed as a practical agri-intelligence platform, not just a hackat
 
 - Cloud Run architecture supports multi-tenant deployment
 - Agent workflows let new services be added without rebuilding the product from scratch
-- The same foundation can expand from padi to other Malaysian crops
+- The same foundation can be enhanced by obtaining more Malaysian crops data for more accurate scanning results
 
 ## AI-Generated Code Disclosure
 

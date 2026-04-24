@@ -19,6 +19,7 @@ from services.firebase_admin_service import get_firestore_client
 from services.firestore_service import FirestoreService
 from services.inventory_service import InventoryService
 from services.llm_service import LLMService, _reply_looks_truncated, build_farmer_fallback_dialogue, detect_farmer_language
+from services.assistant_message_service import AssistantMessageService, ZONE_REVIEW_PROMPT_MARKER
 from services.swarm_client import SwarmClient
 from services.treatment_service import TreatmentService
 from services.weather_service import WeatherService
@@ -891,6 +892,13 @@ class InteractionSupervisor:
         recent_messages: list[dict[str, Any]] | None = None,
     ) -> str:
         """Return the response-agent reply for a text-only request."""
+        if user_prompt.strip().upper().startswith(ZONE_REVIEW_PROMPT_MARKER):
+            return await AssistantMessageService().build_reply(
+                user_prompt=user_prompt,
+                user_id=user_id,
+                zone=zone,
+            )
+
         normalized_recent_messages = self._normalize_recent_messages(recent_messages)
         effective_user_prompt = self._build_effective_prompt(
             user_prompt=user_prompt,

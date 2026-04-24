@@ -649,7 +649,6 @@ export default function Dashboard() {
       return
     }
 
-    let active = true
     const cacheKey = buildZoneReviewCacheKey({
       userId,
       zone: selectedZoneName,
@@ -663,55 +662,66 @@ export default function Dashboard() {
       setZoneQuickReview(cachedReview.value)
       setZoneQuickReviewError('')
       setIsZoneQuickReviewLoading(false)
-      return () => {
-        active = false
-      }
+      return undefined
     }
 
     setIsZoneQuickReviewLoading(true)
     setZoneQuickReview('')
     setZoneQuickReviewError('')
 
-    const quickReviewPrompt = [
-      '[ZONE_REVIEW] You are an agriculture assistant.',
-      `Give one short agriculture-only review for zone ${selectedZoneName}.`,
-      'Mention crop health risk level and one immediate farm action.',
-      'Keep it to one sentence.',
-    ].join(' ')
+    let active = true
+    // Debounce rapid dropdown changes so we fire at most one request per
+    // settled selection rather than stacking simultaneous requests that
+    // compete for the backend.
+    const debounceId = window.setTimeout(() => {
+      const quickReviewPrompt = [
+        '[ZONE_REVIEW] You are an agriculture assistant.',
+        `Give one short agriculture-only review for zone ${selectedZoneName}.`,
+        'Mention crop health risk level and one immediate farm action.',
+        'Keep it to one sentence.',
+      ].join(' ')
 
-    sendAssistantMessage({
-      userPrompt: quickReviewPrompt,
-      userId,
-      zone: selectedZoneName,
-      location: farmLocation,
-      lat,
-      lng,
-    })
-      .then((response) => {
-        if (!active) {
-          return
-        }
-        const reply = String(response?.assistant_reply || '').trim()
-        zoneQuickReviewCache.set(cacheKey, {
-          value: reply,
-          fetchedAt: Date.now(),
+      sendAssistantMessage({
+        userPrompt: quickReviewPrompt,
+        userId,
+        zone: selectedZoneName,
+        location: farmLocation,
+        lat,
+        lng,
+      })
+        .then((response) => {
+          if (!active) {
+            return
+          }
+          const reply = String(response?.assistant_reply || '').trim()
+          zoneQuickReviewCache.set(cacheKey, {
+            value: reply,
+            fetchedAt: Date.now(),
+          })
+          setZoneQuickReview(reply)
         })
-        setZoneQuickReview(reply)
-      })
-      .catch((error) => {
-        if (!active) {
-          return
-        }
-        setZoneQuickReviewError(error?.message || 'Unable to generate quick zone review.')
-      })
-      .finally(() => {
-        if (active) {
-          setIsZoneQuickReviewLoading(false)
-        }
-      })
+        .catch((error) => {
+          if (!active) {
+            return
+          }
+          const rawMessage = String(error?.message || '').trim()
+          const isTimeout = /timed out/i.test(rawMessage)
+          setZoneQuickReviewError(
+            isTimeout
+              ? `Could not generate AI review for ${selectedZoneName} right now. Try again shortly.`
+              : rawMessage || 'Unable to generate quick zone review.'
+          )
+        })
+        .finally(() => {
+          if (active) {
+            setIsZoneQuickReviewLoading(false)
+          }
+        })
+    }, 300)
 
     return () => {
       active = false
+      window.clearTimeout(debounceId)
     }
   }, [farmLocation, lat, lng, selectedZoneName, user?.uid])
 

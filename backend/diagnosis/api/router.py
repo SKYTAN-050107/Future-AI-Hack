@@ -60,7 +60,7 @@ from models.scan_models import (
 )
 from orchestration.pipeline import LiveScanPipeline
 from orchestration.supervisor import InteractionSupervisor
-from services.assistant_message_service import AssistantMessageService
+from services.assistant_message_service import AssistantMessageService, ZONE_REVIEW_PROMPT_MARKER
 from services.dashboard_service import DashboardService
 from services.crop_service import CropService
 from services.firestore_service import FirestoreService
@@ -895,6 +895,31 @@ async def scan_and_chat_multi(
 @router.post("/api/assistant/message", response_model=AssistantMessageResponse)
 async def assistant_message(payload: AssistantMessageRequest) -> AssistantMessageResponse:
     """Text-only assistant endpoint backed by real scan history data."""
+    # Fast path: zone-review prompts (dashboard widget) bypass the supervisor
+    # entirely. The supervisor's own fallback defers to AssistantMessageService
+    # anyway, and short-circuiting here saves both supervisor init overhead and
+    # an extra service instantiation, keeping widget latency well below the
+    # frontend's 45s timeout.
+    if payload.user_prompt.strip().upper().startswith(ZONE_REVIEW_PROMPT_MARKER):
+        service = _get_assistant_message_service()
+        if service is None:
+            raise HTTPException(
+                status_code=503,
+                detail=_assistant_message_service_init_error or "assistant message service unavailable",
+            )
+        try:
+            reply = await service.build_reply(
+                user_prompt=payload.user_prompt,
+                user_id=payload.user_id,
+                zone=payload.zone,
+            )
+            return AssistantMessageResponse(assistant_reply=reply)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            logger.exception("Zone quick review failed: %s", exc)
+            raise HTTPException(status_code=502, detail=f"Zone quick review failed: {exc}") from exc
+
     supervisor = _get_supervisor()
     if supervisor is not None:
         try:

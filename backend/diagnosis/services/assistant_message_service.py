@@ -14,6 +14,10 @@ logger = logging.getLogger(__name__)
 ZONE_REVIEW_PROMPT_MARKER = "[ZONE_REVIEW]"
 _USER_OWNER_FIELDS = ("ownerUid", "userId", "uid")
 _ZONE_FIELDS = ("zone", "gridId")
+# Hard cap for the zone quick review LLM call. The dashboard widget has a
+# deterministic fallback string, so we prefer returning that quickly over
+# waiting for a slow Gemini round-trip and tripping the frontend 45s timeout.
+_ZONE_REVIEW_LLM_TIMEOUT_SECONDS = 20.0
 
 
 class AssistantMessageService:
@@ -52,7 +56,12 @@ class AssistantMessageService:
             raise ValueError("user_id is required")
 
         is_zone_review = self._is_zone_review_prompt(user_prompt)
-        reports = await asyncio.to_thread(self._load_reports_sync, user_id, zone)
+        reports = await asyncio.to_thread(
+            self._load_reports_sync,
+            user_id,
+            zone,
+            is_zone_review,
+        )
         if not reports:
             if is_zone_review:
                 zone_label = str(zone or "this area").strip() or "this area"
@@ -81,9 +90,12 @@ class AssistantMessageService:
         trend_hint = self._trend_line(reports)
         zone_label = str(zone or latest.get("zone") or latest.get("gridId") or "this area").strip() or "this area"
 
-        fallback = (
-            f"{zone_label}: {latest_disease} at {latest_severity:.0f}% severity. "
-            "Treat soon and rescan in 24-48 hours."
+        fallback = self._build_zone_fallback_summary(
+            zone_label=zone_label,
+            latest_disease=latest_disease,
+            latest_severity=latest_severity,
+            latest_confidence=latest_confidence,
+            trend_hint=trend_hint,
         )
 
         llm = self._get_llm_service()
@@ -91,24 +103,92 @@ class AssistantMessageService:
             return fallback
 
         try:
-            return await llm.generate_zone_quick_review(
-                zone_name=zone_label,
-                latest_disease=latest_disease,
-                latest_severity=latest_severity,
-                latest_confidence=latest_confidence,
-                trend_hint=trend_hint,
+            reply = await asyncio.wait_for(
+                llm.generate_zone_quick_review(
+                    zone_name=zone_label,
+                    latest_disease=latest_disease,
+                    latest_severity=latest_severity,
+                    latest_confidence=latest_confidence,
+                    trend_hint=trend_hint,
+                ),
+                timeout=_ZONE_REVIEW_LLM_TIMEOUT_SECONDS,
             )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Zone quick review LLM call exceeded %.1fs, using fallback",
+                _ZONE_REVIEW_LLM_TIMEOUT_SECONDS,
+            )
+            return fallback
         except Exception as exc:
             logger.warning("Zone quick review generation failed, using fallback: %s", exc)
             return fallback
 
-    def _load_reports_sync(self, user_id: str, zone: str | None) -> list[dict]:
+        # Guard against terse / malformed LLM output (e.g. the model echoing
+        # just the disease name). A useful review needs enough words to name
+        # the area, the risk level, and an action — fewer than ~6 words or
+        # under ~30 characters almost certainly fails that bar, so prefer the
+        # deterministic fallback which always includes severity and next step.
+        cleaned = (reply or "").strip()
+        word_count = len(cleaned.split())
+        if len(cleaned) < 30 or word_count < 6:
+            logger.info(
+                "Zone quick review reply too short (%d chars, %d words); using fallback",
+                len(cleaned),
+                word_count,
+            )
+            return fallback
+        return cleaned
+
+    @staticmethod
+    def _build_zone_fallback_summary(
+        *,
+        zone_label: str,
+        latest_disease: str,
+        latest_severity: float,
+        latest_confidence: float,
+        trend_hint: str,
+    ) -> str:
+        severity_pct = max(0.0, min(100.0, latest_severity))
+        if severity_pct >= 60:
+            risk_phrase = "high infection risk"
+            action = "Treat immediately and rescan within 24 hours."
+        elif severity_pct >= 25:
+            risk_phrase = "moderate infection risk"
+            action = "Plan treatment soon and rescan in 24-48 hours."
+        elif severity_pct > 0:
+            risk_phrase = "early-stage risk"
+            action = "Monitor closely and rescan in 48 hours."
+        else:
+            risk_phrase = "no active infection detected"
+            action = "Keep monitoring and rescan after the next field walk."
+
+        confidence_note = ""
+        if 0 < latest_confidence < 60:
+            confidence_note = " Scan confidence is low — capture a fresh image for a firmer read."
+
+        trend_sentence = (trend_hint or "").strip()
+
+        return (
+            f"{zone_label}: {latest_disease} at {severity_pct:.0f}% severity ({risk_phrase}). "
+            f"{action}{(' ' + trend_sentence) if trend_sentence else ''}{confidence_note}"
+        ).strip()
+
+    def _load_reports_sync(
+        self,
+        user_id: str,
+        zone: str | None,
+        skip_full_scan: bool = False,
+    ) -> list[dict]:
         reports = self._load_reports_via_targeted_queries(user_id=user_id, zone=zone)
 
         # Legacy fallback: preserve support for older records that may not yet
         # have stable owner fields. This only runs when targeted queries found
         # nothing, which avoids full-collection scans on the hot dashboard path.
-        if not reports:
+        # The zone-review widget skips this fallback altogether — the full scan
+        # is what historically pushed that endpoint past the 45s client timeout,
+        # and the caller has a deterministic fallback message when no reports
+        # are found.
+        if not reports and not skip_full_scan:
             reports = self._load_reports_via_full_scan(user_id=user_id, zone=zone)
 
         reports.sort(key=self._sort_key, reverse=True)
